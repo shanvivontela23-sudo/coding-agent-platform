@@ -21,7 +21,7 @@ export const defaultDependencyHosts = [
   "raw.githubusercontent.com",
 ] as const;
 
-function normalizedHostname(url: string): string {
+function normalizedGatewayHostname(url: string): string {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") {
     throw new Error("gatewayUrl must use https");
@@ -34,8 +34,45 @@ function normalizedHostname(url: string): string {
   return parsed.hostname.toLowerCase();
 }
 
+function normalizeExplicitHostname(host: string): string {
+  const normalized = host.trim().toLowerCase();
+
+  if (
+    normalized.length === 0 ||
+    normalized.includes("*") ||
+    normalized.includes("/") ||
+    normalized.includes(":") ||
+    normalized.includes(" ") ||
+    normalized === "localhost" ||
+    normalized === "0.0.0.0"
+  ) {
+    throw new Error(
+      `dependency egress entries must be exact DNS hostnames: ${host}`,
+    );
+  }
+
+  const labels = normalized.split(".");
+  if (
+    labels.length < 2 ||
+    labels.some(
+      (label) =>
+        label.length === 0 ||
+        label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    )
+  ) {
+    throw new Error(
+      `dependency egress entries must be exact DNS hostnames: ${host}`,
+    );
+  }
+
+  return normalized;
+}
+
 function uniqueHosts(hosts: readonly string[]): string[] {
-  return [...new Set(hosts.map((host) => host.trim().toLowerCase()).filter(Boolean))];
+  return [
+    ...new Set(hosts.map((host) => normalizeExplicitHostname(host))),
+  ];
 }
 
 export function networkPolicyForPhase(
@@ -43,7 +80,7 @@ export function networkPolicyForPhase(
   gatewayUrl: string,
   extraDependencyHosts: readonly string[] = [],
 ): SandboxNetworkPolicy {
-  const gatewayHost = normalizedHostname(gatewayUrl);
+  const gatewayHost = normalizedGatewayHostname(gatewayUrl);
 
   switch (phase) {
     case "locked":
@@ -70,10 +107,17 @@ export function networkPolicyForPhase(
   }
 }
 
-export function toE2BNetwork(policy: SandboxNetworkPolicy) {
+export function toE2BCreateNetwork(policy: SandboxNetworkPolicy) {
   return {
     allowOut: [...policy.allowHosts],
     denyOut: ["0.0.0.0/0"],
     allowPublicTraffic: false,
+  };
+}
+
+export function toE2BEgressUpdate(policy: SandboxNetworkPolicy) {
+  return {
+    allowOut: [...policy.allowHosts],
+    denyOut: ["0.0.0.0/0"],
   };
 }
