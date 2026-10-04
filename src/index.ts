@@ -4,14 +4,25 @@ export {
   type RunResult,
 } from "./domain/run-result.js";
 export {
+  commitShaSchema,
+  developmentTaskSchema,
+  heldOutTaskArtifactPayloadSchema,
+  heldOutTaskSchema,
   sealedArtifactSchema,
   taskSchema,
   type BenchmarkTask,
+  type DevelopmentBenchmarkTask,
+  type HeldOutBenchmarkTask,
+  type HeldOutTaskArtifactPayload,
 } from "./domain/task.js";
 export {
   adversarialCaseSchema,
+  adversarialExpectedBehaviorByKind,
+  adversarialExpectedBehaviorSchema,
   adversarialKindSchema,
   type AdversarialCase,
+  type AdversarialExpectedBehavior,
+  type AdversarialKind,
 } from "./domain/adversarial-case.js";
 export {
   datasetManifestSchema,
