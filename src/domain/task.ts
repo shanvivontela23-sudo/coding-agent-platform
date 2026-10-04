@@ -38,7 +38,7 @@ export const developmentTaskSchema = z.object({
     mergeDate: z.string().date(),
     hiddenTestsArtifact: sealedArtifactSchema,
   }),
-}).superRefine((task, context) => {
+}).strict().superRefine((task, context) => {
   if (task.repository.pinnedCommit === task.reference.fixCommit) {
     context.addIssue({
       code: "custom",
@@ -52,7 +52,7 @@ export const heldOutTaskSchema = z.object({
   ...commonTaskShape,
   split: z.literal("held-out"),
   heldOutArtifact: sealedArtifactSchema,
-});
+}).strict();
 
 /**
  * Private payload resolved only by the benchmark control plane.
