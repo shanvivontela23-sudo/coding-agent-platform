@@ -37,6 +37,14 @@ function shellSingleQuote(value: string): string {
  * We reject archives containing .git entries and create a new one-commit
  * synthetic repository only so coding harnesses can inspect diffs.
  */
+export function buildArchiveVerificationCommand(expectedSha256: string): string {
+  if (!sha256Pattern.test(expectedSha256)) {
+    throw new Error("expectedSha256 must be a 64-character SHA-256 digest");
+  }
+
+  return `printf '%s  %s\\n' ${shellSingleQuote(expectedSha256.toLowerCase())} ${shellSingleQuote(sandboxArchivePath)} | sha256sum -c -`;
+}
+
 export function buildRepositoryBootstrapCommand(
   pinnedCommit: string,
 ): string {
@@ -51,7 +59,7 @@ export function buildRepositoryBootstrapCommand(
     `mkdir -p ${sandboxWorkspacePath} ${sandboxMetadataPath}`,
     `test -f ${sandboxArchivePath}`,
     `if tar -tzf ${sandboxArchivePath} | awk 'BEGIN { bad=0 } /^\\// { bad=1 } /(^|\\/)\\.\\.(\\/|$)/ { bad=1 } /(^|\\/)\\.git(\\/|$)/ { bad=1 } END { exit bad ? 0 : 1 }'; then echo "unsafe repository archive" >&2; exit 41; fi`,
-    `rm -rf ${sandboxWorkspacePath:?}/* ${sandboxWorkspacePath}/.[!.]* ${sandboxWorkspacePath}/..?* 2>/dev/null || true`,
+    `rm -rf ${sandboxWorkspacePath}/* ${sandboxWorkspacePath}/.[!.]* ${sandboxWorkspacePath}/..?* 2>/dev/null || true`,
     `tar -xzf ${sandboxArchivePath} --strip-components=1 --no-same-owner --no-same-permissions -C ${sandboxWorkspacePath}`,
     `if find ${sandboxWorkspacePath} -name .git -print -quit | grep -q .; then echo "source git metadata present after extraction" >&2; exit 42; fi`,
     `printf '%s\\n' ${commit} > ${sandboxMetadataPath}/source-commit`,
