@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultDependencyHosts,
   networkPolicyForPhase,
-  toE2BNetwork,
+  toE2BCreateNetwork,
 } from "../src/sandbox/network-policy.js";
 
 describe("networkPolicyForPhase", () => {
@@ -13,7 +13,7 @@ describe("networkPolicyForPhase", () => {
     );
 
     expect(policy.allowHosts).toEqual([]);
-    expect(toE2BNetwork(policy)).toEqual({
+    expect(toE2BCreateNetwork(policy)).toEqual({
       allowOut: [],
       denyOut: ["0.0.0.0/0"],
       allowPublicTraffic: false,
@@ -56,5 +56,22 @@ describe("networkPolicyForPhase", () => {
     expect(() =>
       networkPolicyForPhase("coding", "http://gateway.example.com"),
     ).toThrow("gatewayUrl must use https");
+  });
+
+  it("rejects wildcard, CIDR, and URL-shaped dependency egress entries", () => {
+    for (const host of [
+      "*.example.com",
+      "0.0.0.0/0",
+      "https://packages.example.com",
+      "packages.example.com:443",
+    ]) {
+      expect(() =>
+        networkPolicyForPhase(
+          "dependency-setup",
+          "https://gateway.example.com",
+          [host],
+        ),
+      ).toThrow("exact DNS hostnames");
+    }
   });
 });
