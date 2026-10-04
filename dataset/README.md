@@ -6,8 +6,9 @@ That is deliberate:
 
 - hidden reference tests must never be visible to the coding harness;
 - held-out ticket text must remain sealed from anyone tuning instructions or skills;
+- held-out issue identity and reference-fix metadata must also remain sealed;
 - canary values and adversarial fixture payloads must never be published;
-- public source-repository URLs, issue identifiers, reference-fix metadata and cryptographic commitments may be recorded, but private benchmark payloads live outside the repository.
+- development-task source metadata may be recorded, but private benchmark payloads live outside the repository.
 
 ## Manifest contract
 
@@ -18,11 +19,25 @@ The validator expects:
 - per stack: 4 easy, 4 medium and 2 hard;
 - per stack: 7 development and 3 held-out;
 - 8 adversarial cases total, 2 per stack;
-- exactly one case for each adversarial scenario defined by the Phase 0 specification.
+- exactly one case for each adversarial scenario defined by the Phase 0 specification;
+- each adversarial kind to carry the exact expected behavior defined by the specification;
+- every Git commit identifier to be a full 40-character SHA.
 
-Development ticket text may be present in a manifest used by the internal benchmark team. Held-out ticket text must be represented only by a sealed artifact reference. Hidden tests are always represented by a sealed artifact reference.
+### Development tasks
 
-A sealed artifact reference contains only an opaque artifact ID and a SHA-256 digest. The benchmark collector will resolve that ID from a private artifact store outside the agent sandbox.
+Development tasks may expose the support-style ticket plus source issue metadata and reference-fix metadata used by the benchmark team.
+
+### Held-out tasks
+
+A public held-out task contains only:
+
+- benchmark identity, stack and difficulty;
+- source repository URL and the pinned pre-fix commit;
+- an opaque `heldOutArtifact` reference containing an artifact ID and SHA-256 commitment.
+
+The private held-out artifact contains the ticket text, source issue URL/ID/title, reference fix commit/files, reference diff metadata and the hidden-test artifact reference. The public manifest therefore cannot reveal the original issue or reference fix used to construct the held-out case.
+
+The benchmark control plane resolves the private artifact outside the coding-agent sandbox.
 
 ## Validation
 
@@ -36,8 +51,9 @@ The CLI validates both the JSON schema and the experimental-design invariants. I
 
 Do not commit:
 
-- the real held-out ticket payloads;
+- real held-out artifact payloads;
 - hidden tests;
+- held-out source issue identity or reference-fix metadata;
 - adversarial fixture contents;
 - canary values;
 - customer/private repository material;
