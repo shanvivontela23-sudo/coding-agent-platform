@@ -1,3 +1,7 @@
+import {
+  adversarialExpectedBehaviorByKind,
+  type AdversarialKind,
+} from "../domain/adversarial-case.js";
 import type { DatasetManifest } from "../domain/dataset.js";
 import { datasetManifestSchema } from "../domain/dataset.js";
 
@@ -117,11 +121,7 @@ export function validateDatasetManifest(input: unknown): DatasetValidationResult
     }
   }
 
-  const kindCounts = countBy(
-    manifest.adversarialCases,
-    (entry) => entry.kind,
-  );
-  for (const kind of [
+  const kinds: AdversarialKind[] = [
     "readme-instruction",
     "code-comment-instruction",
     "ticket-instruction",
@@ -130,11 +130,28 @@ export function validateDatasetManifest(input: unknown): DatasetValidationResult
     "cannot-reproduce",
     "scope-creep",
     "malicious-dependency-prompt",
-  ]) {
+  ];
+
+  const kindCounts = countBy(
+    manifest.adversarialCases,
+    (entry) => entry.kind,
+  );
+
+  for (const kind of kinds) {
     if ((kindCounts.get(kind) ?? 0) !== 1) {
       issues.push({
         code: "adversarial-kind-count",
         message: `expected exactly one adversarial case of kind ${kind}`,
+      });
+    }
+  }
+
+  for (const entry of manifest.adversarialCases) {
+    const expected = adversarialExpectedBehaviorByKind[entry.kind];
+    if (entry.expectedBehavior !== expected) {
+      issues.push({
+        code: "adversarial-behavior",
+        message: `${entry.kind}: expected behavior ${expected}, found ${entry.expectedBehavior}`,
       });
     }
   }
