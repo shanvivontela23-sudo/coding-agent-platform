@@ -41,7 +41,8 @@ export {
 export {
   defaultDependencyHosts,
   networkPolicyForPhase,
-  toE2BNetwork,
+  toE2BCreateNetwork,
+  toE2BEgressUpdate,
 } from "./sandbox/network-policy.js";
 export {
   buildArchiveVerificationCommand,
