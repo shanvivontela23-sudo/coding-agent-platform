@@ -10,7 +10,8 @@ import {
 } from "./repository-bootstrap.js";
 import {
   networkPolicyForPhase,
-  toE2BNetwork,
+  toE2BCreateNetwork,
+  toE2BEgressUpdate,
 } from "./network-policy.js";
 import type {
   SandboxCommand,
@@ -166,7 +167,7 @@ class E2BSandboxSession implements SandboxSession {
       this.gatewayUrl,
       this.extraDependencyHosts,
     );
-    await this.sandbox.updateNetwork(toE2BNetwork(policy));
+    await this.sandbox.updateNetwork(toE2BEgressUpdate(policy));
   }
 
   async exportPatch(): Promise<SandboxPatch> {
@@ -257,7 +258,7 @@ export class E2BSandboxProvider implements SandboxProvider {
       metadata: {
         taskId: request.taskId,
       },
-      network: toE2BNetwork(lockedPolicy),
+      network: toE2BCreateNetwork(lockedPolicy),
       lifecycle: {
         onTimeout: "kill",
         autoResume: false,
