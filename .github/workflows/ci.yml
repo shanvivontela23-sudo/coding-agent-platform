@@ -6,13 +6,15 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.17.1
@@ -20,11 +22,18 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - name: Export generated lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: p0-03-generated-pnpm-lock
-          path: pnpm-lock.yaml
+      - name: Commit regenerated lockfile
+        if: github.event_name == 'pull_request' && github.head_ref == 'p0-03-sandbox-provider'
+        run: |
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile already committed."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "build: update pnpm lockfile for E2B SDK"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
