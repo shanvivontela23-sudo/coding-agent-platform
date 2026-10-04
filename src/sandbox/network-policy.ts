@@ -19,6 +19,8 @@ export const defaultDependencyHosts = [
   "codeload.github.com",
   "objects.githubusercontent.com",
   "raw.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "plugins-artifacts.gradle.org",
 ] as const;
 
 function normalizedGatewayHostname(url: string): string {
