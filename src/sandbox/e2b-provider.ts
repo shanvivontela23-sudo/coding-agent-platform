@@ -240,7 +240,7 @@ export class E2BSandboxProvider implements SandboxProvider {
         ...(options.requestTimeoutMs !== undefined
           ? { requestTimeoutMs: options.requestTimeoutMs }
           : {}),
-      }) as unknown as E2BClientLike;
+      });
     }
 
     this.defaultTemplate = options.defaultTemplate ?? "base";
