@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
@@ -20,11 +20,18 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - name: Export generated lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-pnpm-lock
-          path: pnpm-lock.yaml
+      - name: Bootstrap lockfile onto this same-repository PR branch
+        if: github.event_name == 'pull_request' && github.head_ref == 'p0-02-followup-sealing-lockfile'
+        run: |
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile already committed."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "build: commit pnpm lockfile"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
