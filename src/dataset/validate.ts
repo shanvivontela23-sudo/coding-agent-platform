@@ -1,6 +1,5 @@
 import type { DatasetManifest } from "../domain/dataset.js";
 import { datasetManifestSchema } from "../domain/dataset.js";
-import type { z } from "zod";
 
 export type DatasetValidationIssue = {
   code: string;
@@ -25,11 +24,11 @@ const expectedDifficultyCounts = {
   hard: 2,
 } as const;
 
-function fromZodIssue(issue: z.core.$ZodIssue): DatasetValidationIssue {
+function fromZodIssue(issue: { message: string; path: readonly PropertyKey[] }): DatasetValidationIssue {
   return {
     code: "schema",
     message: issue.message,
-    ...(issue.path.length > 0 ? { path: issue.path.join(".") } : {}),
+    ...(issue.path.length > 0 ? { path: issue.path.map(String).join(".") } : {}),
   };
 }
 
