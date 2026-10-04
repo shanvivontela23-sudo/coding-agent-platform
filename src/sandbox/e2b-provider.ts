@@ -50,7 +50,6 @@ type E2BSandboxLike = {
   updateNetwork(network: {
     allowOut?: string[];
     denyOut?: string[];
-    allowPublicTraffic?: boolean;
   }): Promise<unknown>;
   createSnapshot(options?: { name?: string }): Promise<{ snapshotId: string }>;
   kill(): Promise<unknown>;
