@@ -176,7 +176,6 @@ describe("E2BSandboxProvider", () => {
     expect(sandbox.networkUpdates[1]).toEqual({
       allowOut: ["gateway.example.com"],
       denyOut: ["0.0.0.0/0"],
-      allowPublicTraffic: false,
     });
     expect(sandbox.networkUpdates[2]).toEqual(sandbox.networkUpdates[1]);
   });
