@@ -99,7 +99,27 @@ function provisionalCost(response: Response): number | null {
 }
 
 function isLiteLLMBudgetRejection(status: number, body: string): boolean {
-  return status === 429 && /(budget|spend|limit)/i.test(body);
+  if (status !== 429) return false;
+  try {
+    const payload = asObject(JSON.parse(body) as unknown);
+    const error = asObject(payload.error);
+    const type =
+      typeof error.type === "string"
+        ? error.type
+        : typeof payload.type === "string"
+          ? payload.type
+          : "";
+    if (type.toLowerCase() === "budget_exceeded") return true;
+    const message =
+      typeof error.message === "string"
+        ? error.message
+        : typeof payload.message === "string"
+          ? payload.message
+          : "";
+    return /(budget|spend)/i.test(message);
+  } catch {
+    return /(budget|spend)/i.test(body);
+  }
 }
 
 function recordWith(
@@ -188,7 +208,6 @@ export function createNonStreamingHarnessDispatcher(
         signal: controller.signal,
       });
     } catch {
-      clearTimeout(timeout);
       const state = controller.signal.aborted ? "timeout" : "interrupted";
       await options.callStore.saveCall(
         recordWith(initial, {
@@ -200,7 +219,9 @@ export function createNonStreamingHarnessDispatcher(
       return sanitizedError(
         state === "timeout" ? 504 : 502,
         state === "timeout" ? "upstream_timeout" : "upstream_failure",
-        state === "timeout" ? "upstream request timed out" : "upstream request failed",
+        state === "timeout"
+          ? "upstream request timed out"
+          : "upstream request failed",
       );
     } finally {
       clearTimeout(timeout);
@@ -251,8 +272,29 @@ export function createNonStreamingHarnessDispatcher(
             updatedAtMs: clock(),
           }),
         );
-        return sanitizedError(502, "invalid_upstream_response", "upstream returned an invalid response");
+        return sanitizedError(
+          502,
+          "invalid_upstream_response",
+          "upstream returned an invalid response",
+        );
       }
+    }
+
+    const listPriceCostUsd = input.route.paid ? provisionalCost(upstream) : 0;
+    if (input.route.paid && listPriceCostUsd === null) {
+      await options.callStore.saveCall(
+        recordWith(initial, {
+          state: "interrupted",
+          usage,
+          latencyMs,
+          updatedAtMs: clock(),
+        }),
+      );
+      return sanitizedError(
+        502,
+        "missing_cost_record",
+        "upstream response was not safely metered",
+      );
     }
 
     await options.callStore.saveCall(
@@ -260,7 +302,7 @@ export function createNonStreamingHarnessDispatcher(
         state: "completed",
         usage,
         latencyMs,
-        listPriceCostUsd: input.route.paid ? provisionalCost(upstream) : 0,
+        listPriceCostUsd,
         updatedAtMs: clock(),
       }),
     );
