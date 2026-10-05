@@ -24,6 +24,7 @@ class MockAdapter implements ModelProviderAdapter {
     usage: {
       inputTokens: 100,
       cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
       outputTokens: 40,
       reasoningTokens: 10,
     },
@@ -144,6 +145,7 @@ describe("P0-04 ModelGateway", () => {
       modelSettings: { temperature: 0, reasoning_effort: "high" },
       inputTokens: 100,
       cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
       outputTokens: 40,
       reasoningTokens: 10,
       latencyMs: 250,
@@ -156,6 +158,7 @@ describe("P0-04 ModelGateway", () => {
     expect(totals).toEqual({
       inputTokens: 100,
       cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
       outputTokens: 40,
       reasoningTokens: 10,
       modelCostUsd: 1.25,
@@ -329,6 +332,7 @@ describe("LiteLLM adapter", () => {
       usage: {
         inputTokens: 120,
         cachedInputTokens: 30,
+        cacheWriteInputTokens: 0,
         outputTokens: 50,
         reasoningTokens: 12,
       },
