@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 async function loadStoreModule() {
@@ -68,14 +70,15 @@ describe("P0-05 harness call store", () => {
     await store.createCall(call("run-b", "call-b"));
 
     const files = await walk(join(root, "harness-calls"));
-    const runBFile = files.find(async () => false) ?? files.find((path) => path.endsWith(".json"));
-    // Identify the run-b file by its contents, then corrupt it.
-    let corruptPath = "";
+    let corruptPath: string | undefined;
     for (const path of files) {
-      if ((await readFile(path, "utf8")).includes('"runId":"run-b"')) corruptPath = path;
+      if ((await readFile(path, "utf8")).includes('"runId":"run-b"')) {
+        corruptPath = path;
+        break;
+      }
     }
-    expect(corruptPath || runBFile).toBeTruthy();
-    await writeFile(corruptPath, "this file must never be parsed for run-a\n");
+    expect(corruptPath).toBeDefined();
+    await writeFile(corruptPath!, "this file must never be parsed for run-a\n");
 
     await expect(store.listCalls("run-a")).resolves.toHaveLength(1);
   });
@@ -99,7 +102,9 @@ describe("P0-05 harness call store", () => {
       reason: "unknown-route",
     });
 
-    const serialized = (await Promise.all((await walk(root)).map((path) => readFile(path, "utf8")))).join("\n");
+    const serialized = (
+      await Promise.all((await walk(root)).map((path) => readFile(path, "utf8")))
+    ).join("\n");
     expect(serialized).not.toContain("super-secret-provider-key");
     expect(serialized).not.toContain("Fix the hidden customer bug");
     expect(serialized).not.toContain("private model output");
