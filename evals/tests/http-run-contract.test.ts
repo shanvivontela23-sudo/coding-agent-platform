@@ -8,7 +8,6 @@ import {
   RunTokenService,
   type GatewayRunRecord,
   type ModelProviderAdapter,
-  type ProviderCallRequest,
   type ProviderCallResponse,
   type ProviderRunCredential,
   type ProviderRunStartRequest,
@@ -37,7 +36,7 @@ class MockAdapter implements ModelProviderAdapter {
     return 0;
   }
 
-  async call(_request: ProviderCallRequest): Promise<ProviderCallResponse> {
+  async call(): Promise<ProviderCallResponse> {
     throw new Error("not used by run contract tests");
   }
 }
