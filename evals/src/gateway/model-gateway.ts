@@ -149,6 +149,9 @@ export class PersistentModelGateway implements ModelGateway {
       if (run.status !== "active") {
         throw new Error(`run ${request.runId} is not active`);
       }
+      if (!run.allowedModels.includes(request.model)) {
+        throw new Error(`model ${request.model} is not allowed for run ${request.runId}`);
+      }
 
       const current = await this.getRunCostSummary(request.runId);
       const estimate = await this.adapter.estimateMaxCostUsd(request);
