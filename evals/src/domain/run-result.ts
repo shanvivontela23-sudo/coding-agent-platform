@@ -75,6 +75,7 @@ export const runResultSchema = z.object({
   cost: z.object({
     inputTokens: z.number().int().nonnegative(),
     cachedInputTokens: z.number().int().nonnegative(),
+    cacheWriteInputTokens: z.number().int().nonnegative(),
     outputTokens: z.number().int().nonnegative(),
     reasoningTokens: z.number().int().nonnegative(),
     modelCostUsd: z.number().nonnegative(),
