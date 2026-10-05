@@ -221,14 +221,15 @@ export class PersistentModelGateway implements ModelGateway {
     const current = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.runLocks.set(runId, previous.then(() => current));
+    const tail = previous.then(() => current);
+    this.runLocks.set(runId, tail);
 
     await previous;
     try {
       return await operation();
     } finally {
       release?.();
-      if (this.runLocks.get(runId) === current) this.runLocks.delete(runId);
+      if (this.runLocks.get(runId) === tail) this.runLocks.delete(runId);
     }
   }
 }
