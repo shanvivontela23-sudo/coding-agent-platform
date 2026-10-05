@@ -6,13 +6,15 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.17.1
@@ -20,7 +22,38 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm exec vitest run evals/tests
+      - name: Generate and verify LiteLLM hash lock
+        if: github.event_name == 'pull_request' && github.head_ref == 'p0-04-model-gateway'
+        run: |
+          python -m pip install --disable-pip-version-check pip-tools==7.6.1
+          pip-compile \
+            --generate-hashes \
+            --strip-extras \
+            --resolver=backtracking \
+            --no-emit-index-url \
+            --no-emit-trusted-host \
+            --output-file=evals/litellm/requirements.txt \
+            evals/litellm/requirements.in
+          tmp="$(mktemp)"
+          {
+            echo '--require-hashes'
+            cat evals/litellm/requirements.txt
+          } > "$tmp"
+          mv "$tmp" evals/litellm/requirements.txt
+          python -m pip install --dry-run --require-hashes -r evals/litellm/requirements.txt
+          git add evals/litellm/requirements.txt
+          if git diff --cached --quiet; then
+            echo "LiteLLM requirements lock already current."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "build(gateway): hash-lock LiteLLM proxy dependencies"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
