@@ -24,4 +24,3 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm exec vitest run evals/tests
-      # synchronize PR checks after move-only branch creation
