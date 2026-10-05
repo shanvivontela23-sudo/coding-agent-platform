@@ -1,11 +1,14 @@
+import { posix } from "node:path";
 import { E2B } from "e2b";
 import {
   buildArchiveVerificationCommand,
+  buildBaselineCommitCommand,
   buildPatchExportCommand,
   buildRepositoryBootstrapCommand,
   buildStatusCommand,
   sandboxArchivePath,
   sandboxWorkspacePath,
+  validateBaselineCommitSha,
   validatePinnedRepositoryArchive,
 } from "./repository-bootstrap.js";
 import {
@@ -83,6 +86,13 @@ export type E2BSandboxProviderOptions = {
   readonly client?: E2BClientLike;
 };
 
+const networkPhaseOrder: readonly SandboxNetworkPhase[] = [
+  "locked",
+  "dependency-setup",
+  "coding",
+  "testing",
+];
+
 function isCommandExitLike(error: unknown): error is E2BCommandResult {
   return (
     typeof error === "object" &&
@@ -96,15 +106,25 @@ function isCommandExitLike(error: unknown): error is E2BCommandResult {
   );
 }
 
-function assertWorkspacePath(path: string): void {
+function normalizeWorkspacePath(path: string): string {
+  if (path.includes("\0")) {
+    throw new Error("sandbox file path must not contain NUL bytes");
+  }
+
+  const normalized = path.startsWith("/")
+    ? posix.normalize(path)
+    : posix.resolve(sandboxWorkspacePath, path);
+
   if (
-    path !== sandboxWorkspacePath &&
-    !path.startsWith(`${sandboxWorkspacePath}/`)
+    normalized !== sandboxWorkspacePath &&
+    !normalized.startsWith(`${sandboxWorkspacePath}/`)
   ) {
     throw new Error(
       `external sandbox file access is limited to ${sandboxWorkspacePath}`,
     );
   }
+
+  return normalized;
 }
 
 function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -115,9 +135,11 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 class E2BSandboxSession implements SandboxSession {
   readonly workspacePath = sandboxWorkspacePath;
   private destroyed = false;
+  private networkPhase: SandboxNetworkPhase = "locked";
 
   constructor(
     readonly id: string,
+    readonly baselineCommitSha: string,
     private readonly sandbox: E2BSandboxLike,
     private readonly gatewayUrl: string,
     private readonly extraDependencyHosts: readonly string[],
@@ -149,31 +171,43 @@ class E2BSandboxSession implements SandboxSession {
 
   async readFile(path: string): Promise<string> {
     this.assertAlive();
-    assertWorkspacePath(path);
-    return await this.sandbox.files.read(path);
+    return await this.sandbox.files.read(normalizeWorkspacePath(path));
   }
 
   async writeFile(path: string, data: string | ArrayBuffer): Promise<void> {
     this.assertAlive();
-    assertWorkspacePath(path);
-    await this.sandbox.files.write(path, data);
+    await this.sandbox.files.write(normalizeWorkspacePath(path), data);
   }
 
   async setNetworkPhase(phase: SandboxNetworkPhase): Promise<void> {
     this.assertAlive();
+
+    if (phase === this.networkPhase) return;
+
+    const currentIndex = networkPhaseOrder.indexOf(this.networkPhase);
+    const requestedIndex = networkPhaseOrder.indexOf(phase);
+    const expectedPhase = networkPhaseOrder[currentIndex + 1];
+
+    if (requestedIndex !== currentIndex + 1 || expectedPhase !== phase) {
+      throw new Error(
+        `invalid sandbox network phase transition: ${this.networkPhase} -> ${phase}`,
+      );
+    }
+
     const policy = networkPolicyForPhase(
       phase,
       this.gatewayUrl,
       this.extraDependencyHosts,
     );
     await this.sandbox.updateNetwork(toE2BEgressUpdate(policy));
+    this.networkPhase = phase;
   }
 
   async exportPatch(): Promise<SandboxPatch> {
     this.assertAlive();
 
     const patch = await this.exec({
-      command: buildPatchExportCommand(),
+      command: buildPatchExportCommand(this.baselineCommitSha),
       cwd: sandboxWorkspacePath,
       timeoutMs: 60_000,
     });
@@ -292,8 +326,21 @@ export class E2BSandboxProvider implements SandboxProvider {
         );
       }
 
+      const baseline = await runRaw(
+        sandbox,
+        buildBaselineCommitCommand(),
+        30_000,
+      );
+      if (baseline.exitCode !== 0) {
+        throw new Error(
+          `failed to record repository baseline commit: ${baseline.error ?? baseline.stderr}`,
+        );
+      }
+      const baselineCommitSha = validateBaselineCommitSha(baseline.stdout);
+
       return new E2BSandboxSession(
         sandbox.sandboxId,
+        baselineCommitSha,
         sandbox,
         request.gatewayUrl,
         request.extraDependencyHosts ?? [],
