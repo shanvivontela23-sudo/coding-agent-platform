@@ -26,10 +26,12 @@ Before extraction, the sandbox rejects archive entries that are absolute, contai
 
 After extraction, the adapter creates a **new synthetic Git repository with one baseline commit**. This gives coding harnesses normal Git diff/status behavior without exposing the source repository's history.
 
+Immediately after bootstrap, the control plane runs `git rev-parse HEAD`, validates the returned full SHA, and stores that synthetic baseline SHA on the sandbox session. Patch export always diffs from that recorded baseline SHA rather than from `HEAD`, so a harness cannot hide its work by committing its changes.
+
 The sandbox therefore has:
 
 - the file tree from the pinned commit;
-- one synthetic local baseline commit;
+- one synthetic local baseline commit before the harness begins;
 - no source Git remote;
 - no earlier or later source commits;
 - no GitHub credential.
@@ -38,14 +40,20 @@ A later GitHub-materializer slice must preserve this contract: it must resolve t
 
 ## Network phases
 
-Every phase is default-deny.
+Every phase is default-deny, and transitions are one-way in this order:
+
+`locked -> dependency-setup -> coding -> testing`
+
+Skipping forward or moving backward is rejected. Re-applying the current phase is an idempotent no-op.
 
 | Phase | Allowed outbound traffic |
 | --- | --- |
 | locked/bootstrap | none |
-| dependency-setup | explicit package registries and Git artifact hosts only |
+| dependency-setup | default package registries plus explicit per-repo dependency hosts |
 | coding | model gateway hostname only |
 | testing | model gateway hostname only |
+
+GitHub hosts are **not** in the default dependency allowlist. If one repository genuinely needs a GitHub-hosted dependency artifact during setup, the exact hostname must be opted in for that repository through `extraDependencyHosts`. That opt-in disappears when the sandbox advances to coding.
 
 Additional dependency hosts must be exact DNS hostnames. Wildcards, URLs, CIDRs, ports, localhost, and all-traffic entries are rejected.
 
@@ -59,10 +67,13 @@ E2B's network-update API replaces the egress policy atomically. The adapter ther
 
 - command execution;
 - workspace-scoped control-plane file reads/writes;
-- network phase transitions;
-- binary-capable Git patch export;
+- the recorded baseline commit SHA;
+- one-way network phase transitions;
+- binary-capable Git patch export from the recorded baseline;
 - snapshots;
 - idempotent destruction.
+
+Control-plane file paths are normalized before the workspace boundary is checked, so `..` segments cannot escape `/workspace/repo`.
 
 The provider interface is deliberately independent from E2B so another sandbox backend can be benchmarked later without changing the agent/evaluation code.
 
@@ -70,10 +81,12 @@ The provider interface is deliberately independent from E2B so another sandbox b
 
 The sandbox never pushes to GitHub. At the end of a run the control plane asks the session for:
 
-- `git diff --binary HEAD`;
+- `git diff --binary <recorded-baseline-sha> --`;
 - porcelain workspace status.
 
 The control plane validates and stores that patch. GitHub branch/commit/PR creation remains outside the sandbox.
+
+The later evaluation collector must **not** run hidden tests against the potentially stateful harness workspace. It must apply the exported patch to a clean copy of the exact pinned source tree and run hidden/reference and regression tests there. This makes the collected proof independent of untracked state, generated files, or commits left behind by the harness.
 
 ## Live-provider verification
 
@@ -81,8 +94,16 @@ CI unit tests do not call E2B or require an E2B API key. Before gate runs, the r
 
 - sandbox creation/destruction;
 - archive upload/extraction;
-- network phase enforcement;
+- baseline recording and patch export after harness commits;
+- one-way network phase enforcement;
 - command timeouts;
 - patch export.
+
+The network smoke test must also prove the negative cases, not just an allowed request. At minimum it must verify that these fail when they are not allowlisted:
+
+- a normal non-allowlisted hostname;
+- a raw IPv4 address;
+- an outside DNS name;
+- an IPv6 destination.
 
 That smoke test is operational validation, not a reason to put provider credentials in this public repository.
