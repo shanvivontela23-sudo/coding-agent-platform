@@ -134,9 +134,10 @@ export class FileGatewayStore implements GatewayStore {
   }
 
   async listCostRecords(runId: string): Promise<readonly CostRecord[]> {
+    const runCallsDir = this.runCallsDir(runId);
     let names: string[];
     try {
-      names = await readdir(this.callsDir);
+      names = await readdir(runCallsDir);
     } catch (error) {
       if (isNotFound(error)) return [];
       throw error;
@@ -145,8 +146,12 @@ export class FileGatewayStore implements GatewayStore {
     const records: CostRecord[] = [];
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
-      const stored = await readJson<StoredModelCall>(join(this.callsDir, name));
-      if (stored?.costRecord.runId === runId) records.push(stored.costRecord);
+      const stored = await readJson<StoredModelCall>(join(runCallsDir, name));
+      if (!stored) continue;
+      if (stored.costRecord.runId !== runId) {
+        throw new Error(`stored call belongs to a different run than ${runId}`);
+      }
+      records.push(stored.costRecord);
     }
     return records.sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
@@ -155,7 +160,11 @@ export class FileGatewayStore implements GatewayStore {
     return join(this.runsDir, `${digest(runId)}.json`);
   }
 
+  private runCallsDir(runId: string): string {
+    return join(this.callsDir, digest(runId));
+  }
+
   private callPath(runId: string, idempotencyKey: string): string {
-    return join(this.callsDir, `${digest(`${runId}\0${idempotencyKey}`)}.json`);
+    return join(this.runCallsDir(runId), `${digest(idempotencyKey)}.json`);
   }
 }
