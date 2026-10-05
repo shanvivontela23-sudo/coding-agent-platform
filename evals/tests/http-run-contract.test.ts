@@ -7,7 +7,6 @@ import {
   PersistentModelGateway,
   RunTokenService,
   type ModelProviderAdapter,
-  type ProviderCallRequest,
   type ProviderCallResponse,
   type ProviderRunStartRequest,
 } from "../src/gateway/index.js";
@@ -31,7 +30,7 @@ class MockAdapter implements ModelProviderAdapter {
     return 0;
   }
 
-  async call(_request: ProviderCallRequest): Promise<ProviderCallResponse> {
+  async call(): Promise<ProviderCallResponse> {
     return {
       body: { id: "response" },
       usage: {
