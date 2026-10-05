@@ -34,6 +34,8 @@ export {
   type DatasetValidationResult,
 } from "./dataset/validate.js";
 
+export * from "./gateway/index.js";
+
 export {
   E2BSandboxProvider,
   type E2BSandboxProviderOptions,
