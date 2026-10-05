@@ -120,6 +120,7 @@ async function start(gateway: PersistentModelGateway, runId: string) {
   return await gateway.startRun({
     runId,
     expiresAtMs: 10_000,
+    allowedModels: ["gpt-test"],
   });
 }
 
