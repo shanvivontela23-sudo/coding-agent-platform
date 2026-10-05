@@ -47,7 +47,7 @@ export class RunTokenService {
     return `${payload}.${signature}`;
   }
 
-  verify(token: string, expectedRunId: string): RunTokenClaims {
+  verifyClaims(token: string): RunTokenClaims {
     const [payload, signature, extra] = token.split(".");
     if (!payload || !signature || extra !== undefined) {
       throw new Error("run token is invalid");
@@ -73,17 +73,24 @@ export class RunTokenService {
     if (
       claims.version !== 1 ||
       typeof claims.runId !== "string" ||
-      typeof claims.expiresAtMs !== "number"
+      !claims.runId.trim() ||
+      typeof claims.expiresAtMs !== "number" ||
+      !Number.isFinite(claims.expiresAtMs)
     ) {
       throw new Error("run token is invalid");
-    }
-    if (claims.runId !== expectedRunId) {
-      throw new Error(`run token is not valid for ${expectedRunId}`);
     }
     if (this.clock() >= claims.expiresAtMs) {
       throw new Error("run token has expired");
     }
 
+    return claims;
+  }
+
+  verify(token: string, expectedRunId: string): RunTokenClaims {
+    const claims = this.verifyClaims(token);
+    if (claims.runId !== expectedRunId) {
+      throw new Error(`run token is not valid for ${expectedRunId}`);
+    }
     return claims;
   }
 
