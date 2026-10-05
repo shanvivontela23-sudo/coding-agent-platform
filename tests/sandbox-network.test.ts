@@ -20,23 +20,34 @@ describe("networkPolicyForPhase", () => {
     });
   });
 
-  it("allows package and git hosts only during dependency setup", () => {
+  it("allows package registries by default but no GitHub hosts", () => {
     const policy = networkPolicyForPhase(
       "dependency-setup",
       "https://gateway.example.com/v1",
-      ["packages.example.internal"],
     );
 
     expect(policy.allowHosts).toContain("registry.npmjs.org");
     expect(policy.allowHosts).toContain("pypi.org");
     expect(policy.allowHosts).toContain("repo.maven.apache.org");
     expect(policy.allowHosts).toContain("api.nuget.org");
-    expect(policy.allowHosts).toContain("github.com");
-    expect(policy.allowHosts).toContain("packages.example.internal");
-    expect(policy.allowHosts).not.toContain("gateway.example.com");
-    expect(policy.allowHosts.length).toBe(
-      new Set([...defaultDependencyHosts, "packages.example.internal"]).size,
+    expect(defaultDependencyHosts.some((host) => host.includes("github"))).toBe(
+      false,
     );
+    expect(policy.allowHosts.some((host) => host.includes("github"))).toBe(
+      false,
+    );
+  });
+
+  it("allows GitHub dependency hosts only when the repository opts in", () => {
+    const policy = networkPolicyForPhase(
+      "dependency-setup",
+      "https://gateway.example.com/v1",
+      ["github.com", "codeload.github.com"],
+    );
+
+    expect(policy.allowHosts).toContain("github.com");
+    expect(policy.allowHosts).toContain("codeload.github.com");
+    expect(policy.allowHosts).not.toContain("gateway.example.com");
   });
 
   it.each(["coding", "testing"] as const)(
@@ -45,6 +56,7 @@ describe("networkPolicyForPhase", () => {
       const policy = networkPolicyForPhase(
         phase,
         "https://Gateway.Example.com/v1/chat",
+        ["github.com"],
       );
 
       expect(policy.allowHosts).toEqual(["gateway.example.com"]);
