@@ -131,6 +131,33 @@ describe("P0-05 public HTTP guards", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it("rejects an authenticated body above 8 MiB before dispatch", async () => {
+    const { handler, config } = await modules();
+    const service = tokenService();
+    const token = service.issue("run-a", 10_000);
+    const { gatewayStore, callStore } = await createStores(activeRun());
+    const gatewayConfig = await (config.loadHarnessHttpConfig as () => Promise<unknown>)();
+    const dispatch = vi.fn();
+    const handle = (handler.createHarnessHttpHandler as (options: unknown) => (request: Request) => Promise<Response>)({
+      tokenService: service,
+      gatewayStore,
+      callStore,
+      config: gatewayConfig,
+      dispatch,
+      clock: () => 1_000,
+    });
+
+    const response = await handle(
+      jsonRequest("/v1/responses", token, {
+        model: "primary-model",
+        payload: "x".repeat(8 * 1024 * 1024),
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("enforces the burst and refill rate per token digest", async () => {
     const { rate } = await modules();
     expect(typeof rate.RunTokenBucket).toBe("function");
@@ -149,7 +176,7 @@ describe("P0-05 public HTTP guards", () => {
     expect(JSON.stringify(bucket)).not.toContain("secret-run-token");
   });
 
-  it("refuses unknown routes, disallowed models, and all streaming before dispatch", async () => {
+  it("refuses unknown routes, disallowed models, and body-requested streaming before dispatch", async () => {
     const { handler, config } = await modules();
     expect(typeof handler.createHarnessHttpHandler).toBe("function");
     const service = tokenService();
@@ -179,6 +206,35 @@ describe("P0-05 public HTTP guards", () => {
       "streaming-not-implemented",
       "unknown-route",
     ]);
+  });
+
+  it("also refuses an SSE Accept header in PR A", async () => {
+    const { handler, config } = await modules();
+    const service = tokenService();
+    const token = service.issue("run-a", 10_000);
+    const { gatewayStore, callStore } = await createStores(activeRun());
+    const gatewayConfig = await (config.loadHarnessHttpConfig as () => Promise<unknown>)();
+    const dispatch = vi.fn();
+    const handle = (handler.createHarnessHttpHandler as (options: unknown) => (request: Request) => Promise<Response>)({
+      tokenService: service,
+      gatewayStore,
+      callStore,
+      config: gatewayConfig,
+      dispatch,
+      clock: () => 1_000,
+    });
+    const request = new Request("https://gateway.example.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      },
+      body: JSON.stringify({ model: "primary-model", input: "hello" }),
+    });
+
+    expect((await handle(request)).status).toBe(501);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("accepts exact primary and background models", async () => {
