@@ -81,28 +81,29 @@ function request(path: string, token: string, body: Record<string, unknown>) {
   });
 }
 
-function openAiResponse(id: string) {
-  return new Response(
-    JSON.stringify({
-      id,
-      model: "primary-model",
-      output: [{ type: "message", content: [] }],
-      usage: {
-        input_tokens: 20,
-        output_tokens: 5,
-        input_tokens_details: { cached_tokens: 2 },
-        output_tokens_details: { reasoning_tokens: 1 },
-      },
-    }),
-    {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "x-litellm-response-cost": "0.0123",
-        "x-upstream-secret": "must-not-return",
-      },
+function openAiBody(id: string) {
+  return JSON.stringify({
+    id,
+    model: "primary-model",
+    output: [{ type: "message", content: [] }],
+    usage: {
+      input_tokens: 20,
+      output_tokens: 5,
+      input_tokens_details: { cached_tokens: 2 },
+      output_tokens_details: { reasoning_tokens: 1 },
     },
-  );
+  });
+}
+
+function openAiResponse(id: string) {
+  return new Response(openAiBody(id), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "x-litellm-response-cost": "0.0123",
+      "x-upstream-secret": "must-not-return",
+    },
+  });
 }
 
 describe("P0-05 non-streaming harness proxy", () => {
@@ -186,7 +187,7 @@ describe("P0-05 non-streaming harness proxy", () => {
 
   it("marks the run limit-hit on LiteLLM budget rejection and refuses later paid work", async () => {
     const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ error: { message: "max budget reached" } }), {
+      new Response(JSON.stringify({ error: { type: "budget_exceeded", message: "max budget reached" } }), {
         status: 429,
         headers: { "content-type": "application/json" },
       }),
@@ -202,5 +203,39 @@ describe("P0-05 non-streaming harness proxy", () => {
     expect((await gatewayStore.getRun("run-a")).status).toBe("limit-hit");
     const [record] = await callStore.listCalls("run-a");
     expect(record?.state).toBe("rejected");
+  });
+
+  it("does not turn a generic provider rate limit into a permanent run spend limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { type: "rate_limit_error", message: "rate limit reached" } }), {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      }),
+    ) as unknown as typeof fetch;
+    const { gatewayStore, token, handle } = await setup(fetchMock);
+
+    const response = await handle(request("/v1/responses", token, { model: "primary-model", input: "hello" }));
+
+    expect(response.status).toBe(429);
+    expect((await gatewayStore.getRun("run-a")).status).toBe("active");
+  });
+
+  it("fails closed if a successful paid response has no cost header", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(openAiBody("response-without-cost"), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ) as unknown as typeof fetch;
+    const { callStore, token, handle } = await setup(fetchMock);
+
+    const response = await handle(request("/v1/responses", token, { model: "primary-model", input: "hello" }));
+
+    expect(response.status).toBe(502);
+    const [record] = await callStore.listCalls("run-a");
+    expect(record).toMatchObject({
+      state: "interrupted",
+      listPriceCostUsd: null,
+    });
   });
 });
