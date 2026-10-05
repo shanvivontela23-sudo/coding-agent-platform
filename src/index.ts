@@ -33,3 +33,38 @@ export {
   type DatasetValidationIssue,
   type DatasetValidationResult,
 } from "./dataset/validate.js";
+
+export {
+  E2BSandboxProvider,
+  type E2BSandboxProviderOptions,
+} from "./sandbox/e2b-provider.js";
+export {
+  defaultDependencyHosts,
+  networkPolicyForPhase,
+  toE2BCreateNetwork,
+  toE2BEgressUpdate,
+} from "./sandbox/network-policy.js";
+export {
+  buildArchiveVerificationCommand,
+  buildBaselineCommitCommand,
+  buildPatchExportCommand,
+  buildRepositoryBootstrapCommand,
+  buildStatusCommand,
+  sandboxArchivePath,
+  sandboxMetadataPath,
+  sandboxWorkspacePath,
+  validateBaselineCommitSha,
+  validatePinnedRepositoryArchive,
+} from "./sandbox/repository-bootstrap.js";
+export type {
+  PinnedRepositoryArchive,
+  SandboxCommand,
+  SandboxCommandResult,
+  SandboxCreateRequest,
+  SandboxNetworkPhase,
+  SandboxNetworkPolicy,
+  SandboxPatch,
+  SandboxProvider,
+  SandboxSession,
+  SandboxSnapshot,
+} from "./sandbox/types.js";
