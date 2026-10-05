@@ -1,5 +1,6 @@
 import { runLimits } from "../config/gates.js";
 import { ProviderSpendLimitError, RunSpendLimitError } from "./errors.js";
+import { hashModelCallRequest } from "./request-hash.js";
 import type {
   CostRecord,
   GatewayRunRecord,
@@ -24,6 +25,7 @@ export type PersistentModelGatewayOptions = {
 const emptySummary: RunCostSummary = {
   inputTokens: 0,
   cachedInputTokens: 0,
+  cacheWriteInputTokens: 0,
   outputTokens: 0,
   reasoningTokens: 0,
   modelCostUsd: 0,
@@ -41,6 +43,8 @@ function summarize(records: readonly CostRecord[]): RunCostSummary {
     (total, record) => ({
       inputTokens: total.inputTokens + record.inputTokens,
       cachedInputTokens: total.cachedInputTokens + record.cachedInputTokens,
+      cacheWriteInputTokens:
+        total.cacheWriteInputTokens + record.cacheWriteInputTokens,
       outputTokens: total.outputTokens + record.outputTokens,
       reasoningTokens: total.reasoningTokens + record.reasoningTokens,
       modelCostUsd: total.modelCostUsd + record.listPriceCostUsd,
@@ -101,6 +105,7 @@ export class PersistentModelGateway implements ModelGateway {
   ): Promise<ModelGatewayResponse> {
     validateCallRequest(request);
     this.tokenService.verify(token, request.runId);
+    const requestHash = hashModelCallRequest(request);
 
     return await this.withRunLock(request.runId, async () => {
       let run = await this.store.getRun(request.runId);
@@ -109,6 +114,11 @@ export class PersistentModelGateway implements ModelGateway {
         request.idempotencyKey,
       );
       if (existing) {
+        if (existing.requestHash !== requestHash) {
+          throw new Error(
+            `idempotency key ${request.idempotencyKey} was reused with a different request`,
+          );
+        }
         return {
           body: existing.response,
           costRecord: existing.costRecord,
@@ -169,6 +179,7 @@ export class PersistentModelGateway implements ModelGateway {
         modelSettings: request.modelSettings,
         inputTokens: providerResponse.usage.inputTokens,
         cachedInputTokens: providerResponse.usage.cachedInputTokens,
+        cacheWriteInputTokens: providerResponse.usage.cacheWriteInputTokens,
         outputTokens: providerResponse.usage.outputTokens,
         reasoningTokens: providerResponse.usage.reasoningTokens,
         latencyMs: providerResponse.latencyMs,
@@ -177,6 +188,7 @@ export class PersistentModelGateway implements ModelGateway {
       };
 
       await this.store.saveStoredCall(request.runId, request.idempotencyKey, {
+        requestHash,
         response: providerResponse.body,
         costRecord,
       });
