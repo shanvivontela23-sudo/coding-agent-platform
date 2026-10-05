@@ -8,11 +8,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "eslint .",
+    "lint": "eslint evals",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run evals/tests",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "dataset:validate": "tsx src/dataset/cli.ts"
+    "dataset:validate": "tsx evals/src/dataset/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
