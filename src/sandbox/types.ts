@@ -50,6 +50,7 @@ export type SandboxSnapshot = {
 export interface SandboxSession {
   readonly id: string;
   readonly workspacePath: string;
+  readonly baselineCommitSha: string;
 
   exec(command: SandboxCommand): Promise<SandboxCommandResult>;
   readFile(path: string): Promise<string>;
