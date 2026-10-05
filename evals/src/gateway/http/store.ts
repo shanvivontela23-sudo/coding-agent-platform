@@ -5,6 +5,7 @@ export type HarnessCallState =
   | "accepted"
   | "streaming"
   | "completed"
+  | "rejected"
   | "interrupted"
   | "timeout"
   | "reconciliation-failed";
