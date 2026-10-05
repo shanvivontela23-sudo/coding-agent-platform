@@ -12,18 +12,18 @@ This design is intentionally limited to the harness-facing HTTP surface. Harness
 
 ### Public contract
 
-One public base URL exposes a strict registry of provider-compatible routes. The implementation contains handlers for the following routes, but the **frozen Phase 0 route registry enables only routes justified by recorded harness traffic**:
+One public base URL exposes a strict registry of provider-compatible routes. The implementation contains handlers for the following routes:
 
 | Method | Path | Purpose | Frozen Phase 0 status |
 | --- | --- | --- | --- |
-| POST | `/v1/messages` | Anthropic Messages, streaming and non-streaming | enabled when confirmed by the recorded harness transcript |
-| POST | `/v1/messages/count_tokens` | Anthropic token counting | enabled when confirmed by the recorded harness transcript |
-| POST | `/v1/responses` | OpenAI Responses, streaming and non-streaming | enabled when confirmed by the recorded harness transcript |
+| POST | `/v1/messages` | Anthropic Messages, streaming and non-streaming | enabled |
+| POST | `/v1/messages/count_tokens` | Anthropic token counting | enabled |
+| POST | `/v1/responses` | OpenAI Responses, streaming and non-streaming | enabled |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions, streaming and non-streaming | **implemented but disabled** unless a recorded benchmark-harness transcript proves it is required |
 
 There is no catch-all proxy. Every other public path, and every implemented route that is disabled in the frozen route registry, is explicitly refused with `404` after successful run-token authentication and is recorded as a safe refusal event.
 
-The final Phase 0 route registry is frozen from recorded traffic produced by the exact pinned harness versions used by the benchmark. Public documentation or assumptions do not add routes by themselves. Enabling `/v1/chat/completions` is therefore an evidence-backed configuration change, not an automatic consequence of the handler existing in code.
+The final Phase 0 route registry is frozen before gate runs from the approved defaults plus evidence from recorded traffic produced by the exact pinned harness versions used by the benchmark. Public documentation or assumptions do not add routes by themselves. Enabling `/v1/chat/completions` is therefore an evidence-backed configuration change, not an automatic consequence of the handler existing in code.
 
 ### Deployment
 
@@ -76,7 +76,7 @@ Safe recorded metadata includes:
 
 The recorder never stores authorization header values, provider keys, prompts, tool arguments, model output, or hidden benchmark content.
 
-A session must continue far enough to expose main-model calls, background/small-model calls, token-count traffic, and any other auxiliary endpoints the harness actually uses. The resulting transcript is versioned as a Phase 0 artifact and is the evidence used to freeze the route registry and required headers for that harness version.
+A session must continue far enough to expose main-model calls, background/small-model calls, token-count traffic, and any other auxiliary endpoints the harness actually uses. The resulting transcript is versioned as a Phase 0 artifact and is the evidence used to confirm the frozen route registry and required headers for that harness version. If the transcript shows a required route not enabled by the approved defaults, that route must be explicitly reviewed and enabled before gate runs.
 
 ## Authentication and run identity
 
