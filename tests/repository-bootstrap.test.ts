@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildArchiveVerificationCommand,
+  buildBaselineCommitCommand,
+  buildPatchExportCommand,
   buildRepositoryBootstrapCommand,
+  validateBaselineCommitSha,
   validatePinnedRepositoryArchive,
 } from "../src/sandbox/repository-bootstrap.js";
 
@@ -52,6 +55,24 @@ describe("repository bootstrap", () => {
     expect(command).not.toContain("git clone");
     expect(command).not.toContain("git fetch");
     expect(command).not.toContain("git checkout");
+  });
+
+  it("records the synthetic baseline SHA explicitly", () => {
+    expect(buildBaselineCommitCommand()).toContain("git rev-parse HEAD");
+    expect(validateBaselineCommitSha(`  ${"A".repeat(40)}\n`)).toBe(
+      "a".repeat(40),
+    );
+    expect(() => validateBaselineCommitSha("HEAD")).toThrow(
+      "baseline commit must be a full 40-character Git SHA",
+    );
+  });
+
+  it("exports patches from the recorded baseline rather than HEAD", () => {
+    const baseline = "d".repeat(40);
+    const command = buildPatchExportCommand(baseline);
+
+    expect(command).toContain(`git diff --binary --no-ext-diff ${baseline} --`);
+    expect(command).not.toContain("git diff --binary --no-ext-diff HEAD --");
   });
 
   it("builds an in-sandbox SHA-256 verification command", () => {
