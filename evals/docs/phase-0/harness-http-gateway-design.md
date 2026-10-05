@@ -12,18 +12,18 @@ This design is intentionally limited to the harness-facing HTTP surface. Harness
 
 ### Public contract
 
-One public base URL exposes a strict registry of provider-compatible routes. Initial supported routes are:
+One public base URL exposes a strict registry of provider-compatible routes. The implementation contains handlers for the following routes, but the **frozen Phase 0 route registry enables only routes justified by recorded harness traffic**:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/v1/messages` | Anthropic Messages, streaming and non-streaming |
-| POST | `/v1/messages/count_tokens` | Anthropic token counting |
-| POST | `/v1/responses` | OpenAI Responses, streaming and non-streaming |
-| POST | `/v1/chat/completions` | OpenAI-compatible chat completions, streaming and non-streaming |
+| Method | Path | Purpose | Frozen Phase 0 status |
+| --- | --- | --- | --- |
+| POST | `/v1/messages` | Anthropic Messages, streaming and non-streaming | enabled when confirmed by the recorded harness transcript |
+| POST | `/v1/messages/count_tokens` | Anthropic token counting | enabled when confirmed by the recorded harness transcript |
+| POST | `/v1/responses` | OpenAI Responses, streaming and non-streaming | enabled when confirmed by the recorded harness transcript |
+| POST | `/v1/chat/completions` | OpenAI-compatible chat completions, streaming and non-streaming | **implemented but disabled** unless a recorded benchmark-harness transcript proves it is required |
 
-There is no catch-all proxy. Every other public path is explicitly refused with `404` after successful run-token authentication and is recorded as a safe refusal event.
+There is no catch-all proxy. Every other public path, and every implemented route that is disabled in the frozen route registry, is explicitly refused with `404` after successful run-token authentication and is recorded as a safe refusal event.
 
-The final Phase 0 route registry is frozen from recorded traffic produced by the exact pinned harness versions used by the benchmark. Public documentation or assumptions do not add routes by themselves.
+The final Phase 0 route registry is frozen from recorded traffic produced by the exact pinned harness versions used by the benchmark. Public documentation or assumptions do not add routes by themselves. Enabling `/v1/chat/completions` is therefore an evidence-backed configuration change, not an automatic consequence of the handler existing in code.
 
 ### Deployment
 
@@ -36,16 +36,20 @@ For Phase 0, the gateway runs on one US cloud VM in a DigitalOcean Basic Droplet
 
 The VM has a stable public IP. Caddy serves a dedicated HTTPS hostname. Provider credentials, the LiteLLM master credential, the run-token signing secret, and database credentials live only in the host's secret environment. They are never committed to the repository or sent into a sandbox.
 
+Caddy must preserve streaming semantics. Its reverse-proxy configuration must not buffer model response bodies before forwarding them to the Node gateway/client. The live smoke test must demonstrate that multiple upstream SSE events reach the harness incrementally rather than arriving in one buffered flush.
+
 The public gateway process does not expose an unauthenticated health endpoint. Operational health checks are bound to loopback or a private administrative path.
 
 ### Real-model validation budget
 
 Protocol recording plus live smoke validation has a hard aggregate budget of **$50**:
 
-- OpenAI account hard limit: **$25**;
-- Anthropic account hard limit: **$25**.
+- OpenAI: fund **$25 of prepaid credits** and keep automatic reload disabled;
+- Anthropic: fund **$25 of prepaid credits** and keep automatic reload disabled.
 
-The existing Phase 0 per-run spend cap remains **$10**. Provider-side hard limits are an additional containment layer, not a replacement for the per-run LiteLLM budget.
+No postpaid or auto-reloading balance is used for the Phase 0 record-and-forward/smoke environment. If either provider account cannot be constrained to an equivalent pre-funded hard maximum, live validation does not start until an equivalent hard containment mechanism is configured.
+
+The existing Phase 0 per-run spend cap remains **$10**. Prepaid provider limits are an additional containment layer, not a replacement for the per-run LiteLLM budget.
 
 ## Protocol recorder before route freeze
 
@@ -102,7 +106,7 @@ Every paid call from every supported route is checked against this set and meter
 
 A request for a model outside the run allowlist is refused before upstream work and recorded as a safe authenticated refusal.
 
-## Internet-facing controls
+## Internet-facing controls and timeouts
 
 The public endpoint is treated as hostile internet-facing infrastructure.
 
@@ -110,17 +114,24 @@ Per-run-token defaults are:
 
 - maximum request body: **8 MiB**;
 - sustained request rate: **120 requests/minute**;
-- burst allowance: **20 requests**.
+- burst allowance: **20 requests**;
+- non-streaming upstream request timeout: **10 minutes** total from upstream dispatch to complete response;
+- streaming first-response timeout: **120 seconds** from upstream dispatch to receipt of response headers/first stream bytes;
+- streaming idle timeout: **90 seconds** without an upstream response chunk/event;
+- maximum streaming duration: **20 minutes** from upstream dispatch to stream termination.
 
 Authentication and rate limiting happen before the body is read. Body-size enforcement happens while reading the request so oversized bodies are terminated without full buffering.
 
-Rate and body limits are configuration values, but the Phase 0 gate configuration freezes their values. A protocol-recording session may demonstrate that a higher limit is required; if so, the value is changed before the gate run and then frozen.
+Timeout expiry cancels the upstream request where possible and records the harness call as interrupted/timeout. Any LiteLLM/provider spend already incurred still counts and must reconcile normally. Caddy and Node server/proxy timeout configuration must not be shorter than these application-level limits and must not buffer streaming responses.
+
+Rate, body, and timeout limits are configuration values, but the Phase 0 gate configuration freezes their values. A protocol-recording session may demonstrate that a higher limit is required; if so, the value is changed before the gate run and then frozen.
 
 ## Strict route registry and refusals
 
 The HTTP server maintains an explicit route registry. A route entry defines:
 
 - method and path;
+- whether the route is enabled in the frozen benchmark configuration;
 - wire API;
 - whether streaming is allowed;
 - how the model field is read;
@@ -128,7 +139,7 @@ The HTTP server maintains an explicit route registry. A route entry defines:
 - whether the call is paid or zero-cost;
 - which request headers may be forwarded.
 
-Unknown routes are never proxied automatically. An authenticated unknown route returns `404` with a sanitized JSON error body and creates one refusal record.
+Unknown routes and disabled routes are never proxied automatically. An authenticated unknown or disabled route returns `404` with a sanitized JSON error body and creates one refusal record.
 
 For an authenticated refusal, the gateway records only safe fields:
 
@@ -156,35 +167,36 @@ If a harness process crashes, the benchmark reruns that harness attempt. Any spe
 
 For a normal non-streaming model call:
 
-1. Caddy terminates TLS and forwards to the Node gateway.
+1. Caddy terminates TLS and forwards to the Node gateway without response buffering.
 2. The gateway authenticates the run token and obtains `runId` from signed claims.
 3. The gateway enforces run status, rate limit, request size, route registry, and exact model allowlist.
 4. The gateway generates a call id and injects safe correlation metadata for LiteLLM.
 5. Incoming client credentials and idempotency headers are stripped.
-6. The gateway forwards the request using the hidden run-scoped LiteLLM virtual key.
+6. The gateway forwards the request using the hidden run-scoped LiteLLM virtual key with the configured upstream timeout.
 7. The response body is returned in provider-compatible form.
 8. Usage is normalized using the P0-04 token semantics.
 9. The gateway persists the call record and later reconciles its authoritative cost against LiteLLM spend data.
 
 ## Streaming data flow
 
-Streaming responses are passed through incrementally. The gateway must not wait for the full model response before forwarding bytes to the harness.
+Streaming responses are passed through incrementally. The gateway must not wait for the full model response before forwarding bytes to the harness, and Caddy must not buffer those bytes.
 
 For an accepted stream:
 
 1. the request passes the same auth, run, route, rate, size, and model checks as a non-stream request;
 2. a fresh call id is generated and included in LiteLLM spend metadata;
-3. the upstream response body is read chunk by chunk;
-4. each chunk is forwarded to the harness immediately after minimal framing/parser work;
-5. an incremental SSE parser observes events in parallel and extracts usage from terminal/final usage events;
-6. the stream completion or interruption state is persisted;
-7. authoritative monetary cost is resolved from LiteLLM spend records during reconciliation.
+3. the gateway enforces the 120-second first-response timeout, 90-second idle timeout, and 20-minute maximum stream duration;
+4. the upstream response body is read chunk by chunk;
+5. each chunk is forwarded through Caddy to the harness immediately after minimal framing/parser work;
+6. an incremental SSE parser observes events in parallel and extracts usage from terminal/final usage events;
+7. the stream completion, timeout, or interruption state is persisted;
+8. authoritative monetary cost is resolved from LiteLLM spend records during reconciliation.
 
 The streaming path does not depend on the synchronous `x-litellm-response-cost` header. If that header is present it may be recorded as diagnostic data, but reconciliation against LiteLLM's persisted spend is authoritative.
 
-For OpenAI-compatible Chat Completions, the gateway may add the provider-supported usage-in-stream option when necessary for complete metering, provided the recorded harness transcript and compatibility tests show that this does not alter client behavior.
+The `/v1/chat/completions` streaming implementation exists but is disabled in the frozen route registry until a recorded harness transcript proves a benchmark harness needs it. If it is later enabled, the gateway may add the provider-supported usage-in-stream option when necessary for complete metering, provided the recorded harness transcript and compatibility tests show that this does not alter client behavior.
 
-If the client disconnects, the gateway attempts to cancel upstream work to limit additional spend. The call remains recorded as interrupted. LiteLLM spend is still reconciled; any provider spend incurred before cancellation counts.
+If the client disconnects or any stream timeout fires, the gateway attempts to cancel upstream work to limit additional spend. The call remains recorded as interrupted/timeout. LiteLLM spend is still reconciled; any provider spend incurred before cancellation counts.
 
 ## Usage and call records
 
@@ -197,7 +209,7 @@ Each record contains at least:
 - route/wire API;
 - provider/model;
 - frozen model settings relevant to the run;
-- state: accepted, streaming, completed, interrupted, refused, or reconciliation-failed;
+- state: accepted, streaming, completed, interrupted, timeout, refused, or reconciliation-failed;
 - normalized input, cache-read input, cache-write input, output, and reasoning tokens when available;
 - latency;
 - LiteLLM correlation id or metadata correlation key;
@@ -229,7 +241,7 @@ Zero-cost token-count records remain in our call log but are excluded from the e
 
 A missing paid spend record, unexpected extra paid spend record, or absolute monetary difference greater than **$0.000001** marks reconciliation as failed. Integer token counts must match exactly when both sides expose the same counter. A run is not marked invalid merely because LiteLLM had not written its batch yet; only the bounded reconciliation timeout or a post-catch-up mismatch can fail reconciliation.
 
-For interrupted streams where final usage could not be observed from the client-facing stream, LiteLLM's persisted spend/usage record is the fallback accounting source. The interruption remains visible in our call record.
+For interrupted or timed-out streams where final usage could not be observed from the client-facing stream, LiteLLM's persisted spend/usage record is the fallback accounting source. The interruption/timeout remains visible in our call record.
 
 ## Error behavior
 
@@ -238,7 +250,8 @@ The public surface returns provider-compatible errors where practical but never 
 Important classes are:
 
 - `401`: missing, invalid, conflicting, or expired run credential;
-- `404`: authenticated request to an unregistered path, with a sanitized JSON error body;
+- `404`: authenticated request to an unregistered or disabled path, with a sanitized JSON error body;
+- `408/504`: request/stream timeout according to whether the timeout occurred before or after upstream dispatch;
 - `413`: request body exceeds the run limit;
 - `429`: per-run request rate limit or run spend cap reached;
 - `400`: model not in the run's exact allowlist or malformed provider request;
@@ -260,33 +273,36 @@ The live validation must prove:
 
 1. the exact pinned Claude Code and Codex binaries can use the public base URL with no custom request translation;
 2. recorded transcripts identify every route/header shape needed by those pinned versions;
-3. `Authorization: Bearer` and `x-api-key` authentication both work and credentials never reach LiteLLM as client-supplied secrets;
-4. run id comes only from signed token claims;
-5. primary and background/small-model calls are both allowlisted and metered;
-6. unknown routes are refused and appear in the safe refusal log;
-7. streaming events reach the harness incrementally rather than after buffering;
-8. final stream usage is parsed and normalized correctly;
-9. token-count calls create zero-cost call records;
-10. reconciliation waits for delayed LiteLLM spend persistence and then matches authoritative spend;
-11. an intentional reconciliation mismatch fails loudly;
-12. repeated harness HTTP requests produce distinct paid call ids rather than idempotent replay;
-13. a crashed harness attempt is rerun and the earlier spend remains counted;
-14. the per-run spend cap still stops further paid work;
-15. unauthenticated requests are rejected before body work;
-16. request-size and per-run rate limits are enforced;
-17. the sandbox can reach only the HTTPS gateway during coding/testing;
-18. the E2B negative-network smoke checks still block a non-allowlisted hostname, a raw IPv4 address, an outside DNS name, and IPv6 egress.
+3. `/v1/chat/completions` stays refused while disabled and is enabled only if a recorded harness transcript demonstrates a benchmark requirement;
+4. `Authorization: Bearer` and `x-api-key` authentication both work and credentials never reach LiteLLM as client-supplied secrets;
+5. run id comes only from signed token claims;
+6. primary and background/small-model calls are both allowlisted and metered;
+7. unknown and disabled routes are refused and appear in the safe refusal log;
+8. Caddy does not buffer model streams and multiple SSE events reach the harness incrementally;
+9. final stream usage is parsed and normalized correctly;
+10. the upstream first-response timeout, stream idle timeout, maximum stream duration, and non-streaming upstream timeout terminate work and record timeout state correctly;
+11. token-count calls create zero-cost call records;
+12. reconciliation waits for delayed LiteLLM spend persistence and then matches authoritative spend;
+13. an intentional reconciliation mismatch fails loudly;
+14. repeated harness HTTP requests produce distinct paid call ids rather than idempotent replay;
+15. a crashed harness attempt is rerun and the earlier spend remains counted;
+16. the per-run spend cap still stops further paid work;
+17. unauthenticated requests are rejected before body work;
+18. request-size and per-run rate limits are enforced;
+19. the sandbox can reach only the HTTPS gateway during coding/testing;
+20. the E2B negative-network smoke checks still block a non-allowlisted hostname, a raw IPv4 address, an outside DNS name, and IPv6 egress.
 
 ## Operational prerequisites owned outside the repository
 
 Before record-and-forward or live smoke testing can run, the operator must provision:
 
 1. the DigitalOcean VM and HTTPS hostname;
-2. OpenAI and Anthropic API accounts;
-3. provider-side hard spend limits of $25 each;
+2. an OpenAI API account funded with **$25 prepaid credits**, with automatic reload disabled;
+3. an Anthropic API account funded with **$25 prepaid credits**, with automatic reload disabled;
 4. provider API keys stored only in the host's secret environment;
-5. a random LiteLLM master credential and model-gateway signing secret stored only on the host;
-6. PostgreSQL credentials stored only on the host.
+5. an E2B account and E2B API key, with the key stored only in the trusted control-plane/smoke-runner secret environment and never inside the sandbox guest;
+6. a random LiteLLM master credential and model-gateway signing secret stored only on the host;
+7. PostgreSQL credentials stored only on the host.
 
 No secret value is pasted into chat, committed to Git, baked into a Docker image, or placed in a sandbox environment.
 
@@ -302,15 +318,22 @@ Unit/integration tests with mocked HTTP/LiteLLM cover:
 - exact model allowlists including a background model;
 - credential and incoming idempotency-header stripping;
 - unknown-route safe refusals;
+- implemented-but-disabled `/v1/chat/completions` refusal and evidence-backed enablement;
 - zero-cost token-count records;
 - body-size limit before full buffering;
 - rate limiting per run token;
+- Caddy/Node streaming configuration contract with no proxy buffering;
 - unbuffered streaming pass-through;
+- streaming first-response timeout;
+- streaming idle timeout;
+- maximum stream duration;
+- non-streaming upstream timeout;
 - OpenAI Responses usage extraction;
 - Anthropic Messages usage extraction;
 - Chat Completions usage extraction when enabled;
 - distinct call ids for repeated identical harness requests;
 - client disconnect/interrupted-call accounting;
+- timeout accounting;
 - bounded delayed reconciliation success;
 - reconciliation timeout;
 - missing, extra, and mismatched LiteLLM spend failures;
