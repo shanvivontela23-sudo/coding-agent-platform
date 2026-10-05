@@ -14,8 +14,12 @@ export type ModelCallRequest = {
 };
 
 export type ModelUsage = {
+  /** Total input tokens consumed, including cache reads/writes where reported. */
   readonly inputTokens: number;
+  /** Input tokens served from an existing prompt cache. */
   readonly cachedInputTokens: number;
+  /** Input tokens written into a prompt cache for future calls. */
+  readonly cacheWriteInputTokens: number;
   readonly outputTokens: number;
   readonly reasoningTokens: number;
 };
@@ -56,6 +60,7 @@ export type GatewayRunRecord = {
 };
 
 export type StoredModelCall = {
+  readonly requestHash: string;
   readonly response: Readonly<Record<string, unknown>>;
   readonly costRecord: CostRecord;
 };
