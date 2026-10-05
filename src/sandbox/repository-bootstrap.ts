@@ -25,6 +25,14 @@ export function validatePinnedRepositoryArchive(
   }
 }
 
+export function validateBaselineCommitSha(value: string): string {
+  const sha = value.trim().toLowerCase();
+  if (!fullShaPattern.test(sha)) {
+    throw new Error("baseline commit must be a full 40-character Git SHA");
+  }
+  return sha;
+}
+
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -74,12 +82,21 @@ export function buildRepositoryBootstrapCommand(
   ].join("\n");
 }
 
-export function buildPatchExportCommand(): string {
+export function buildBaselineCommitCommand(): string {
+  return [
+    "set -euo pipefail",
+    `cd ${sandboxWorkspacePath}`,
+    "git rev-parse HEAD",
+  ].join("\n");
+}
+
+export function buildPatchExportCommand(baselineCommitSha: string): string {
+  const baseline = validateBaselineCommitSha(baselineCommitSha);
   return [
     "set -euo pipefail",
     `cd ${sandboxWorkspacePath}`,
     "git add --intent-to-add -A",
-    "git diff --binary --no-ext-diff HEAD --",
+    `git diff --binary --no-ext-diff ${baseline} --`,
   ].join("\n");
 }
 
