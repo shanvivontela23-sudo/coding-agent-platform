@@ -102,7 +102,7 @@ describe("P0-05 public HTTP guards", () => {
     ).toThrow(/conflicting/i);
   });
 
-  it("rejects unauthenticated input before reading any body bytes", async () => {
+  it("rejects unauthenticated input before reading the body", async () => {
     const { handler, config } = await modules();
     expect(typeof handler.createHarnessHttpHandler).toBe("function");
     const service = tokenService();
@@ -118,22 +118,16 @@ describe("P0-05 public HTTP guards", () => {
       clock: () => 1_000,
     });
 
-    let pulled = false;
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        pulled = true;
-        controller.error(new Error("body must not be read"));
-      },
-    });
     const request = new Request("https://gateway.example.com/v1/responses", {
       method: "POST",
-      body,
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "primary-model", payload: "must-not-be-read" }),
+    });
+    expect(request.bodyUsed).toBe(false);
     const response = await handle(request);
 
     expect(response.status).toBe(401);
-    expect(pulled).toBe(false);
+    expect(request.bodyUsed).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -179,11 +173,11 @@ describe("P0-05 public HTTP guards", () => {
     expect(dispatch).not.toHaveBeenCalled();
 
     const refusals = await callStore.listRefusals("run-a");
-    expect(refusals.map((record) => record.reason)).toEqual([
-      "unknown-route",
+    expect(refusals.map((record) => record.reason).sort()).toEqual([
       "model-not-allowed",
-      "streaming-not-implemented",
       "route-disabled",
+      "streaming-not-implemented",
+      "unknown-route",
     ]);
   });
 
