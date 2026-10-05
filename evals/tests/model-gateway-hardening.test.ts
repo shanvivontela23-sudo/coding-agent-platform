@@ -110,7 +110,7 @@ async function findCallFileForRun(
   const files = await walkFiles(join(rootDirectory, "calls"));
   for (const file of files) {
     const content = await readFile(file, "utf8");
-    if (content.includes(`\"runId\":\"${runId}\"`)) return file;
+    if (content.includes(`"runId":"${runId}"`)) return file;
   }
   throw new Error(`stored call for ${runId} not found`);
 }
