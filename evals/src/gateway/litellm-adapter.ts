@@ -1,6 +1,5 @@
 import { ProviderSpendLimitError } from "./errors.js";
 import type {
-  ModelCallRequest,
   ModelProviderAdapter,
   ModelUsage,
   ProviderCallRequest,
@@ -126,7 +125,7 @@ export class LiteLLMAdapter implements ModelProviderAdapter {
     return { credential: body.key };
   }
 
-  async estimateMaxCostUsd(_request: ModelCallRequest): Promise<number | null> {
+  async estimateMaxCostUsd(): Promise<number | null> {
     // LiteLLM's per-run virtual key is the authoritative reservation boundary.
     // With a database-backed gateway, LiteLLM reserves estimated request cost
     // against max_budget before contacting the provider.
