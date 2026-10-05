@@ -12,15 +12,9 @@ export const defaultDependencyHosts = [
   "plugins.gradle.org",
   "services.gradle.org",
   "downloads.gradle.org",
+  "plugins-artifacts.gradle.org",
   "api.nuget.org",
   "globalcdn.nuget.org",
-  "github.com",
-  "api.github.com",
-  "codeload.github.com",
-  "objects.githubusercontent.com",
-  "raw.githubusercontent.com",
-  "release-assets.githubusercontent.com",
-  "plugins-artifacts.gradle.org",
 ] as const;
 
 function normalizedGatewayHostname(url: string): string {
@@ -72,9 +66,7 @@ function normalizeExplicitHostname(host: string): string {
 }
 
 function uniqueHosts(hosts: readonly string[]): string[] {
-  return [
-    ...new Set(hosts.map((host) => normalizeExplicitHostname(host))),
-  ];
+  return [...new Set(hosts.map((host) => normalizeExplicitHostname(host)))];
 }
 
 export function networkPolicyForPhase(
