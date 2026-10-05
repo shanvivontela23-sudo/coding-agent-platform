@@ -46,12 +46,14 @@ export {
 } from "./sandbox/network-policy.js";
 export {
   buildArchiveVerificationCommand,
+  buildBaselineCommitCommand,
   buildPatchExportCommand,
   buildRepositoryBootstrapCommand,
   buildStatusCommand,
   sandboxArchivePath,
   sandboxMetadataPath,
   sandboxWorkspacePath,
+  validateBaselineCommitSha,
   validatePinnedRepositoryArchive,
 } from "./sandbox/repository-bootstrap.js";
 export type {
