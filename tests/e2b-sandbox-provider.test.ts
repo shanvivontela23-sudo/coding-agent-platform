@@ -12,6 +12,8 @@ type Network = {
   allowPublicTraffic?: boolean;
 };
 
+const baselineCommitSha = "b".repeat(40);
+
 class FakeSandbox {
   sandboxId = "sandbox-123";
   readonly commandsRun: Array<{ command: string; options?: unknown }> = [];
@@ -21,6 +23,7 @@ class FakeSandbox {
   readonly snapshots: Array<{ name?: string }> = [];
   killed = 0;
   failWhenCommandIncludes?: string;
+  harnessCommitted = false;
 
   commands = {
     run: async (
@@ -40,10 +43,27 @@ class FakeSandbox {
         };
       }
 
-      if (command.includes("git diff --binary")) {
+      if (command.includes("git rev-parse HEAD")) {
         return {
           exitCode: 0,
-          stdout: "diff --git a/file.ts b/file.ts\n",
+          stdout: `${baselineCommitSha}\n`,
+          stderr: "",
+        };
+      }
+
+      if (command.includes("git commit") && !command.includes("benchmark baseline")) {
+        this.harnessCommitted = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      if (command.includes("git diff --binary")) {
+        const comparesFromBaseline = command.includes(baselineCommitSha);
+        return {
+          exitCode: 0,
+          stdout:
+            comparesFromBaseline && this.harnessCommitted
+              ? "diff --git a/file.ts b/file.ts\n"
+              : "",
           stderr: "",
         };
       }
@@ -51,7 +71,7 @@ class FakeSandbox {
       if (command.includes("git status --porcelain")) {
         return {
           exitCode: 0,
-          stdout: " M file.ts\n",
+          stdout: this.harnessCommitted ? "" : " M file.ts\n",
           stderr: "",
         };
       }
@@ -107,7 +127,7 @@ function fakeClient(sandbox: FakeSandbox) {
 }
 
 describe("E2BSandboxProvider", () => {
-  it("creates locked, uploads only the pinned archive, and bootstraps without source history", async () => {
+  it("creates locked, uploads only the pinned archive, and records the synthetic baseline", async () => {
     const sandbox = new FakeSandbox();
     const { client, createCalls } = fakeClient(sandbox);
     const provider = new E2BSandboxProvider({ client });
@@ -120,6 +140,7 @@ describe("E2BSandboxProvider", () => {
 
     expect(session.id).toBe("sandbox-123");
     expect(session.workspacePath).toBe(sandboxWorkspacePath);
+    expect(session.baselineCommitSha).toBe(baselineCommitSha);
 
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0]).toMatchObject({
@@ -139,7 +160,16 @@ describe("E2BSandboxProvider", () => {
 
     expect(sandbox.writes).toHaveLength(1);
     expect(sandbox.writes[0]!.path).toBe(sandboxArchivePath);
-    expect(sandbox.commandsRun.some(({ command }) => command.includes("sha256sum -c -"))).toBe(true);
+    expect(
+      sandbox.commandsRun.some(({ command }) =>
+        command.includes("sha256sum -c -"),
+      ),
+    ).toBe(true);
+    expect(
+      sandbox.commandsRun.some(({ command }) =>
+        command.includes("git rev-parse HEAD"),
+      ),
+    ).toBe(true);
 
     const bootstrap = sandbox.commandsRun.find(({ command }) =>
       command.includes("git init -q"),
@@ -149,7 +179,7 @@ describe("E2BSandboxProvider", () => {
     expect(bootstrap?.command).not.toContain("git fetch");
   });
 
-  it("switches from registry-only setup to gateway-only coding/testing", async () => {
+  it("uses registry-only defaults and allows GitHub only by per-repo opt-in", async () => {
     const sandbox = new FakeSandbox();
     const { client } = fakeClient(sandbox);
     const provider = new E2BSandboxProvider({ client });
@@ -158,7 +188,7 @@ describe("E2BSandboxProvider", () => {
       taskId: "task-002",
       repository: archiveFixture(),
       gatewayUrl: "https://gateway.example.com/v1",
-      extraDependencyHosts: ["packages.example.internal"],
+      extraDependencyHosts: ["github.com"],
     });
 
     await session.setNetworkPhase("dependency-setup");
@@ -166,9 +196,7 @@ describe("E2BSandboxProvider", () => {
     await session.setNetworkPhase("testing");
 
     expect(sandbox.networkUpdates[0]!.allowOut).toContain("registry.npmjs.org");
-    expect(sandbox.networkUpdates[0]!.allowOut).toContain(
-      "packages.example.internal",
-    );
+    expect(sandbox.networkUpdates[0]!.allowOut).toContain("github.com");
     expect(sandbox.networkUpdates[0]!.allowOut).not.toContain(
       "gateway.example.com",
     );
@@ -180,7 +208,27 @@ describe("E2BSandboxProvider", () => {
     expect(sandbox.networkUpdates[2]).toEqual(sandbox.networkUpdates[1]);
   });
 
-  it("limits control-plane file APIs to the task workspace", async () => {
+  it("does not expose GitHub hosts during dependency setup without opt-in", async () => {
+    const sandbox = new FakeSandbox();
+    const { client } = fakeClient(sandbox);
+    const provider = new E2BSandboxProvider({ client });
+
+    const session = await provider.create({
+      taskId: "task-002b",
+      repository: archiveFixture(),
+      gatewayUrl: "https://gateway.example.com/v1",
+    });
+
+    await session.setNetworkPhase("dependency-setup");
+
+    expect(
+      sandbox.networkUpdates[0]!.allowOut?.some((host) =>
+        host.includes("github"),
+      ),
+    ).toBe(false);
+  });
+
+  it("enforces one-way network phase transitions", async () => {
     const sandbox = new FakeSandbox();
     const { client } = fakeClient(sandbox);
     const provider = new E2BSandboxProvider({ client });
@@ -191,20 +239,26 @@ describe("E2BSandboxProvider", () => {
       gatewayUrl: "https://gateway.example.com/v1",
     });
 
-    await expect(session.readFile("/etc/passwd")).rejects.toThrow(
-      "external sandbox file access is limited",
+    await expect(session.setNetworkPhase("coding")).rejects.toThrow(
+      "locked -> coding",
     );
-    await expect(
-      session.writeFile("/tmp/not-allowed", "no"),
-    ).rejects.toThrow("external sandbox file access is limited");
+    expect(sandbox.networkUpdates).toHaveLength(0);
 
-    await session.writeFile(`${sandboxWorkspacePath}/allowed.txt`, "yes");
-    expect(sandbox.writes.at(-1)?.path).toBe(
-      `${sandboxWorkspacePath}/allowed.txt`,
+    await session.setNetworkPhase("dependency-setup");
+    await session.setNetworkPhase("dependency-setup");
+    expect(sandbox.networkUpdates).toHaveLength(1);
+
+    await session.setNetworkPhase("coding");
+    await expect(session.setNetworkPhase("dependency-setup")).rejects.toThrow(
+      "coding -> dependency-setup",
+    );
+    await session.setNetworkPhase("testing");
+    await expect(session.setNetworkPhase("coding")).rejects.toThrow(
+      "testing -> coding",
     );
   });
 
-  it("exports an unstaged binary-capable patch and status", async () => {
+  it("normalizes workspace paths before enforcing the boundary", async () => {
     const sandbox = new FakeSandbox();
     const { client } = fakeClient(sandbox);
     const provider = new E2BSandboxProvider({ client });
@@ -215,15 +269,44 @@ describe("E2BSandboxProvider", () => {
       gatewayUrl: "https://gateway.example.com/v1",
     });
 
+    await expect(
+      session.readFile(`${sandboxWorkspacePath}/../secret.txt`),
+    ).rejects.toThrow("external sandbox file access is limited");
+    await expect(session.writeFile("../secret.txt", "no")).rejects.toThrow(
+      "external sandbox file access is limited",
+    );
+
+    await session.writeFile(
+      `${sandboxWorkspacePath}/nested/../allowed.txt`,
+      "yes",
+    );
+    expect(sandbox.writes.at(-1)?.path).toBe(
+      `${sandboxWorkspacePath}/allowed.txt`,
+    );
+  });
+
+  it("exports committed harness changes from the recorded baseline, not HEAD", async () => {
+    const sandbox = new FakeSandbox();
+    const { client } = fakeClient(sandbox);
+    const provider = new E2BSandboxProvider({ client });
+
+    const session = await provider.create({
+      taskId: "task-005",
+      repository: archiveFixture(),
+      gatewayUrl: "https://gateway.example.com/v1",
+    });
+
+    await session.exec({ command: 'git commit -am "harness change"' });
     const exported = await session.exportPatch();
 
     expect(exported.patch).toContain("diff --git");
-    expect(exported.status).toContain("M file.ts");
-    expect(
-      sandbox.commandsRun.some(({ command }) =>
-        command.includes("git add --intent-to-add -A"),
-      ),
-    ).toBe(true);
+    expect(exported.status).toBe("");
+
+    const patchCommand = sandbox.commandsRun.find(({ command }) =>
+      command.includes("git diff --binary"),
+    )?.command;
+    expect(patchCommand).toContain(baselineCommitSha);
+    expect(patchCommand).not.toContain(" HEAD --");
   });
 
   it("kills the sandbox when repository bootstrap fails", async () => {
@@ -234,7 +317,7 @@ describe("E2BSandboxProvider", () => {
 
     await expect(
       provider.create({
-        taskId: "task-005",
+        taskId: "task-006",
         repository: archiveFixture(),
         gatewayUrl: "https://gateway.example.com/v1",
       }),
@@ -249,7 +332,7 @@ describe("E2BSandboxProvider", () => {
     const provider = new E2BSandboxProvider({ client });
 
     const session = await provider.create({
-      taskId: "task-006",
+      taskId: "task-007",
       repository: archiveFixture(),
       gatewayUrl: "https://gateway.example.com/v1",
     });
@@ -276,7 +359,7 @@ describe("E2BSandboxProvider", () => {
 
     await expect(
       provider.create({
-        taskId: "task-007",
+        taskId: "task-008",
         repository: {
           ...repository,
           archiveSha256: "f".repeat(64),
