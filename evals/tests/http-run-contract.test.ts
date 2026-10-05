@@ -37,7 +37,7 @@ class MockAdapter implements ModelProviderAdapter {
   }
 
   async call(): Promise<ProviderCallResponse> {
-    throw new Error("not used by run contract tests");
+    throw new Error("provider must not be called by run contract tests");
   }
 }
 
@@ -143,5 +143,26 @@ describe("P0-05 run contract", () => {
 
       await expect(gateway.startRun(request)).rejects.toThrow(/allowedModels/i);
     }
+  });
+
+  it("rejects a direct control-plane call to a model outside the run allowlist", async () => {
+    const { gateway } = await createGateway();
+    const { token } = await gateway.startRun({
+      runId: "run-a",
+      expiresAtMs: 10_000,
+      allowedModels: ["primary-model", "background-model"],
+    });
+
+    await expect(
+      gateway.call(token, {
+        runId: "run-a",
+        idempotencyKey: "call-a",
+        provider: "openai",
+        model: "other-model",
+        modelSettings: {},
+        wireApi: "responses",
+        body: { model: "other-model", input: "hello" },
+      }),
+    ).rejects.toThrow(/model.*not allowed/i);
   });
 });
