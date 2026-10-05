@@ -37,6 +37,7 @@ class MockAdapter implements ModelProviderAdapter {
       usage: {
         inputTokens: 10,
         cachedInputTokens: 2,
+        cacheWriteInputTokens: 0,
         outputTokens: 3,
         reasoningTokens: 1,
       },
