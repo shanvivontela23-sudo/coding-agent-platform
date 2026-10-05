@@ -56,6 +56,20 @@ async function safeRefusal(
   });
 }
 
+function requestsStreaming(
+  request: Request,
+  body: Readonly<Record<string, unknown>>,
+): boolean {
+  return (
+    body.stream === true ||
+    request.headers
+      .get("accept")
+      ?.toLowerCase()
+      .split(",")
+      .some((value) => value.trim().startsWith("text/event-stream")) === true
+  );
+}
+
 export function createHarnessHttpHandler(
   options: HarnessHttpHandlerOptions,
 ): (request: Request) => Promise<Response> {
@@ -127,7 +141,7 @@ export function createHarnessHttpHandler(
       return errorResponse(400, "model_not_allowed", "model is not allowed for this run");
     }
 
-    if (body.stream === true) {
+    if (requestsStreaming(request, body)) {
       await safeRefusal(
         options.callStore,
         claims.runId,
