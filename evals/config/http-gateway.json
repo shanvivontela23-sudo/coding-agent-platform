@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "maxBodyBytes": 8388608,
+  "ratePerMinute": 120,
+  "rateBurst": 20,
+  "nonStreamingTimeoutMs": 600000,
+  "firstResponseTimeoutMs": 120000,
+  "streamIdleTimeoutMs": 90000,
+  "maxStreamDurationMs": 1200000,
+  "reconciliationTimeoutMs": 30000,
+  "reconciliationInitialDelayMs": 500,
+  "reconciliationMaxDelayMs": 2000,
+  "costToleranceUsd": 0.000001,
+  "enabledRoutes": [
+    "/v1/messages",
+    "/v1/messages/count_tokens",
+    "/v1/responses"
+  ],
+  "routeEvidence": {}
+}
