@@ -38,6 +38,20 @@ function validateCallRequest(request: ModelCallRequest): void {
   if (!request.model.trim()) throw new Error("model is required");
 }
 
+function normalizeAllowedModels(models: readonly string[]): readonly string[] {
+  if (!Array.isArray(models) || models.length === 0) {
+    throw new Error("allowedModels must contain at least one model");
+  }
+  const normalized = models.map((model) => model.trim());
+  if (normalized.some((model) => !model)) {
+    throw new Error("allowedModels may not contain blank model names");
+  }
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error("allowedModels may not contain duplicates");
+  }
+  return normalized;
+}
+
 function summarize(records: readonly CostRecord[]): RunCostSummary {
   return records.reduce<RunCostSummary>(
     (total, record) => ({
@@ -73,6 +87,7 @@ export class PersistentModelGateway implements ModelGateway {
       throw new Error("run expiry must be in the future");
     }
 
+    const allowedModels = normalizeAllowedModels(request.allowedModels);
     const spendCapUsd = request.spendCapUsd ?? runLimits.spendCapUsd;
     if (!Number.isFinite(spendCapUsd) || spendCapUsd <= 0) {
       throw new Error("run spend cap must be greater than zero");
@@ -88,6 +103,7 @@ export class PersistentModelGateway implements ModelGateway {
       expiresAtMs: request.expiresAtMs,
       spendCapUsd,
       upstreamCredential: upstream.credential,
+      allowedModels,
       status: "active",
     };
     await this.store.createRun(record);
