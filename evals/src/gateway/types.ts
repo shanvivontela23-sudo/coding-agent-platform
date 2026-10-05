@@ -56,6 +56,7 @@ export type GatewayRunRecord = {
   readonly expiresAtMs: number;
   readonly spendCapUsd: number;
   readonly upstreamCredential: string;
+  readonly allowedModels: readonly string[];
   readonly status: GatewayRunStatus;
 };
 
@@ -69,6 +70,7 @@ export type StartRunRequest = {
   readonly runId: string;
   readonly expiresAtMs: number;
   readonly spendCapUsd?: number;
+  readonly allowedModels: readonly string[];
 };
 
 export type StartRunResponse = {
