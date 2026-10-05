@@ -21,7 +21,7 @@ One public base URL exposes a strict registry of provider-compatible routes. Ini
 | POST | `/v1/responses` | OpenAI Responses, streaming and non-streaming |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions, streaming and non-streaming |
 
-There is no catch-all proxy. Every other public path is explicitly refused and recorded as a safe refusal event.
+There is no catch-all proxy. Every other public path is explicitly refused with `404` after successful run-token authentication and is recorded as a safe refusal event.
 
 The final Phase 0 route registry is frozen from recorded traffic produced by the exact pinned harness versions used by the benchmark. Public documentation or assumptions do not add routes by themselves.
 
@@ -128,7 +128,7 @@ The HTTP server maintains an explicit route registry. A route entry defines:
 - whether the call is paid or zero-cost;
 - which request headers may be forwarded.
 
-Unknown routes are never proxied automatically.
+Unknown routes are never proxied automatically. An authenticated unknown route returns `404` with a sanitized JSON error body and creates one refusal record.
 
 For an authenticated refusal, the gateway records only safe fields:
 
@@ -227,7 +227,7 @@ After LiteLLM has caught up, the gateway compares:
 
 Zero-cost token-count records remain in our call log but are excluded from the expected paid-spend set.
 
-A missing paid spend record, unexpected extra paid spend record, or monetary mismatch outside a documented rounding tolerance marks reconciliation as failed. A run is not marked invalid merely because LiteLLM had not written its batch yet; only the bounded reconciliation timeout or a post-catch-up mismatch can fail reconciliation.
+A missing paid spend record, unexpected extra paid spend record, or absolute monetary difference greater than **$0.000001** marks reconciliation as failed. Integer token counts must match exactly when both sides expose the same counter. A run is not marked invalid merely because LiteLLM had not written its batch yet; only the bounded reconciliation timeout or a post-catch-up mismatch can fail reconciliation.
 
 For interrupted streams where final usage could not be observed from the client-facing stream, LiteLLM's persisted spend/usage record is the fallback accounting source. The interruption remains visible in our call record.
 
@@ -238,7 +238,7 @@ The public surface returns provider-compatible errors where practical but never 
 Important classes are:
 
 - `401`: missing, invalid, conflicting, or expired run credential;
-- `404`/explicit unsupported-route response: authenticated request to an unregistered path;
+- `404`: authenticated request to an unregistered path, with a sanitized JSON error body;
 - `413`: request body exceeds the run limit;
 - `429`: per-run request rate limit or run spend cap reached;
 - `400`: model not in the run's exact allowlist or malformed provider request;
