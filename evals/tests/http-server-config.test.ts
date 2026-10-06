@@ -100,6 +100,17 @@ describe("committed deployment contract", () => {
     }
   });
 
+  it("does not inject provider, E2B, or database secrets into the Node gateway", async () => {
+    const compose = await readFile("evals/deploy/http-gateway/compose.yaml", "utf8");
+    const gatewayBlock = compose.match(/\n  gateway:\n([\s\S]*?)(?=\n  litellm:)/)?.[1];
+    expect(gatewayBlock).toBeDefined();
+    expect(gatewayBlock).not.toContain("env_file:");
+    expect(gatewayBlock).toContain("MODEL_GATEWAY_RUN_TOKEN_SECRET: ${MODEL_GATEWAY_RUN_TOKEN_SECRET}");
+    expect(gatewayBlock).toContain("LITELLM_ADMIN_TOKEN: ${LITELLM_ADMIN_TOKEN}");
+    expect(gatewayBlock).toContain("HARNESS_MODEL_PRICES_JSON: ${HARNESS_MODEL_PRICES_JSON}");
+    expect(gatewayBlock).not.toMatch(/OPENAI_API_KEY|ANTHROPIC_API_KEY|E2B_API_KEY|POSTGRES_PASSWORD/);
+  });
+
   it("builds LiteLLM from the committed hash lock with a real require-hashes install", async () => {
     const dockerfile = await readFile("evals/deploy/http-gateway/Dockerfile.litellm", "utf8");
     expect(dockerfile).toContain("@sha256:");
