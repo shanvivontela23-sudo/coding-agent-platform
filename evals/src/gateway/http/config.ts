@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import type { HarnessHttpConfig } from "./types.js";
 
@@ -40,20 +41,21 @@ const configSchema = z.object({
   }),
 });
 
-const configUrl = new URL("../../../config/http-gateway.json", import.meta.url);
-
 function readCommittedConfig(): unknown {
-  return JSON.parse(readFileSync(configUrl, "utf8")) as unknown;
+  const path = join(process.cwd(), "evals", "config", "http-gateway.json");
+  return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
-export function loadHarnessHttpConfig(input: unknown = readCommittedConfig()): HarnessHttpConfig {
-  const config = configSchema.parse(input);
-  const chatRoute = config.routes.find(
+export function loadHarnessHttpConfig(
+  input: unknown = readCommittedConfig(),
+): HarnessHttpConfig {
+  const parsed = configSchema.parse(input);
+  const chatRoute = parsed.routes.find(
     (route) => route.path === "/v1/chat/completions",
   );
   if (
     chatRoute?.enabled &&
-    !config.routeEvidence.chatCompletionsTranscriptSha256
+    !parsed.routeEvidence.chatCompletionsTranscriptSha256
   ) {
     throw new Error(
       "Chat Completions requires a recorded harness transcript SHA-256 before it can be enabled",
@@ -61,7 +63,7 @@ export function loadHarnessHttpConfig(input: unknown = readCommittedConfig()): H
   }
 
   const identities = new Set<string>();
-  for (const route of config.routes) {
+  for (const route of parsed.routes) {
     const identity = `${route.method} ${route.path}`;
     if (identities.has(identity)) {
       throw new Error(`duplicate harness route: ${identity}`);
@@ -69,5 +71,14 @@ export function loadHarnessHttpConfig(input: unknown = readCommittedConfig()): H
     identities.add(identity);
   }
 
-  return config;
+  return {
+    limits: parsed.limits,
+    routes: parsed.routes,
+    routeEvidence: parsed.routeEvidence.chatCompletionsTranscriptSha256
+      ? {
+          chatCompletionsTranscriptSha256:
+            parsed.routeEvidence.chatCompletionsTranscriptSha256,
+        }
+      : {},
+  };
 }
