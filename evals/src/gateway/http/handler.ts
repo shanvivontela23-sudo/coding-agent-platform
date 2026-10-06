@@ -74,13 +74,58 @@ function getModel(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+const reasoningEfforts = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+const reasoningSummaries = new Set(["auto", "concise", "detailed"]);
+const numericSettings = new Set(["temperature", "top_p"]);
+const integerSettings = new Set(["top_k", "max_tokens", "max_output_tokens"]);
+
+function safeReasoning(value: unknown): Readonly<Record<string, string>> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const object = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  if (typeof object.effort === "string" && reasoningEfforts.has(object.effort)) {
+    result.effort = object.effort;
+  }
+  if (typeof object.summary === "string" && reasoningSummaries.has(object.summary)) {
+    result.summary = object.summary;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function safeModelSettings(
   body: Readonly<Record<string, unknown>>,
   route: HarnessRouteSpec,
 ): Readonly<Record<string, unknown>> {
   const settings: Record<string, unknown> = {};
   for (const field of route.modelSettingFields) {
-    if (field in body) settings[field] = body[field];
+    const value = body[field];
+    if (numericSettings.has(field)) {
+      if (typeof value === "number" && Number.isFinite(value)) settings[field] = value;
+      continue;
+    }
+    if (integerSettings.has(field)) {
+      if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+        settings[field] = value;
+      }
+      continue;
+    }
+    if (field === "reasoning_effort") {
+      if (typeof value === "string" && reasoningEfforts.has(value)) {
+        settings[field] = value;
+      }
+      continue;
+    }
+    if (field === "reasoning") {
+      const reasoning = safeReasoning(value);
+      if (reasoning) settings[field] = reasoning;
+    }
   }
   return settings;
 }
@@ -144,7 +189,7 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       return jsonError(400, "invalid_request", "request body is invalid");
     }
 
-    if (body.stream === true && !route.streamingAllowed) {
+    if (body.stream !== undefined && body.stream !== false && !route.streamingAllowed) {
       await options.callStore.appendRefusal({
         runId: run.runId,
         refusalId: randomUUID(),
