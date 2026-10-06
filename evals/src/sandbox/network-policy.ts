@@ -17,6 +17,8 @@ export const defaultDependencyHosts = [
   "globalcdn.nuget.org",
 ] as const;
 
+const denyAllCidrs = ["0.0.0.0/0", "::/0"] as const;
+
 function normalizedGatewayHostname(url: string): string {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") {
@@ -104,7 +106,7 @@ export function networkPolicyForPhase(
 export function toE2BCreateNetwork(policy: SandboxNetworkPolicy) {
   return {
     allowOut: [...policy.allowHosts],
-    denyOut: ["0.0.0.0/0"],
+    denyOut: [...denyAllCidrs],
     allowPublicTraffic: false,
   };
 }
@@ -112,6 +114,6 @@ export function toE2BCreateNetwork(policy: SandboxNetworkPolicy) {
 export function toE2BEgressUpdate(policy: SandboxNetworkPolicy) {
   return {
     allowOut: [...policy.allowHosts],
-    denyOut: ["0.0.0.0/0"],
+    denyOut: [...denyAllCidrs],
   };
 }
