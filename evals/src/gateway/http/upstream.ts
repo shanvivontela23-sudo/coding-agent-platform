@@ -205,7 +205,7 @@ export class LiteLLMHarnessTransport {
   private readonly firstResponseTimeoutMs: number;
   private readonly streamIdleTimeoutMs: number;
   private readonly maxStreamDurationMs: number;
-  private readonly spendReconciler?: Pick<HarnessSpendReconciler, "reconcileCall">;
+  private readonly spendReconciler: Pick<HarnessSpendReconciler, "reconcileCall"> | undefined;
   private readonly clock: () => number;
 
   constructor(options: LiteLLMHarnessTransportOptions) {
