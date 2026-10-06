@@ -541,16 +541,20 @@ async function main(): Promise<void> {
     await record(assertion, async () => {
       const { response, call } = await callAndRecord(baseUrl, callStore, primaryRun, path, body);
       if (!response.ok) throw new Error(`provider parity request returned ${response.status}`);
-      const settled = await waitForSettledCall(callStore, primaryRun.run.runId, call.callId);
+      if (call.state !== "completed" || call.costPending || call.listPriceCostUsd === null) {
+        throw new Error(
+          "token parity must be established from an immediately metered response before reconciliation enforcement",
+        );
+      }
       const row = await waitForSpendRow(spendSource, primaryRun.run.upstreamCredential, call.callId);
-      assertUsageParity(settled, row, requireCached);
-      captured = settled;
+      assertUsageParity(call, row, requireCached);
+      captured = call;
       return {
         status: response.status,
-        inputTokens: settled.usage.inputTokens,
-        cachedInputTokens: settled.usage.cachedInputTokens,
-        cacheWriteInputTokens: settled.usage.cacheWriteInputTokens,
-        outputTokens: settled.usage.outputTokens,
+        inputTokens: call.usage.inputTokens,
+        cachedInputTokens: call.usage.cachedInputTokens,
+        cacheWriteInputTokens: call.usage.cacheWriteInputTokens,
+        outputTokens: call.usage.outputTokens,
       };
     });
     return captured;
