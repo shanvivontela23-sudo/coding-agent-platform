@@ -49,6 +49,7 @@ async function setup() {
       status: 200,
       headers: { "content-type": "application/json" },
       body: Buffer.from("{}"),
+      settlement: Promise.resolve({ costUsd: 0.01 }),
     };
   });
   const handler = createHarnessHttpHandler({
@@ -62,14 +63,16 @@ async function setup() {
       clock: () => 1_000,
     }),
     clock: () => 1_000,
+    estimateCostUsd: async () => 0.01,
+    reconcilePendingCall: async () => undefined,
     dispatch,
   });
   return { dispatch, handler, token };
 }
 
-describe("P0-05A security hardening", () => {
-  it.each([true, "true", 1])(
-    "refuses every non-false stream request in PR A: %j",
+describe("P0-05 HTTP security hardening", () => {
+  it.each(["true", 1])(
+    "rejects a non-boolean stream flag: %j",
     async (stream) => {
       const { dispatch, handler, token } = await setup();
       const response = await handler({
@@ -82,6 +85,18 @@ describe("P0-05A security hardening", () => {
       expect(dispatch).not.toHaveBeenCalled();
     },
   );
+
+  it("allows boolean streaming on an approved route", async () => {
+    const { dispatch, handler, token } = await setup();
+    const response = await handler({
+      method: "POST",
+      path: "/v1/responses",
+      headers: { authorization: `Bearer ${token}` },
+      body: body({ model: "primary-model", input: "x", stream: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps arbitrary nested request data out of persisted-safe model settings", async () => {
     const { dispatch, handler, token } = await setup();
