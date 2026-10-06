@@ -13,12 +13,18 @@ export type HarnessInboundRequest = {
   readonly path: string;
   readonly headers: HarnessHeaders;
   readonly body: AsyncIterable<Uint8Array>;
+  readonly signal?: AbortSignal;
+};
+
+export type HarnessSettlement = {
+  readonly costUsd: number;
 };
 
 export type HarnessOutboundResponse = {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
-  readonly body: Uint8Array;
+  readonly body: Uint8Array | ReadableStream<Uint8Array>;
+  readonly settlement?: Promise<HarnessSettlement>;
 };
 
 export type HarnessDispatchRequest = {
@@ -26,6 +32,7 @@ export type HarnessDispatchRequest = {
   readonly route: HarnessRouteSpec;
   readonly requestHeaders: HarnessHeaders;
   readonly body: Readonly<Record<string, unknown>>;
+  readonly signal?: AbortSignal;
   readonly callId: string;
   readonly provider: "openai" | "anthropic";
   readonly model: string;
@@ -36,6 +43,15 @@ export type HarnessDispatch = (
   request: HarnessDispatchRequest,
 ) => Promise<HarnessOutboundResponse>;
 
+export type HarnessCostEstimator = (
+  request: HarnessDispatchRequest,
+) => Promise<number>;
+
+export type HarnessPendingCostReconciler = (
+  run: GatewayRunRecord,
+  callId: string,
+) => Promise<unknown>;
+
 export type HarnessHttpHandlerOptions = {
   readonly config: HarnessHttpConfig;
   readonly tokenService: RunTokenService;
@@ -43,6 +59,10 @@ export type HarnessHttpHandlerOptions = {
   readonly callStore: HarnessCallStore;
   readonly rateLimiter: RunTokenBucket;
   readonly dispatch: HarnessDispatch;
+  /** Conservative list-price reservation estimate for one paid request. */
+  readonly estimateCostUsd?: HarnessCostEstimator;
+  /** Resolves a persisted paid call whose authoritative cost is still pending. */
+  readonly reconcilePendingCall?: HarnessPendingCostReconciler;
   readonly clock?: () => number;
 };
 
@@ -134,7 +154,11 @@ async function recordedRunSpend(
   runId: string,
   gatewayStore: GatewayStore,
   callStore: HarnessCallStore,
-): Promise<{ readonly costUsd: number; readonly hasPendingPaidCost: boolean }> {
+  reservedCallIds: ReadonlySet<string>,
+): Promise<{
+  readonly costUsd: number;
+  readonly pendingCallIds: readonly string[];
+}> {
   const [directCosts, harnessCalls] = await Promise.all([
     gatewayStore.listCostRecords(runId),
     callStore.listCalls(runId),
@@ -148,18 +172,20 @@ async function recordedRunSpend(
     costUsd += record.listPriceCostUsd;
   }
 
-  let hasPendingPaidCost = false;
+  const pendingCallIds: string[] = [];
   for (const call of harnessCalls) {
     if (!call.paid) continue;
-    if (call.costPending) hasPendingPaidCost = true;
-    if (call.listPriceCostUsd === null) continue;
+    if (call.costPending && !reservedCallIds.has(call.callId)) {
+      pendingCallIds.push(call.callId);
+    }
+    if (call.listPriceCostUsd === null || reservedCallIds.has(call.callId)) continue;
     if (!Number.isFinite(call.listPriceCostUsd) || call.listPriceCostUsd < 0) {
       throw new Error("stored harness-call cost is invalid");
     }
     costUsd += call.listPriceCostUsd;
   }
 
-  return { costUsd, hasPendingPaidCost };
+  return { costUsd, pendingCallIds };
 }
 
 async function appendRefusal(
@@ -205,6 +231,45 @@ async function withRunLock<T>(
 export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
   const clock = options.clock ?? Date.now;
   const paidRunLocks = new Map<string, Promise<void>>();
+  const reservations = new Map<string, Map<string, number>>();
+
+  const reservationMap = (runId: string): Map<string, number> => {
+    let active = reservations.get(runId);
+    if (!active) {
+      active = new Map<string, number>();
+      reservations.set(runId, active);
+    }
+    return active;
+  };
+
+  const releaseReservation = async (runId: string, callId: string) => {
+    await withRunLock(paidRunLocks, runId, async () => {
+      const active = reservationMap(runId);
+      active.delete(callId);
+      if (active.size === 0) reservations.delete(runId);
+
+      let current: GatewayRunRecord;
+      try {
+        current = await options.gatewayStore.getRun(runId);
+      } catch {
+        return;
+      }
+      if (current.status !== "active") return;
+      try {
+        const spend = await recordedRunSpend(
+          runId,
+          options.gatewayStore,
+          options.callStore,
+          new Set(active.keys()),
+        );
+        if (spend.costUsd >= current.spendCapUsd) {
+          await options.gatewayStore.saveRun({ ...current, status: "limit-hit" });
+        }
+      } catch {
+        // The next paid request will fail closed while re-reading spend state.
+      }
+    });
+  };
 
   return async function handle(
     request: HarnessInboundRequest,
@@ -262,7 +327,10 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       return jsonError(400, "invalid_request", "request body is invalid");
     }
 
-    if (body.stream !== undefined && body.stream !== false && !route.streamingAllowed) {
+    if (body.stream !== undefined && typeof body.stream !== "boolean") {
+      return jsonError(400, "invalid_request", "stream must be a boolean");
+    }
+    if (body.stream === true && !route.streamingAllowed) {
       await appendRefusal(
         options,
         run.runId,
@@ -291,88 +359,160 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       return jsonError(400, "model_not_allowed", "requested model is not allowed");
     }
 
-    const dispatch = async (activeRun: GatewayRunRecord) =>
-      await options.dispatch({
-        run: activeRun,
-        route,
-        requestHeaders: request.headers,
-        body,
-        callId: randomUUID(),
-        provider: providerFor(route),
-        model,
-        modelSettings: safeModelSettings(body, route),
+    const callId = randomUUID();
+    const makeDispatchRequest = (activeRun: GatewayRunRecord): HarnessDispatchRequest => ({
+      run: activeRun,
+      route,
+      requestHeaders: request.headers,
+      body,
+      ...(request.signal ? { signal: request.signal } : {}),
+      callId,
+      provider: providerFor(route),
+      model,
+      modelSettings: safeModelSettings(body, route),
+    });
+
+    if (!route.paid) return await options.dispatch(makeDispatchRequest(run));
+
+    if (!options.estimateCostUsd) {
+      return jsonError(
+        500,
+        "spend_estimator_unavailable",
+        "paid request cost estimator is unavailable",
+      );
+    }
+    if (!options.reconcilePendingCall) {
+      return jsonError(
+        500,
+        "spend_reconciler_unavailable",
+        "paid request spend reconciler is unavailable",
+      );
+    }
+
+    let estimate: number;
+    try {
+      estimate = await options.estimateCostUsd(makeDispatchRequest(run));
+    } catch {
+      return jsonError(500, "spend_estimate_error", "request spend estimate failed");
+    }
+    if (!Number.isFinite(estimate) || estimate < 0) {
+      return jsonError(500, "spend_estimate_error", "request spend estimate is invalid");
+    }
+
+    let reservedRun: GatewayRunRecord | null = null;
+    while (!reservedRun) {
+      const decision = await withRunLock(paidRunLocks, run.runId, async () => {
+        let current: GatewayRunRecord;
+        try {
+          current = await options.gatewayStore.getRun(run.runId);
+        } catch {
+          return { response: jsonError(401, "unauthorized", "run is not available") } as const;
+        }
+
+        if (current.status === "limit-hit") {
+          return {
+            response: jsonError(429, "spend_limit", "run spend limit has been reached"),
+          } as const;
+        }
+        if (current.status !== "active" || clock() >= current.expiresAtMs) {
+          return {
+            response: jsonError(401, "inactive_run", "run is not active"),
+          } as const;
+        }
+        if (!current.allowedModels.includes(model)) {
+          return {
+            response: jsonError(400, "model_not_allowed", "requested model is not allowed"),
+          } as const;
+        }
+
+        const active = reservationMap(current.runId);
+        let spend;
+        try {
+          spend = await recordedRunSpend(
+            current.runId,
+            options.gatewayStore,
+            options.callStore,
+            new Set(active.keys()),
+          );
+        } catch {
+          return {
+            response: jsonError(500, "spend_state_error", "run spend state is unavailable"),
+          } as const;
+        }
+
+        if (spend.costUsd >= current.spendCapUsd) {
+          await options.gatewayStore.saveRun({ ...current, status: "limit-hit" });
+          return {
+            response: jsonError(429, "spend_limit", "run spend limit has been reached"),
+          } as const;
+        }
+        if (spend.pendingCallIds.length > 0) {
+          return { run: current, pendingCallIds: spend.pendingCallIds } as const;
+        }
+
+        let reservedUsd = 0;
+        for (const amount of active.values()) reservedUsd += amount;
+        if (spend.costUsd + reservedUsd + estimate > current.spendCapUsd) {
+          return {
+            response: jsonError(
+              429,
+              "spend_reserved",
+              "run spend is temporarily reserved by in-flight paid calls",
+            ),
+          } as const;
+        }
+        active.set(callId, estimate);
+        return { run: current, pendingCallIds: [] as const };
       });
 
-    if (!route.paid) return await dispatch(run);
+      if ("response" in decision) return decision.response;
+      if (decision.pendingCallIds.length > 0) {
+        try {
+          await Promise.all(
+            decision.pendingCallIds.map(
+              async (pendingCallId) =>
+                await options.reconcilePendingCall!(decision.run, pendingCallId),
+            ),
+          );
+        } catch {
+          return jsonError(
+            503,
+            "spend_reconciliation_pending",
+            "a prior paid call could not be reconciled within the bounded retry window",
+          );
+        }
+        continue;
+      }
+      reservedRun = decision.run;
+    }
 
-    return await withRunLock(paidRunLocks, run.runId, async () => {
-      let lockedRun: GatewayRunRecord;
-      try {
-        lockedRun = await options.gatewayStore.getRun(run.runId);
-      } catch {
-        return jsonError(401, "unauthorized", "run is not available");
-      }
+    let response: HarnessOutboundResponse;
+    try {
+      response = await options.dispatch(makeDispatchRequest(reservedRun));
+    } catch {
+      await releaseReservation(reservedRun.runId, callId);
+      return jsonError(502, "upstream_error", "model gateway dispatch failed");
+    }
 
-      if (lockedRun.status === "limit-hit") {
-        return jsonError(429, "spend_limit", "run spend limit has been reached");
-      }
-      if (lockedRun.status !== "active" || clock() >= lockedRun.expiresAtMs) {
-        return jsonError(401, "inactive_run", "run is not active");
-      }
-      if (!lockedRun.allowedModels.includes(model)) {
-        await appendRefusal(
-          options,
-          lockedRun.runId,
-          request.method,
-          path,
-          "model-not-allowed",
-          clock(),
-        );
-        return jsonError(400, "model_not_allowed", "requested model is not allowed");
-      }
+    const settlement =
+      response.settlement ??
+      (async (): Promise<HarnessSettlement> => {
+        let call = await options.callStore.getCall(reservedRun!.runId, callId);
+        if (call.costPending) {
+          await options.reconcilePendingCall!(reservedRun!, callId);
+          call = await options.callStore.getCall(reservedRun!.runId, callId);
+        }
+        if (call.listPriceCostUsd === null) {
+          throw new Error("paid harness call completed without settled cost");
+        }
+        return { costUsd: call.listPriceCostUsd };
+      })();
 
-      let spend;
-      try {
-        spend = await recordedRunSpend(
-          lockedRun.runId,
-          options.gatewayStore,
-          options.callStore,
-        );
-      } catch {
-        return jsonError(500, "spend_state_error", "run spend state is unavailable");
-      }
+    void settlement.then(
+      async () => await releaseReservation(reservedRun!.runId, callId),
+      async () => await releaseReservation(reservedRun!.runId, callId),
+    );
 
-      if (spend.costUsd >= lockedRun.spendCapUsd) {
-        lockedRun = { ...lockedRun, status: "limit-hit" };
-        await options.gatewayStore.saveRun(lockedRun);
-        await appendRefusal(
-          options,
-          lockedRun.runId,
-          request.method,
-          path,
-          "spend-limit",
-          clock(),
-        );
-        return jsonError(429, "spend_limit", "run spend limit has been reached");
-      }
-
-      if (spend.hasPendingPaidCost) {
-        await appendRefusal(
-          options,
-          lockedRun.runId,
-          request.method,
-          path,
-          "spend-reconciliation-pending",
-          clock(),
-        );
-        return jsonError(
-          503,
-          "spend_reconciliation_pending",
-          "a prior paid call is awaiting spend reconciliation",
-        );
-      }
-
-      return await dispatch(lockedRun);
-    });
+    return response;
   };
 }

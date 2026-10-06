@@ -62,6 +62,7 @@ async function fixture() {
     status: 200,
     headers: { "content-type": "application/json" },
     body: Buffer.from('{"ok":true}'),
+    settlement: Promise.resolve({ costUsd: 0.01 }),
   }));
   const handler = createHarnessHttpHandler({
     config: loadHarnessHttpConfig(),
@@ -70,6 +71,8 @@ async function fixture() {
     callStore,
     rateLimiter: new RunTokenBucket({ ratePerMinute: 120, burst: 20, clock }),
     clock,
+    estimateCostUsd: async () => 0.01,
+    reconcilePendingCall: async () => undefined,
     dispatch,
   });
   return {
@@ -172,7 +175,7 @@ describe("harness HTTP auth and limits", () => {
     expect(await callStore.listRefusals("run-1")).toHaveLength(3);
   });
 
-  it("refuses unknown, disabled, and streaming routes before dispatch", async () => {
+  it("refuses unknown/disabled routes but allows approved streaming routes", async () => {
     const { callStore, dispatch, handler, token } = await fixture();
     const headers = { authorization: `Bearer ${token}` };
 
@@ -200,9 +203,9 @@ describe("harness HTTP auth and limits", () => {
           request(headers, jsonBody({ model: "primary-model", stream: true })),
         )
       ).status,
-    ).toBe(400);
+    ).toBe(200);
 
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(await callStore.listRefusals("run-1")).toHaveLength(3);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(await callStore.listRefusals("run-1")).toHaveLength(2);
   });
 });
