@@ -102,7 +102,7 @@ describe("committed deployment contract", () => {
 
   it("does not inject provider, E2B, or database secrets into the Node gateway", async () => {
     const compose = await readFile("evals/deploy/http-gateway/compose.yaml", "utf8");
-    const gatewayBlock = compose.match(/\n  gateway:\n([\s\S]*?)(?=\n  litellm:)/)?.[1];
+    const gatewayBlock = compose.match(/\n {2}gateway:\n([\s\S]*?)(?=\n {2}litellm:)/)?.[1];
     expect(gatewayBlock).toBeDefined();
     expect(gatewayBlock).not.toContain("env_file:");
     expect(gatewayBlock).toContain("- MODEL_GATEWAY_RUN_TOKEN_SECRET");
