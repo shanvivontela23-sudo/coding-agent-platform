@@ -45,6 +45,7 @@ function call(runId: string, callId: string): HarnessCallRecord {
     latencyMs: null,
     litellmCallId: null,
     listPriceCostUsd: null,
+    costPending: false,
     createdAtMs: 1_000,
     updatedAtMs: 1_000,
   };
