@@ -140,12 +140,22 @@ describe("non-streaming harness LiteLLM proxy", () => {
     expect(JSON.stringify(first.headers)).not.toContain("run-litellm-secret");
   });
 
-  it("marks a run limit-hit when LiteLLM rejects the harness call for budget", async () => {
+  it("marks a run limit-hit only for LiteLLM's explicit budget_exceeded error type", async () => {
     const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ error: { message: "max budget reached" } }), {
-        status: 429,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "Budget has been exceeded! Current cost: 10, Max budget: 10",
+            type: "budget_exceeded",
+            param: null,
+            code: "429",
+          },
+        }),
+        {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     const { gatewayStore, handler, token } = await setup(fetchMock as typeof fetch);
 
@@ -184,6 +194,7 @@ describe("non-streaming harness LiteLLM proxy", () => {
       paid: false,
       state: "completed",
       listPriceCostUsd: 0,
+      costPending: false,
     });
   });
 
