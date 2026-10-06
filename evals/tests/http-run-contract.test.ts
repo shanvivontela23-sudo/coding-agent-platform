@@ -9,6 +9,7 @@ import {
   type ModelProviderAdapter,
   type ProviderCallResponse,
   type ProviderRunStartRequest,
+  type StartRunRequest,
 } from "../src/gateway/index.js";
 
 const tempDirectories: string[] = [];
@@ -71,22 +72,21 @@ describe("P0-05 HTTP run contract", () => {
     });
     const token = tokenService.issue("run-from-token", 10_000);
 
-    expect(
-      (tokenService as RunTokenService & {
-        verifyClaims(token: string): { runId: string; expiresAtMs: number };
-      }).verifyClaims(token),
-    ).toMatchObject({ runId: "run-from-token", expiresAtMs: 10_000 });
+    expect(tokenService.verifyClaims(token)).toMatchObject({
+      runId: "run-from-token",
+      expiresAtMs: 10_000,
+    });
   });
 
   it("persists an exact primary and background model allowlist per run", async () => {
     const { gateway, store } = await createGateway();
 
-    await (gateway.startRun as unknown as (request: unknown) => Promise<unknown>)({
+    await gateway.startRun({
       runId: "run-a",
       expiresAtMs: 10_000,
       allowedModels: ["primary-model", "background-model"],
     });
-    await (gateway.startRun as unknown as (request: unknown) => Promise<unknown>)({
+    await gateway.startRun({
       runId: "run-b",
       expiresAtMs: 10_000,
       allowedModels: ["other-model"],
@@ -102,7 +102,7 @@ describe("P0-05 HTTP run contract", () => {
 
   it("rejects empty, blank, or duplicate model allowlists", async () => {
     const { gateway } = await createGateway();
-    const start = gateway.startRun as unknown as (request: unknown) => Promise<unknown>;
+    const start = (request: StartRunRequest) => gateway.startRun(request);
 
     await expect(
       start({ runId: "empty", expiresAtMs: 10_000, allowedModels: [] }),
