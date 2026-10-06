@@ -131,8 +131,12 @@ async function runProtocolRecorderCli(): Promise<void> {
       if (!response.headersSent) {
         response.statusCode = 502;
         response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({ error: { code: "recorder_error", message: "protocol recorder request failed" } }),
+        );
+      } else {
+        response.destroy();
       }
-      response.end(JSON.stringify({ error: { code: "recorder_error", message: "protocol recorder request failed" } }));
     }
   });
 
