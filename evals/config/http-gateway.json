@@ -45,7 +45,7 @@
       "streamingAllowed": false,
       "paid": true,
       "modelField": "model",
-      "forwardRequestHeaders": ["content-type", "openai-organization", "openai-project"],
+      "forwardRequestHeaders": ["content-type"],
       "safeResponseHeaders": ["content-type", "x-request-id"],
       "modelSettingFields": ["temperature", "top_p", "max_output_tokens", "reasoning"]
     },
@@ -57,7 +57,7 @@
       "streamingAllowed": false,
       "paid": true,
       "modelField": "model",
-      "forwardRequestHeaders": ["content-type", "openai-organization", "openai-project"],
+      "forwardRequestHeaders": ["content-type"],
       "safeResponseHeaders": ["content-type", "x-request-id"],
       "modelSettingFields": ["temperature", "top_p", "max_tokens", "reasoning_effort"]
     }
