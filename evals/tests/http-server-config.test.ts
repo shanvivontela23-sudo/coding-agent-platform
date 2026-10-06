@@ -92,7 +92,7 @@ describe("committed deployment contract", () => {
     expect(compose).toContain("gateway:");
     expect(compose).toContain("litellm:");
     expect(compose).toContain("postgres:");
-    expect(compose).toContain("HTTP_GATEWAY_PORT: 8080");
+    expect(compose).toContain("HTTP_GATEWAY_PORT=8080");
     expect(compose).toContain("litellm:4000");
     expect(compose).not.toContain(":latest");
     for (const line of compose.split("\n").filter((line) => line.trim().startsWith("image:"))) {
@@ -105,9 +105,9 @@ describe("committed deployment contract", () => {
     const gatewayBlock = compose.match(/\n  gateway:\n([\s\S]*?)(?=\n  litellm:)/)?.[1];
     expect(gatewayBlock).toBeDefined();
     expect(gatewayBlock).not.toContain("env_file:");
-    expect(gatewayBlock).toContain("MODEL_GATEWAY_RUN_TOKEN_SECRET: ${MODEL_GATEWAY_RUN_TOKEN_SECRET}");
-    expect(gatewayBlock).toContain("LITELLM_ADMIN_TOKEN: ${LITELLM_ADMIN_TOKEN}");
-    expect(gatewayBlock).toContain("HARNESS_MODEL_PRICES_JSON: ${HARNESS_MODEL_PRICES_JSON}");
+    expect(gatewayBlock).toContain("- MODEL_GATEWAY_RUN_TOKEN_SECRET");
+    expect(gatewayBlock).toContain("- LITELLM_ADMIN_TOKEN");
+    expect(gatewayBlock).toContain("- HARNESS_MODEL_PRICES_JSON");
     expect(gatewayBlock).not.toMatch(/OPENAI_API_KEY|ANTHROPIC_API_KEY|E2B_API_KEY|POSTGRES_PASSWORD/);
   });
 
