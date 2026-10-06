@@ -73,7 +73,7 @@ describe("live smoke contract", () => {
     expect(evidence).toMatchObject({ safe: "status-only", nested: { count: 2 } });
   });
 
-  it("keeps live smoke opt-in scripts out of public CI", async () => {
+  it("keeps live smoke opt-in scripts out of public CI and preserves high-signal probes", async () => {
     const [packageJson, workflow, httpSmoke, networkSmoke] = await Promise.all([
       readFile("package.json", "utf8"),
       readFile(".github/workflows/ci.yml", "utf8"),
@@ -85,14 +85,22 @@ describe("live smoke contract", () => {
     expect(scripts["smoke:e2b-network"]).toContain("e2b-network-smoke.ts");
     expect(workflow).not.toContain("smoke:http-gateway");
     expect(workflow).not.toContain("smoke:e2b-network");
+
     expect(httpSmoke).toContain("python -m pip install --require-hashes -r evals/litellm/requirements.txt");
-    expect(httpSmoke).toContain("spend_reserved");
+    expect(httpSmoke).toContain('execFileSync("python", ["-m", "venv", venv]');
+    expect(httpSmoke).toContain("estimate * 1.5");
+    expect(httpSmoke).toContain('active.state !== "streaming"');
+    expect(httpSmoke).toContain('errorCode(body) === "spend_reserved"');
+    expect(httpSmoke).not.toContain("0.000001");
     expect(httpSmoke).toContain("token_parity_openai_cached");
     expect(httpSmoke).toContain("token_parity_anthropic_cached");
+
     expect(networkSmoke).toContain("non_allowlisted_hostname_blocked");
     expect(networkSmoke).toContain("raw_ipv4_blocked");
     expect(networkSmoke).toContain("outside_dns_name_blocked");
     expect(networkSmoke).toContain("ipv6_egress_blocked");
+    expect(networkSmoke).toContain("probe(gatewayUrl, true)");
+    expect(networkSmoke).toContain("probe(url, false)");
   });
 
   it("keeps the Phase 0 boundary docs synchronized with the HTTP gateway and live smoke", async () => {
