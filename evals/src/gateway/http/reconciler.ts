@@ -83,6 +83,26 @@ function assertTokenMatch(
   }
 }
 
+function hasObservedUsage(call: HarnessCallRecord): boolean {
+  return (
+    call.usage.inputTokens !== 0 ||
+    call.usage.cachedInputTokens !== 0 ||
+    call.usage.cacheWriteInputTokens !== 0 ||
+    call.usage.outputTokens !== 0 ||
+    call.usage.reasoningTokens !== 0
+  );
+}
+
+function canSettleMissingSpendAtZero(call: HarnessCallRecord): boolean {
+  return (
+    call.zeroCostIfSpendMissing === true &&
+    call.state === "failed" &&
+    call.costPending === false &&
+    call.listPriceCostUsd === null &&
+    !hasObservedUsage(call)
+  );
+}
+
 export class HarnessSpendReconciler {
   private readonly callStore: HarnessCallStore;
   private readonly spendSource: LiteLLMSpendSource;
@@ -165,24 +185,33 @@ export class HarnessSpendReconciler {
         byId.set(id, row);
       }
 
-      if (byId.size === expected.size) {
+      const missing = [...expected.keys()].filter((id) => !byId.has(id));
+      const missingRequired = missing.filter((id) => {
+        const call = expected.get(id);
+        return !call || !canSettleMissingSpendAtZero(call);
+      });
+      const timedOut = this.clock() >= deadline;
+
+      if (missing.length === 0 || (timedOut && missingRequired.length === 0)) {
         let totalCostUsd = 0;
         const reconciledCallIds: string[] = [];
         for (const [callId, call] of expected) {
           const row = byId.get(callId);
-          if (!row) throw new Error(`missing LiteLLM spend row for call ${callId}`);
-          await this.applySpendRow(call, row);
-          totalCostUsd += row.spendUsd;
+          if (row) {
+            await this.applySpendRow(call, row);
+            totalCostUsd += row.spendUsd;
+          } else {
+            await this.settleMissingSpendAtZero(call);
+          }
           reconciledCallIds.push(callId);
         }
         reconciledCallIds.sort();
         return { totalCostUsd, reconciledCallIds };
       }
 
-      if (this.clock() >= deadline) {
-        const missing = [...expected.keys()].filter((id) => !byId.has(id));
+      if (timedOut) {
         throw new Error(
-          `LiteLLM spend reconciliation timed out; missing calls: ${missing.join(", ")}`,
+          `LiteLLM spend reconciliation timed out; missing calls: ${missingRequired.join(", ")}`,
         );
       }
       delay = Math.min(delay * 2, this.maxDelayMs);
@@ -228,6 +257,18 @@ export class HarnessSpendReconciler {
       }
       delay = Math.min(delay * 2, this.maxDelayMs);
     }
+  }
+
+  private async settleMissingSpendAtZero(call: HarnessCallRecord): Promise<void> {
+    if (!canSettleMissingSpendAtZero(call)) {
+      throw new Error(`missing LiteLLM spend row for call ${call.callId}`);
+    }
+    await this.callStore.saveCall({
+      ...call,
+      listPriceCostUsd: 0,
+      costPending: false,
+      updatedAtMs: this.clock(),
+    });
   }
 
   private async applySpendRow(
