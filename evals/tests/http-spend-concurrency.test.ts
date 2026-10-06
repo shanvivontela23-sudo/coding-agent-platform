@@ -9,7 +9,6 @@ import {
   createHarnessHttpHandler,
   loadHarnessHttpConfig,
   type HarnessCallRecord,
-  type HarnessDispatchRequest,
 } from "../src/gateway/http/index.js";
 
 const roots: string[] = [];
@@ -88,7 +87,7 @@ describe("paid harness spend reservations", () => {
     let callNumber = 0;
     const streamControllers: ReadableStreamDefaultController<Uint8Array>[] = [];
 
-    const dispatch = async (_request: HarnessDispatchRequest) => {
+    const dispatch = async () => {
       callNumber += 1;
       const thisCall = callNumber;
       if (thisCall === 1) {
