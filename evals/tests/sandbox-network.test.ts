@@ -3,10 +3,11 @@ import {
   defaultDependencyHosts,
   networkPolicyForPhase,
   toE2BCreateNetwork,
+  toE2BEgressUpdate,
 } from "../src/sandbox/network-policy.js";
 
 describe("networkPolicyForPhase", () => {
-  it("denies all egress while locked", () => {
+  it("denies all IPv4 and IPv6 egress while locked", () => {
     const policy = networkPolicyForPhase(
       "locked",
       "https://gateway.example.com/v1",
@@ -15,8 +16,12 @@ describe("networkPolicyForPhase", () => {
     expect(policy.allowHosts).toEqual([]);
     expect(toE2BCreateNetwork(policy)).toEqual({
       allowOut: [],
-      denyOut: ["0.0.0.0/0"],
+      denyOut: ["0.0.0.0/0", "::/0"],
       allowPublicTraffic: false,
+    });
+    expect(toE2BEgressUpdate(policy)).toEqual({
+      allowOut: [],
+      denyOut: ["0.0.0.0/0", "::/0"],
     });
   });
 
@@ -61,6 +66,10 @@ describe("networkPolicyForPhase", () => {
 
       expect(policy.allowHosts).toEqual(["gateway.example.com"]);
       expect(policy.denyAllOtherEgress).toBe(true);
+      expect(toE2BCreateNetwork(policy).denyOut).toEqual([
+        "0.0.0.0/0",
+        "::/0",
+      ]);
     },
   );
 
