@@ -110,7 +110,7 @@ describe("metered streaming pass-through", () => {
 
     await expect(readAll(proxied.body)).resolves.toBe(raw);
     await expect(proxied.completion).resolves.toMatchObject({ state: "truncated" });
-    expect(abort).toHaveBeenCalledTimes(1);
+    expect(abort).not.toHaveBeenCalled();
   });
 
   it("combines Anthropic start and terminal usage without rewriting SSE bytes", async () => {
