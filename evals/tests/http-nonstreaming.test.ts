@@ -16,7 +16,9 @@ const roots: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 function body(value: unknown) {
@@ -56,7 +58,11 @@ async function setup(fetchImpl: typeof fetch, timeoutMs = 500) {
     tokenService,
     gatewayStore,
     callStore,
-    rateLimiter: new RunTokenBucket({ ratePerMinute: 120, burst: 20, clock: () => 1_000 }),
+    rateLimiter: new RunTokenBucket({
+      ratePerMinute: 120,
+      burst: 20,
+      clock: () => 1_000,
+    }),
     clock: () => 1_000,
     dispatch: (request) => transport.forward(request),
   });
@@ -100,15 +106,21 @@ describe("non-streaming harness LiteLLM proxy", () => {
           headers: {
             "content-type": "application/json",
             "x-litellm-response-cost": "0.05",
-            "x-litellm-call-id": String((init?.headers as Record<string, string>)["x-litellm-call-id"]),
+            "x-litellm-call-id": String(
+              (init?.headers as Record<string, string>)["x-litellm-call-id"],
+            ),
           },
         },
       ),
     );
     const { callStore, handler, token } = await setup(fetchMock as typeof fetch);
 
-    const first = await handler(inbound(token, { model: "primary-model", input: "same" }));
-    const second = await handler(inbound(token, { model: "primary-model", input: "same" }));
+    const first = await handler(
+      inbound(token, { model: "primary-model", input: "same" }),
+    );
+    const second = await handler(
+      inbound(token, { model: "primary-model", input: "same" }),
+    );
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
@@ -137,11 +149,15 @@ describe("non-streaming harness LiteLLM proxy", () => {
     );
     const { gatewayStore, handler, token } = await setup(fetchMock as typeof fetch);
 
-    const response = await handler(inbound(token, { model: "primary-model", input: "x" }));
+    const response = await handler(
+      inbound(token, { model: "primary-model", input: "x" }),
+    );
     expect(response.status).toBe(429);
     expect((await gatewayStore.getRun("run-1")).status).toBe("limit-hit");
 
-    const again = await handler(inbound(token, { model: "primary-model", input: "x" }));
+    const again = await handler(
+      inbound(token, { model: "primary-model", input: "x" }),
+    );
     expect(again.status).toBe(429);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -155,25 +171,56 @@ describe("non-streaming harness LiteLLM proxy", () => {
     );
     const { callStore, handler, token } = await setup(fetchMock as typeof fetch);
     const response = await handler(
-      inbound(token, { model: "primary-model", messages: [] }, "/v1/messages/count_tokens"),
+      inbound(
+        token,
+        { model: "primary-model", messages: [] },
+        "/v1/messages/count_tokens",
+      ),
     );
 
     expect(response.status).toBe(200);
     const [record] = await callStore.listCalls("run-1");
-    expect(record).toMatchObject({ paid: false, state: "completed", listPriceCostUsd: 0 });
+    expect(record).toMatchObject({
+      paid: false,
+      state: "completed",
+      listPriceCostUsd: 0,
+    });
   });
 
   it("times out non-streaming upstream work and records the call as timeout", async () => {
-    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }),
+    const fetchMock = vi.fn(
+      (_url: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
     );
-    const { callStore, handler, token } = await setup(fetchMock as typeof fetch, 5);
+    const { callStore, handler, token } = await setup(
+      fetchMock as typeof fetch,
+      5,
+    );
 
-    const response = await handler(inbound(token, { model: "primary-model", input: "x" }));
+    const response = await handler(
+      inbound(token, { model: "primary-model", input: "x" }),
+    );
     expect(response.status).toBe(504);
     const [record] = await callStore.listCalls("run-1");
     expect(record?.state).toBe("timeout");
+  });
+
+  it("records an ordinary upstream network failure as failed, not interrupted", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("network unavailable");
+    });
+    const { callStore, handler, token } = await setup(fetchMock as typeof fetch);
+
+    const response = await handler(
+      inbound(token, { model: "primary-model", input: "x" }),
+    );
+
+    expect(response.status).toBe(502);
+    const [record] = await callStore.listCalls("run-1");
+    expect(record?.state).toBe("failed");
   });
 });
