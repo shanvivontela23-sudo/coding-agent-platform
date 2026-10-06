@@ -68,7 +68,10 @@ function safeHeaderNames(headers: ProtocolRecorderHeaders): string[] {
   return Object.entries(headers)
     .filter(([, value]) => value !== undefined)
     .map(([name]) => name.toLowerCase())
-    .filter((name) => !secretHeaderNames.has(name) && name !== "host" && name !== "content-length")
+    // Header names are protocol shape, not secrets. Values are never persisted.
+    // Keep auth header names so the transcript can prove whether a pinned harness
+    // uses Authorization, x-api-key, or another supported credential surface.
+    .filter((name) => name !== "host" && name !== "content-length")
     .sort();
 }
 
