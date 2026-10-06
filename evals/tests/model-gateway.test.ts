@@ -85,6 +85,8 @@ function request(
   };
 }
 
+const allowedModels = ["gpt-test"] as const;
+
 describe("P0-04 ModelGateway", () => {
   it("mints a token scoped to one run and rejects cross-run or expired use", async () => {
     const { store } = await createStore();
@@ -105,6 +107,7 @@ describe("P0-04 ModelGateway", () => {
     const { token } = await gateway.startRun({
       runId: "run-1",
       expiresAtMs: 2_000,
+      allowedModels,
     });
 
     await expect(gateway.call(token, request("run-2"))).rejects.toThrow(
@@ -135,6 +138,7 @@ describe("P0-04 ModelGateway", () => {
     const { token } = await gateway.startRun({
       runId: "run-1",
       expiresAtMs: 10_000,
+      allowedModels,
     });
     const response = await gateway.call(token, request());
 
@@ -182,13 +186,12 @@ describe("P0-04 ModelGateway", () => {
     const { token } = await gateway.startRun({
       runId: "run-1",
       expiresAtMs: 10_000,
+      allowedModels,
     });
     const first = await gateway.call(token, request());
     expect(adapter.calls).toHaveLength(1);
     expect(first.replayed).toBe(false);
 
-    // Simulate the caller crashing before it records its own step completion.
-    // A new gateway process uses the same durable store.
     const restartedStore = new FileGatewayStore({ rootDir: directory });
     const restartedGateway = new PersistentModelGateway({
       store: restartedStore,
@@ -227,6 +230,7 @@ describe("P0-04 ModelGateway", () => {
     const { token } = await gateway.startRun({
       runId: "run-1",
       expiresAtMs: 10_000,
+      allowedModels,
     });
     await gateway.call(token, request("run-1", "call-1"));
 
@@ -256,6 +260,7 @@ describe("P0-04 ModelGateway", () => {
     const { token } = await gateway.startRun({
       runId: "run-1",
       expiresAtMs: 10_000,
+      allowedModels,
     });
     await gateway.finishRun("run-1");
 

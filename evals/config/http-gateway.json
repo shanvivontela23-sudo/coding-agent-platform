@@ -1,0 +1,66 @@
+{
+  "limits": {
+    "maxBodyBytes": 8388608,
+    "ratePerMinute": 120,
+    "rateBurst": 20,
+    "nonStreamingTimeoutMs": 600000,
+    "firstResponseTimeoutMs": 120000,
+    "streamIdleTimeoutMs": 90000,
+    "maxStreamDurationMs": 1200000,
+    "reconciliationTimeoutMs": 30000,
+    "reconciliationInitialDelayMs": 500,
+    "reconciliationMaxDelayMs": 2000,
+    "costToleranceUsd": 0.000001
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "wireApi": "anthropic-messages",
+      "enabled": true,
+      "streamingAllowed": false,
+      "paid": true,
+      "modelField": "model",
+      "forwardRequestHeaders": ["anthropic-version", "anthropic-beta", "content-type"],
+      "safeResponseHeaders": ["content-type", "request-id"],
+      "modelSettingFields": ["temperature", "top_p", "top_k", "max_tokens"]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages/count_tokens",
+      "wireApi": "anthropic-messages",
+      "enabled": true,
+      "streamingAllowed": false,
+      "paid": false,
+      "modelField": "model",
+      "forwardRequestHeaders": ["anthropic-version", "anthropic-beta", "content-type"],
+      "safeResponseHeaders": ["content-type", "request-id"],
+      "modelSettingFields": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/responses",
+      "wireApi": "responses",
+      "enabled": true,
+      "streamingAllowed": false,
+      "paid": true,
+      "modelField": "model",
+      "forwardRequestHeaders": ["content-type"],
+      "safeResponseHeaders": ["content-type", "x-request-id"],
+      "modelSettingFields": ["temperature", "top_p", "max_output_tokens", "reasoning"]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "wireApi": "chat-completions",
+      "enabled": false,
+      "streamingAllowed": false,
+      "paid": true,
+      "modelField": "model",
+      "forwardRequestHeaders": ["content-type"],
+      "safeResponseHeaders": ["content-type", "x-request-id"],
+      "modelSettingFields": ["temperature", "top_p", "max_tokens", "reasoning_effort"]
+    }
+  ],
+  "routeEvidence": {}
+}
