@@ -15,13 +15,14 @@ The operator must first:
 5. confirm the harness licences/terms permit the intended commercial multi-tenant use before benchmark results are used to choose a harness;
 6. source the host-only secret environment without pasting any secret into chat or committing it.
 
-The deployment should bind LiteLLM management access to loopback only for the trusted operator runner. The sandbox never receives the LiteLLM master key, provider keys, E2B key, or GitHub credentials.
+The deployment binds LiteLLM management access to loopback only for the trusted operator runner. The sandbox never receives the LiteLLM master key, provider keys, E2B key, or GitHub credentials.
 
 ## HTTP gateway smoke
 
-Run from the trusted VM host/repository checkout, not from an E2B guest:
+Run from the trusted VM host/repository checkout, not from an E2B guest. The runner's internal management-client variable is named `LITELLM_ADMIN_TOKEN`; use the same single master credential rather than creating a second secret:
 
 ```text
+export LITELLM_ADMIN_TOKEN="$LITELLM_MASTER_KEY"
 LIVE_SMOKE=1 pnpm smoke:http-gateway
 ```
 
@@ -33,7 +34,7 @@ Required smoke-only environment:
 - `SMOKE_OPENAI_MODEL`, `SMOKE_ANTHROPIC_MODEL`, `SMOKE_BACKGROUND_MODEL` — exact model names used by the run;
 - `SMOKE_CLAUDE_TRANSCRIPT_PATH`, `SMOKE_CLAUDE_TRANSCRIPT_SHA256`;
 - `SMOKE_CODEX_TRANSCRIPT_PATH`, `SMOKE_CODEX_TRANSCRIPT_SHA256`;
-- the normal trusted-host secrets `MODEL_GATEWAY_RUN_TOKEN_SECRET` and `LITELLM_ADMIN_TOKEN`.
+- the normal trusted-host secrets `MODEL_GATEWAY_RUN_TOKEN_SECRET` and `LITELLM_MASTER_KEY` (aliased to `LITELLM_ADMIN_TOKEN` only for the smoke process as shown above).
 
 The HTTP runner performs a **real** `python -m pip install --require-hashes -r evals/litellm/requirements.txt` preflight. It then creates disposable run-scoped LiteLLM keys/runs and validates the frozen HTTP contract.
 
