@@ -22,6 +22,8 @@ export type HarnessCallRecord = {
   readonly latencyMs: number | null;
   readonly litellmCallId: string | null;
   readonly listPriceCostUsd: number | null;
+  /** True only when a successful paid response must be reconciled against LiteLLM spend logs. */
+  readonly costPending: boolean;
   readonly createdAtMs: number;
   readonly updatedAtMs: number;
 };
