@@ -327,7 +327,10 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       return jsonError(400, "invalid_request", "request body is invalid");
     }
 
-    if (body.stream !== undefined && body.stream !== false && !route.streamingAllowed) {
+    if (body.stream !== undefined && typeof body.stream !== "boolean") {
+      return jsonError(400, "invalid_request", "stream must be a boolean");
+    }
+    if (body.stream === true && !route.streamingAllowed) {
       await appendRefusal(
         options,
         run.runId,
