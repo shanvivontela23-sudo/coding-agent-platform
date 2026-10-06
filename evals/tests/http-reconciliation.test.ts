@@ -232,6 +232,110 @@ describe("bounded reconciliation", () => {
     });
   });
 
+  it("settles missing spend rows for rate-limited and context-length failures with no usage at zero cost", async () => {
+    const store = await callStore();
+    await store.createCall(
+      paidCall("rate-limited", {
+        state: "failed",
+        usage: emptyUsage,
+        costPending: false,
+      }),
+    );
+    await store.createCall(
+      paidCall("context-length", {
+        state: "failed",
+        usage: emptyUsage,
+        costPending: false,
+      }),
+    );
+    let now = 0;
+    const reconciler = new HarnessSpendReconciler({
+      callStore: store,
+      spendSource: {
+        listCallSpend: async () => [],
+        listRunSpend: async () => [],
+      },
+      timeoutMs: 500,
+      initialDelayMs: 500,
+      maxDelayMs: 500,
+      costToleranceUsd: 0.000001,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+
+    await expect(reconciler.reconcileRun(run)).resolves.toEqual({
+      totalCostUsd: 0,
+      reconciledCallIds: ["context-length", "rate-limited"],
+    });
+    await expect(store.getCall("run-1", "rate-limited")).resolves.toMatchObject({
+      listPriceCostUsd: 0,
+      costPending: false,
+    });
+    await expect(store.getCall("run-1", "context-length")).resolves.toMatchObject({
+      listPriceCostUsd: 0,
+      costPending: false,
+    });
+  });
+
+  it("still applies a LiteLLM spend row when one exists for a failed no-usage call", async () => {
+    const store = await callStore();
+    await store.createCall(
+      paidCall("rate-limited", {
+        state: "failed",
+        usage: emptyUsage,
+        costPending: false,
+      }),
+    );
+    await store.createCall(
+      paidCall("context-length", {
+        state: "failed",
+        usage: emptyUsage,
+        costPending: false,
+      }),
+    );
+    const rateLimitedSpend: LiteLLMSpendRecord = {
+      requestId: "provider-rate-limited",
+      litellmCallId: "rate-limited",
+      spendUsd: 0.003,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      reasoningTokens: null,
+    };
+    let now = 0;
+    const reconciler = new HarnessSpendReconciler({
+      callStore: store,
+      spendSource: {
+        listCallSpend: async () => [],
+        listRunSpend: async () => [rateLimitedSpend],
+      },
+      timeoutMs: 500,
+      initialDelayMs: 500,
+      maxDelayMs: 500,
+      costToleranceUsd: 0.000001,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+
+    await expect(reconciler.reconcileRun(run)).resolves.toEqual({
+      totalCostUsd: 0.003,
+      reconciledCallIds: ["context-length", "rate-limited"],
+    });
+    await expect(store.getCall("run-1", "rate-limited")).resolves.toMatchObject({
+      listPriceCostUsd: 0.003,
+      costPending: false,
+    });
+    await expect(store.getCall("run-1", "context-length")).resolves.toMatchObject({
+      listPriceCostUsd: 0,
+      costPending: false,
+    });
+  });
+
   it("fails clearly for duplicate call rows", async () => {
     const store = await callStore();
     await store.createCall(paidCall("call-1"));
