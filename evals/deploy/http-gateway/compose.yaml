@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
     environment:
       - MODEL_GATEWAY_RUN_TOKEN_SECRET
-      - LITELLM_ADMIN_TOKEN
+      - LITELLM_ADMIN_TOKEN=${LITELLM_MASTER_KEY}
       - HARNESS_MODEL_PRICES_JSON
       - HTTP_GATEWAY_HOST=0.0.0.0
       - HTTP_GATEWAY_PORT=8080
