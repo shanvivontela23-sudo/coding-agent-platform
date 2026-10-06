@@ -63,6 +63,23 @@ function selectResponseHeaders(
   return selected;
 }
 
+function selectErrorResponseHeaders(
+  response: Response,
+  allowed: readonly string[],
+): Record<string, string> {
+  const selected = selectResponseHeaders(response, allowed);
+  const retryAfter = response.headers.get("retry-after");
+  if (
+    retryAfter !== null &&
+    retryAfter.length <= 256 &&
+    !/[\r\n]/.test(retryAfter)
+  ) {
+    selected["retry-after"] = retryAfter;
+  }
+  selected["content-type"] = "application/json";
+  return selected;
+}
+
 function emptyUsage(): ModelUsage {
   return {
     inputTokens: 0,
@@ -92,8 +109,71 @@ function parseJsonObject(bytes: Uint8Array): Readonly<Record<string, unknown>> |
   }
 }
 
-function isBudgetRejection(status: number, bytes: Uint8Array): boolean {
-  return status === 429 && /(budget|spend|limit)/i.test(Buffer.from(bytes).toString("utf8"));
+function getErrorObject(
+  body: Readonly<Record<string, unknown>> | null,
+): Readonly<Record<string, unknown>> | null {
+  const error = body?.error;
+  return typeof error === "object" && error !== null && !Array.isArray(error)
+    ? (error as Readonly<Record<string, unknown>>)
+    : null;
+}
+
+function isBudgetRejection(body: Readonly<Record<string, unknown>> | null): boolean {
+  // LiteLLM v1.103.2 maps BudgetExceededError to ProxyException with
+  // type=ProxyErrorTypes.budget_exceeded while preserving the exception status code.
+  return getErrorObject(body)?.type === "budget_exceeded";
+}
+
+function redactErrorMessage(value: string): string {
+  return value
+    .slice(0, 4096)
+    .replace(/\bBearer\s+[^\s,;]+/gi, "[redacted]")
+    .replace(/\bsk-[A-Za-z0-9._-]{6,}\b/g, "[redacted]")
+    .replace(
+      /(api[_ -]?key\s*[=:]\s*)[^\s,;]+/gi,
+      (_match, prefix: string) => `${prefix}[redacted]`,
+    );
+}
+
+function safeNullableString(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "string") return value.slice(0, 1024);
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function sanitizedErrorBody(
+  body: Readonly<Record<string, unknown>> | null,
+  status: number,
+): Uint8Array {
+  const error = getErrorObject(body);
+  if (!error) {
+    return Buffer.from(
+      JSON.stringify({
+        error: {
+          message: "upstream model gateway request failed",
+          type: "upstream_error",
+          param: null,
+          code: String(status),
+        },
+      }),
+    );
+  }
+
+  const message =
+    typeof error.message === "string"
+      ? redactErrorMessage(error.message)
+      : "upstream model gateway request failed";
+  const type = safeNullableString(error.type);
+  const param = safeNullableString(error.param);
+  const code = safeNullableString(error.code);
+  const sanitized: Record<string, unknown> = { message };
+  if (type !== undefined) sanitized.type = type;
+  if (param !== undefined) sanitized.param = param;
+  if (code !== undefined) sanitized.code = code;
+  if (!("code" in sanitized)) sanitized.code = String(status);
+
+  return Buffer.from(JSON.stringify({ error: sanitized }));
 }
 
 export class LiteLLMHarnessTransport {
@@ -136,6 +216,7 @@ export class LiteLLMHarnessTransport {
       latencyMs: null,
       litellmCallId: request.callId,
       listPriceCostUsd: null,
+      costPending: false,
       createdAtMs: startedAt,
       updatedAtMs: startedAt,
     };
@@ -156,19 +237,11 @@ export class LiteLLMHarnessTransport {
       });
       const bytes = new Uint8Array(await response.arrayBuffer());
       const latencyMs = Math.max(0, this.clock() - startedAt);
+      const responseBody = parseJsonObject(bytes);
 
       if (!response.ok) {
-        if (isBudgetRejection(response.status, bytes)) {
+        if (isBudgetRejection(responseBody)) {
           await this.gatewayStore.saveRun({ ...request.run, status: "limit-hit" });
-          record = {
-            ...record,
-            state: "failed",
-            latencyMs,
-            listPriceCostUsd: 0,
-            updatedAtMs: this.clock(),
-          };
-          await this.callStore.saveCall(record);
-          return safeError(429, "spend_limit", "run spend limit has been reached");
         }
         record = {
           ...record,
@@ -177,11 +250,14 @@ export class LiteLLMHarnessTransport {
           updatedAtMs: this.clock(),
         };
         await this.callStore.saveCall(record);
-        return safeError(502, "upstream_error", "upstream model gateway request failed");
+        return {
+          status: response.status,
+          headers: selectErrorResponseHeaders(response, request.route.safeResponseHeaders),
+          body: sanitizedErrorBody(responseBody, response.status),
+        };
       }
 
-      const body = parseJsonObject(bytes);
-      if (!body) {
+      if (!responseBody) {
         record = {
           ...record,
           state: "failed",
@@ -193,22 +269,29 @@ export class LiteLLMHarnessTransport {
       }
 
       const usage = request.route.paid
-        ? normalizeModelUsage(request.route.wireApi, body)
-        : normalizeTokenCountUsage(body);
-      let listPriceCostUsd = 0;
+        ? normalizeModelUsage(request.route.wireApi, responseBody)
+        : normalizeTokenCountUsage(responseBody);
+      let listPriceCostUsd: number | null = 0;
+      let costPending = false;
       if (request.route.paid) {
         const rawCost = response.headers.get("x-litellm-response-cost");
-        listPriceCostUsd = rawCost === null ? Number.NaN : Number(rawCost);
-        if (!Number.isFinite(listPriceCostUsd) || listPriceCostUsd < 0) {
-          record = {
-            ...record,
-            state: "failed",
-            usage,
-            latencyMs,
-            updatedAtMs: this.clock(),
-          };
-          await this.callStore.saveCall(record);
-          return safeError(502, "metering_error", "upstream cost metadata is missing");
+        if (rawCost === null) {
+          listPriceCostUsd = null;
+          costPending = true;
+        } else {
+          const parsedCost = Number(rawCost);
+          if (!Number.isFinite(parsedCost) || parsedCost < 0) {
+            record = {
+              ...record,
+              state: "failed",
+              usage,
+              latencyMs,
+              updatedAtMs: this.clock(),
+            };
+            await this.callStore.saveCall(record);
+            return safeError(502, "metering_error", "upstream cost metadata is invalid");
+          }
+          listPriceCostUsd = parsedCost;
         }
       }
 
@@ -218,6 +301,7 @@ export class LiteLLMHarnessTransport {
         usage,
         latencyMs,
         listPriceCostUsd,
+        costPending,
         updatedAtMs: this.clock(),
       };
       await this.callStore.saveCall(record);
