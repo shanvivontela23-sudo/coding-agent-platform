@@ -27,7 +27,7 @@ services:
       GATEWAY_STORE_DIR: /var/lib/coding-agent/gateway
       HARNESS_CALL_STORE_DIR: /var/lib/coding-agent/http
     volumes:
-      - gateway_state:/var/lib/coding-agent
+      - ${GATEWAY_STATE_DIR:-/var/lib/coding-agent-platform}:/var/lib/coding-agent
     depends_on:
       - litellm
 
@@ -38,6 +38,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../../../.env
+    ports:
+      - "127.0.0.1:4000:4000"
     environment:
       DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
     depends_on:
@@ -56,5 +58,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  gateway_state:
   postgres_data:
