@@ -3,7 +3,10 @@ import { normalizeModelUsage, normalizeTokenCountUsage } from "../usage.js";
 import type {
   HarnessDispatchRequest,
   HarnessOutboundResponse,
+  HarnessSettlement,
 } from "./handler.js";
+import type { HarnessSpendReconciler } from "./reconciler.js";
+import { proxyMeteredStream } from "./stream-proxy.js";
 import type { HarnessCallRecord, HarnessCallStore } from "./store.js";
 
 export type LiteLLMHarnessTransportOptions = {
@@ -12,6 +15,10 @@ export type LiteLLMHarnessTransportOptions = {
   readonly gatewayStore: GatewayStore;
   readonly callStore: HarnessCallStore;
   readonly nonStreamingTimeoutMs: number;
+  readonly firstResponseTimeoutMs?: number;
+  readonly streamIdleTimeoutMs?: number;
+  readonly maxStreamDurationMs?: number;
+  readonly spendReconciler?: Pick<HarnessSpendReconciler, "reconcileCall">;
   readonly clock?: () => number;
 };
 
@@ -90,11 +97,17 @@ function emptyUsage(): ModelUsage {
   };
 }
 
-function safeError(status: number, code: string, message: string): HarnessOutboundResponse {
+function safeError(
+  status: number,
+  code: string,
+  message: string,
+  settlement?: Promise<HarnessSettlement>,
+): HarnessOutboundResponse {
   return {
     status,
     headers: { "content-type": "application/json" },
     body: Buffer.from(JSON.stringify({ error: { code, message } })),
+    ...(settlement ? { settlement } : {}),
   };
 }
 
@@ -176,12 +189,23 @@ function sanitizedErrorBody(
   return Buffer.from(JSON.stringify({ error: sanitized }));
 }
 
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 export class LiteLLMHarnessTransport {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly gatewayStore: GatewayStore;
   private readonly callStore: HarnessCallStore;
   private readonly timeoutMs: number;
+  private readonly firstResponseTimeoutMs: number;
+  private readonly streamIdleTimeoutMs: number;
+  private readonly maxStreamDurationMs: number;
+  private readonly spendReconciler?: Pick<HarnessSpendReconciler, "reconcileCall">;
   private readonly clock: () => number;
 
   constructor(options: LiteLLMHarnessTransportOptions) {
@@ -189,16 +213,29 @@ export class LiteLLMHarnessTransport {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.gatewayStore = options.gatewayStore;
     this.callStore = options.callStore;
-    if (!Number.isInteger(options.nonStreamingTimeoutMs) || options.nonStreamingTimeoutMs <= 0) {
-      throw new Error("nonStreamingTimeoutMs must be a positive integer");
-    }
-    this.timeoutMs = options.nonStreamingTimeoutMs;
+    this.timeoutMs = positiveInteger(
+      options.nonStreamingTimeoutMs,
+      "nonStreamingTimeoutMs",
+    );
+    this.firstResponseTimeoutMs = positiveInteger(
+      options.firstResponseTimeoutMs ?? options.nonStreamingTimeoutMs,
+      "firstResponseTimeoutMs",
+    );
+    this.streamIdleTimeoutMs = positiveInteger(
+      options.streamIdleTimeoutMs ?? options.nonStreamingTimeoutMs,
+      "streamIdleTimeoutMs",
+    );
+    this.maxStreamDurationMs = positiveInteger(
+      options.maxStreamDurationMs ?? options.nonStreamingTimeoutMs,
+      "maxStreamDurationMs",
+    );
+    this.spendReconciler = options.spendReconciler;
     this.clock = options.clock ?? Date.now;
   }
 
   async forward(
     request: HarnessDispatchRequest,
-    externalSignal?: AbortSignal,
+    externalSignal: AbortSignal | undefined = request.signal,
   ): Promise<HarnessOutboundResponse> {
     const startedAt = this.clock();
     let record: HarnessCallRecord = {
@@ -222,8 +259,10 @@ export class LiteLLMHarnessTransport {
     };
     await this.callStore.createCall(record);
 
+    const streaming = request.body.stream === true;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutMs = streaming ? this.firstResponseTimeoutMs : this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const signal = externalSignal
       ? AbortSignal.any([controller.signal, externalSignal])
       : controller.signal;
@@ -235,6 +274,47 @@ export class LiteLLMHarnessTransport {
         body: JSON.stringify(request.body),
         signal,
       });
+      clearTimeout(timer);
+
+      if (streaming && response.ok && response.body) {
+        record = {
+          ...record,
+          state: "streaming",
+          costPending: request.route.paid,
+          updatedAtMs: this.clock(),
+        };
+        await this.callStore.saveCall(record);
+        const metered = proxyMeteredStream({
+          upstream: response.body,
+          wireApi: request.route.wireApi,
+          abort: () => controller.abort(),
+          firstResponseTimeoutMs: this.firstResponseTimeoutMs,
+          idleTimeoutMs: this.streamIdleTimeoutMs,
+          maxDurationMs: this.maxStreamDurationMs,
+          ...(externalSignal ? { signal: externalSignal } : {}),
+        });
+        const settlement = metered.completion.then(async (completion) => {
+          const finishedAt = this.clock();
+          record = {
+            ...record,
+            state: completion.state,
+            usage: completion.usage,
+            latencyMs: Math.max(0, finishedAt - startedAt),
+            costPending: request.route.paid,
+            updatedAtMs: finishedAt,
+          };
+          await this.callStore.saveCall(record);
+          if (!request.route.paid) return { costUsd: 0 };
+          return await this.reconcile(request);
+        });
+        return {
+          status: response.status,
+          headers: selectResponseHeaders(response, request.route.safeResponseHeaders),
+          body: metered.body,
+          settlement,
+        };
+      }
+
       const bytes = new Uint8Array(await response.arrayBuffer());
       const latencyMs = Math.max(0, this.clock() - startedAt);
       const responseBody = parseJsonObject(bytes);
@@ -254,6 +334,7 @@ export class LiteLLMHarnessTransport {
           status: response.status,
           headers: selectErrorResponseHeaders(response, request.route.safeResponseHeaders),
           body: sanitizedErrorBody(responseBody, response.status),
+          settlement: Promise.resolve({ costUsd: 0 }),
         };
       }
 
@@ -265,7 +346,12 @@ export class LiteLLMHarnessTransport {
           updatedAtMs: this.clock(),
         };
         await this.callStore.saveCall(record);
-        return safeError(502, "upstream_error", "upstream response was not valid JSON");
+        return safeError(
+          502,
+          "upstream_error",
+          "upstream response was not valid JSON",
+          Promise.resolve({ costUsd: 0 }),
+        );
       }
 
       const usage = request.route.paid
@@ -289,7 +375,12 @@ export class LiteLLMHarnessTransport {
               updatedAtMs: this.clock(),
             };
             await this.callStore.saveCall(record);
-            return safeError(502, "metering_error", "upstream cost metadata is invalid");
+            return safeError(
+              502,
+              "metering_error",
+              "upstream cost metadata is invalid",
+              Promise.resolve({ costUsd: 0 }),
+            );
           }
           listPriceCostUsd = parsedCost;
         }
@@ -305,27 +396,58 @@ export class LiteLLMHarnessTransport {
         updatedAtMs: this.clock(),
       };
       await this.callStore.saveCall(record);
+      const settlement = costPending
+        ? this.reconcile(request)
+        : Promise.resolve({ costUsd: listPriceCostUsd ?? 0 });
       return {
         status: response.status,
         headers: selectResponseHeaders(response, request.route.safeResponseHeaders),
         body: bytes,
+        settlement,
       };
-    } catch (error) {
-      void error;
+    } catch {
+      clearTimeout(timer);
       const interrupted = externalSignal?.aborted === true;
       const timedOut = controller.signal.aborted && !interrupted;
+      const paidDispatched = request.route.paid;
       record = {
         ...record,
         state: timedOut ? "timeout" : interrupted ? "interrupted" : "failed",
         latencyMs: Math.max(0, this.clock() - startedAt),
+        costPending: paidDispatched,
         updatedAtMs: this.clock(),
       };
       await this.callStore.saveCall(record);
-      if (timedOut) return safeError(504, "upstream_timeout", "upstream request timed out");
-      if (interrupted) return safeError(499, "client_closed", "client disconnected");
-      return safeError(502, "upstream_error", "upstream model gateway request failed");
+      const settlement = paidDispatched
+        ? this.reconcile(request)
+        : Promise.resolve({ costUsd: 0 });
+      if (timedOut) {
+        return safeError(504, "upstream_timeout", "upstream request timed out", settlement);
+      }
+      if (interrupted) {
+        return safeError(499, "client_closed", "client disconnected", settlement);
+      }
+      return safeError(
+        502,
+        "upstream_error",
+        "upstream model gateway request failed",
+        settlement,
+      );
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async reconcile(
+    request: HarnessDispatchRequest,
+  ): Promise<HarnessSettlement> {
+    if (!this.spendReconciler) {
+      throw new Error("LiteLLM spend reconciler is required for pending paid cost");
+    }
+    const reconciled = await this.spendReconciler.reconcileCall(
+      request.run,
+      request.callId,
+    );
+    return { costUsd: reconciled.costUsd };
   }
 }
