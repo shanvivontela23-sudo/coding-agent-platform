@@ -130,6 +130,56 @@ function safeModelSettings(
   return settings;
 }
 
+async function recordedRunSpend(
+  runId: string,
+  gatewayStore: GatewayStore,
+  callStore: HarnessCallStore,
+): Promise<{ readonly costUsd: number; readonly hasPendingPaidCost: boolean }> {
+  const [directCosts, harnessCalls] = await Promise.all([
+    gatewayStore.listCostRecords(runId),
+    callStore.listCalls(runId),
+  ]);
+
+  let costUsd = 0;
+  for (const record of directCosts) {
+    if (!Number.isFinite(record.listPriceCostUsd) || record.listPriceCostUsd < 0) {
+      throw new Error("stored direct-call cost is invalid");
+    }
+    costUsd += record.listPriceCostUsd;
+  }
+
+  let hasPendingPaidCost = false;
+  for (const call of harnessCalls) {
+    if (!call.paid) continue;
+    if (call.costPending) hasPendingPaidCost = true;
+    if (call.listPriceCostUsd === null) continue;
+    if (!Number.isFinite(call.listPriceCostUsd) || call.listPriceCostUsd < 0) {
+      throw new Error("stored harness-call cost is invalid");
+    }
+    costUsd += call.listPriceCostUsd;
+  }
+
+  return { costUsd, hasPendingPaidCost };
+}
+
+async function appendRefusal(
+  options: HarnessHttpHandlerOptions,
+  runId: string,
+  method: string,
+  path: string,
+  reason: string,
+  timestampMs: number,
+): Promise<void> {
+  await options.callStore.appendRefusal({
+    runId,
+    refusalId: randomUUID(),
+    timestampMs,
+    method: method.toUpperCase(),
+    path,
+    reason,
+  });
+}
+
 export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
   const clock = options.clock ?? Date.now;
 
@@ -165,14 +215,14 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
     const path = normalizePath(request.path);
     const route = getHarnessRoute(request.method, path, options.config);
     if (!route || !route.enabled) {
-      await options.callStore.appendRefusal({
-        runId: run.runId,
-        refusalId: randomUUID(),
-        timestampMs: clock(),
-        method: request.method.toUpperCase(),
+      await appendRefusal(
+        options,
+        run.runId,
+        request.method,
         path,
-        reason: route ? "disabled-route" : "unknown-route",
-      });
+        route ? "disabled-route" : "unknown-route",
+        clock(),
+      );
       return jsonError(404, "not_found", "route is not available");
     }
 
@@ -190,14 +240,14 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
     }
 
     if (body.stream !== undefined && body.stream !== false && !route.streamingAllowed) {
-      await options.callStore.appendRefusal({
-        runId: run.runId,
-        refusalId: randomUUID(),
-        timestampMs: clock(),
-        method: request.method.toUpperCase(),
+      await appendRefusal(
+        options,
+        run.runId,
+        request.method,
         path,
-        reason: "streaming-not-available",
-      });
+        "streaming-not-available",
+        clock(),
+      );
       return jsonError(
         400,
         "streaming_not_available",
@@ -207,15 +257,54 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
 
     const model = getModel(body, route);
     if (!model || !run.allowedModels.includes(model)) {
-      await options.callStore.appendRefusal({
-        runId: run.runId,
-        refusalId: randomUUID(),
-        timestampMs: clock(),
-        method: request.method.toUpperCase(),
+      await appendRefusal(
+        options,
+        run.runId,
+        request.method,
         path,
-        reason: "model-not-allowed",
-      });
+        "model-not-allowed",
+        clock(),
+      );
       return jsonError(400, "model_not_allowed", "requested model is not allowed");
+    }
+
+    if (route.paid) {
+      let spend;
+      try {
+        spend = await recordedRunSpend(run.runId, options.gatewayStore, options.callStore);
+      } catch {
+        return jsonError(500, "spend_state_error", "run spend state is unavailable");
+      }
+
+      if (spend.costUsd >= run.spendCapUsd) {
+        run = { ...run, status: "limit-hit" };
+        await options.gatewayStore.saveRun(run);
+        await appendRefusal(
+          options,
+          run.runId,
+          request.method,
+          path,
+          "spend-limit",
+          clock(),
+        );
+        return jsonError(429, "spend_limit", "run spend limit has been reached");
+      }
+
+      if (spend.hasPendingPaidCost) {
+        await appendRefusal(
+          options,
+          run.runId,
+          request.method,
+          path,
+          "spend-reconciliation-pending",
+          clock(),
+        );
+        return jsonError(
+          503,
+          "spend_reconciliation_pending",
+          "a prior paid call is awaiting spend reconciliation",
+        );
+      }
     }
 
     return await options.dispatch({
