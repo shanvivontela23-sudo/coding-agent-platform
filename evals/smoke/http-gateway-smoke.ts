@@ -14,6 +14,7 @@ import {
   LiteLLMHarnessTransport,
   LiteLLMSpendClient,
   loadHarnessHttpConfig,
+  parseModelListPrices,
   protocolTranscriptSha256,
   proxyMeteredStream,
   type HarnessCallRecord,
@@ -29,16 +30,8 @@ import {
   type SmokeEvidenceRow,
 } from "./contracts.js";
 
-// The live preflight intentionally executes this as a real install, not --dry-run:
-// python -m pip install --require-hashes -r evals/litellm/requirements.txt
-const HASH_LOCK_INSTALL_ARGS = [
-  "-m",
-  "pip",
-  "install",
-  "--require-hashes",
-  "-r",
-  "evals/litellm/requirements.txt",
-] as const;
+// The live preflight intentionally executes a real install, not --dry-run.
+const HASH_LOCK_REQUIREMENTS = "evals/litellm/requirements.txt";
 
 const emptyUsage = {
   inputTokens: 0,
@@ -264,6 +257,41 @@ async function verifyTranscript(pathEnv: string, digestEnv: string, expectedName
   if (actual !== expectedDigest) throw new Error(`${pathEnv} SHA-256 does not match reviewed evidence`);
 }
 
+async function runHashLockedInstall(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "coding-agent-litellm-install-"));
+  const venv = join(root, "venv");
+  try {
+    execFileSync("python", ["-m", "venv", venv], { stdio: "pipe" });
+    execFileSync(
+      join(venv, "bin", "python"),
+      ["-m", "pip", "install", "--require-hashes", "-r", HASH_LOCK_REQUIREMENTS],
+      { stdio: "pipe" },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function reservationEstimateUsd(
+  model: string,
+  body: Readonly<Record<string, unknown>>,
+): number {
+  const prices = parseModelListPrices(requiredEnv("HARNESS_MODEL_PRICES_JSON"));
+  const price = prices[model];
+  if (!price) throw new Error(`no smoke list price configured for ${model}`);
+  const outputLimit =
+    typeof body.max_output_tokens === "number" &&
+    Number.isInteger(body.max_output_tokens) &&
+    body.max_output_tokens >= 0
+      ? body.max_output_tokens
+      : price.defaultMaxOutputTokens;
+  const inputBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+  return (
+    inputBytes * price.inputUsdPerMillionTokens +
+    outputLimit * price.outputUsdPerMillionTokens
+  ) / 1_000_000;
+}
+
 async function runControlledTimeoutAssertions(): Promise<Record<string, boolean>> {
   const result: Record<string, boolean> = {};
 
@@ -398,7 +426,7 @@ async function main(): Promise<void> {
   };
 
   await record("hash_locked_litellm_install", async () => {
-    execFileSync("python", [...HASH_LOCK_INSTALL_ARGS], { stdio: "pipe" });
+    await runHashLockedInstall();
     return { command: "python -m pip install --require-hashes -r evals/litellm/requirements.txt" };
   });
 
@@ -689,33 +717,45 @@ async function main(): Promise<void> {
   });
 
   await record("spend_reserved_refusal_count", async () => {
+    const reserveBody = {
+      model: openaiModel,
+      input: "Write a long numbered sequence with one short item per line until you reach the output limit.",
+      max_output_tokens: 4_096,
+      stream: true,
+    } as const;
+    const estimate = reservationEstimateUsd(openaiModel, reserveBody);
+    if (!Number.isFinite(estimate) || estimate <= 0) {
+      throw new Error("reservation probe produced a non-positive estimate");
+    }
     const reserveRun = await createSmokeRun(
       gatewayStore,
       tokenService,
       litellmUrl,
       adminToken,
       [openaiModel],
-      0.000001,
+      estimate * 1.5,
     );
-    const responses = await Promise.all([
-      gatewayRequest(baseUrl, "/v1/responses", reserveRun.token, {
-        model: openaiModel,
-        input: "reservation probe",
-        max_output_tokens: 128,
-      }),
-      gatewayRequest(baseUrl, "/v1/responses", reserveRun.token, {
-        model: openaiModel,
-        input: "reservation probe",
-        max_output_tokens: 128,
-      }),
-    ]);
-    let refusals = 0;
-    for (const response of responses) {
-      const body = await responseJson(response);
-      if (response.status === 429 && errorCode(body) === "spend_reserved") refusals += 1;
+    const before = new Set((await callStore.listCalls(reserveRun.run.runId)).map((call) => call.callId));
+    const first = await gatewayRequest(baseUrl, "/v1/responses", reserveRun.token, reserveBody);
+    if (!first.ok || !first.body) {
+      throw new Error(`first reservation probe returned ${first.status}`);
     }
-    if (refusals < 1) throw new Error("no spend_reserved refusal was observed");
-    return { spendReservedRefusals: refusals };
+    try {
+      const firstCall = await latestNewCall(callStore, reserveRun.run.runId, before);
+      const active = await callStore.getCall(reserveRun.run.runId, firstCall.callId);
+      if (active.state !== "streaming") {
+        throw new Error(`first reservation probe was ${active.state}, not streaming`);
+      }
+      const second = await gatewayRequest(baseUrl, "/v1/responses", reserveRun.token, reserveBody);
+      const body = await responseJson(second);
+      const refused = second.status === 429 && errorCode(body) === "spend_reserved";
+      if (!refused) {
+        throw new Error(`second reservation probe returned ${second.status}/${errorCode(body)}`);
+      }
+      return { spendReservedRefusals: 1, firstCallState: active.state };
+    } finally {
+      await first.body.cancel().catch(() => undefined);
+    }
   });
 
   await record("auth_before_body", async () => {
