@@ -2,6 +2,7 @@ import type { ModelUsage, ModelWireApi } from "../types.js";
 
 export type HarnessCallState =
   | "accepted"
+  | "streaming"
   | "completed"
   | "timeout"
   | "interrupted"
@@ -22,7 +23,7 @@ export type HarnessCallRecord = {
   readonly latencyMs: number | null;
   readonly litellmCallId: string | null;
   readonly listPriceCostUsd: number | null;
-  /** True only when a successful paid response must be reconciled against LiteLLM spend logs. */
+  /** True while a paid call still needs authoritative LiteLLM spend reconciliation. */
   readonly costPending: boolean;
   readonly createdAtMs: number;
   readonly updatedAtMs: number;
