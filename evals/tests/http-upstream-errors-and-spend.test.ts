@@ -182,9 +182,12 @@ describe("P0-05 upstream errors and spend enforcement", () => {
         },
       ),
     );
-    const { gatewayStore, handler, token } = await setup(fetchMock as typeof fetch);
+    const { callStore, gatewayStore, handler, token } = await setup(
+      fetchMock as typeof fetch,
+    );
 
     const response = await handler(inbound(token));
+    const [call] = await callStore.listCalls("run-1");
 
     expect(response.status).toBe(429);
     expect(response.headers["retry-after"]).toBe("7");
@@ -195,6 +198,11 @@ describe("P0-05 upstream errors and spend enforcement", () => {
         param: null,
         code: "429",
       },
+    });
+    expect(call).toMatchObject({
+      state: "failed",
+      usage: emptyUsage(),
+      zeroCostIfSpendMissing: true,
     });
     expect((await gatewayStore.getRun("run-1")).status).toBe("active");
   });
@@ -215,10 +223,11 @@ describe("P0-05 upstream errors and spend enforcement", () => {
         { status: 400, headers: { "content-type": "application/json" } },
       ),
     );
-    const { handler, token } = await setup(fetchMock as typeof fetch);
+    const { callStore, handler, token } = await setup(fetchMock as typeof fetch);
 
     const response = await handler(inbound(token));
     const responseBody = Buffer.from(responseBytes(response.body)).toString("utf8");
+    const [call] = await callStore.listCalls("run-1");
 
     expect(response.status).toBe(400);
     expect(responseBody).not.toContain("should-not-leak");
@@ -230,6 +239,11 @@ describe("P0-05 upstream errors and spend enforcement", () => {
         param: "input",
         code: "context_length_exceeded",
       },
+    });
+    expect(call).toMatchObject({
+      state: "failed",
+      usage: emptyUsage(),
+      zeroCostIfSpendMissing: true,
     });
   });
 
