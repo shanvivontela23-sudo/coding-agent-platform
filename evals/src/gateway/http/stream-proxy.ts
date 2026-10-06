@@ -4,6 +4,7 @@ import { SseEventParser, type SseEvent } from "./sse.js";
 
 export type StreamCompletionState =
   | "completed"
+  | "truncated"
   | "timeout"
   | "interrupted"
   | "failed";
@@ -42,21 +43,45 @@ function asObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function eventType(event: SseEvent, parsed: Readonly<Record<string, unknown>>): string | null {
+  if (typeof parsed.type === "string") return parsed.type;
+  return event.event ?? null;
+}
+
 class UsageAccumulator {
   private readonly wireApi: ModelWireApi;
   private usageBody: Record<string, unknown> = {};
+  private terminal = false;
 
   constructor(wireApi: ModelWireApi) {
     this.wireApi = wireApi;
   }
 
   observe(event: SseEvent): void {
+    if (this.wireApi === "chat-completions" && event.data === "[DONE]") {
+      this.terminal = true;
+      return;
+    }
     if (!event.data || event.data === "[DONE]") return;
+
     let parsed: Record<string, unknown>;
     try {
       parsed = asObject(JSON.parse(event.data));
     } catch {
       return;
+    }
+
+    const type = eventType(event, parsed);
+    if (
+      this.wireApi === "responses" &&
+      (type === "response.completed" ||
+        type === "response.failed" ||
+        type === "response.incomplete")
+    ) {
+      this.terminal = true;
+    }
+    if (this.wireApi === "anthropic-messages" && type === "message_stop") {
+      this.terminal = true;
     }
 
     if (this.wireApi === "anthropic-messages") {
@@ -80,6 +105,10 @@ class UsageAccumulator {
 
     const eventUsage = asObject(parsed.usage);
     if (Object.keys(eventUsage).length > 0) this.usageBody = eventUsage;
+  }
+
+  terminalSeen(): boolean {
+    return this.terminal;
   }
 
   result(): ModelUsage {
@@ -121,14 +150,14 @@ export function proxyMeteredStream(options: MeteredStreamOptions): MeteredStream
     if (settled) return;
     settled = true;
     clearTimers();
-    if (state !== "completed") abortOnce();
+    if (state !== "completed" && state !== "truncated") abortOnce();
     if (streamError) {
       try {
         outputController?.error(streamError);
       } catch {
         // A cancelled consumer can close the controller before the pump observes it.
       }
-    } else if (state === "completed") {
+    } else if (state === "completed" || state === "truncated") {
       try {
         outputController?.close();
       } catch {
@@ -168,7 +197,7 @@ export function proxyMeteredStream(options: MeteredStreamOptions): MeteredStream
         const next = await upstreamReader.read();
         if (next.done) {
           observeEvents(parser.finish());
-          finish("completed");
+          finish(usage.terminalSeen() ? "completed" : "truncated");
           return;
         }
         if (!firstChunkSeen) {

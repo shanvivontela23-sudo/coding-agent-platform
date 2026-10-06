@@ -1,0 +1,14 @@
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "*"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+  disable_error_logs: false
+
+litellm_settings:
+  set_verbose: false
+  drop_params: false

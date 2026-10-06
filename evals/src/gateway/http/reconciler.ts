@@ -34,14 +34,22 @@ function correlationId(row: LiteLLMSpendRecord): string {
   return row.litellmCallId ?? row.requestId;
 }
 
+function incompleteUsageLifecycle(call: HarnessCallRecord): boolean {
+  return (
+    call.state === "timeout" ||
+    call.state === "interrupted" ||
+    call.state === "truncated"
+  );
+}
+
 function withAuthoritativeUsage(
   call: HarnessCallRecord,
   row: LiteLLMSpendRecord,
 ): ModelUsage {
-  const interrupted = call.state === "timeout" || call.state === "interrupted";
+  const authoritativeLifecycle = incompleteUsageLifecycle(call);
   const choose = (current: number, authoritative: number | null): number => {
     if (authoritative === null) return current;
-    return interrupted || current === 0 ? authoritative : current;
+    return authoritativeLifecycle || current === 0 ? authoritative : current;
   };
   return {
     inputTokens: choose(call.usage.inputTokens, row.inputTokens),
@@ -62,7 +70,7 @@ function assertTokenMatch(
   call: HarnessCallRecord,
   row: LiteLLMSpendRecord,
 ): void {
-  if (call.state === "timeout" || call.state === "interrupted") return;
+  if (incompleteUsageLifecycle(call)) return;
   const checks: ReadonlyArray<readonly [string, number, number | null]> = [
     ["input", call.usage.inputTokens, row.inputTokens],
     ["cached-input", call.usage.cachedInputTokens, row.cachedInputTokens],

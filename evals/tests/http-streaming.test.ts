@@ -90,10 +90,34 @@ describe("metered streaming pass-through", () => {
     expect(abort).not.toHaveBeenCalled();
   });
 
+  it("marks upstream EOF without a provider terminal event as truncated", async () => {
+    const raw = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}\n\n';
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes(raw));
+        controller.close();
+      },
+    });
+    const abort = vi.fn();
+    const proxied = proxyMeteredStream({
+      upstream,
+      wireApi: "responses",
+      abort,
+      firstResponseTimeoutMs: 1_000,
+      idleTimeoutMs: 1_000,
+      maxDurationMs: 5_000,
+    });
+
+    await expect(readAll(proxied.body)).resolves.toBe(raw);
+    await expect(proxied.completion).resolves.toMatchObject({ state: "truncated" });
+    expect(abort).not.toHaveBeenCalled();
+  });
+
   it("combines Anthropic start and terminal usage without rewriting SSE bytes", async () => {
     const raw =
       'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7,"cache_read_input_tokens":2,"cache_creation_input_tokens":1,"output_tokens":0}}}\n\n' +
-      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":5}}\n\n';
+      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":5}}\n\n' +
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n';
     const upstream = new ReadableStream<Uint8Array>({
       start(controller) {
         for (const byte of bytes(raw)) controller.enqueue(Uint8Array.of(byte));

@@ -1,31 +1,34 @@
-# P0-04 Model Gateway
+# P0-04/P0-05 Model Gateway
 
-Phase 0 owns a small model gateway boundary so harnesses never talk to model providers directly. LiteLLM is the first upstream adapter; it is replaceable behind our `ModelGateway` and `ModelProviderAdapter` interfaces.
+Phase 0 owns the model boundary so benchmark harnesses never receive provider credentials and never talk to providers directly. P0-04 introduced the provider-neutral `ModelGateway`/LiteLLM control-plane adapter. P0-05 adds the harness-facing HTTP compatibility surface used by pinned CLI harnesses.
 
 ## Version and dependency pin
 
-The Phase 0 LiteLLM proxy root requirement is pinned exactly in `evals/litellm/requirements.in`:
+The LiteLLM proxy root requirement is pinned exactly in `evals/litellm/requirements.in`:
 
 ```text
 litellm[proxy]==1.103.2
 ```
 
-`evals/litellm/requirements.txt` is the generated, fully resolved dependency lock. It starts with `--require-hashes`, pins the transitive dependency versions, and records allowed SHA-256 artifact hashes. The lock was generated with Python 3.12 and verified with:
+`evals/litellm/requirements.txt` is the fully resolved Python 3.12 lock with hashes for every artifact. Public CI verifies the lock with a `--dry-run --require-hashes` install. The reviewed live deployment and smoke path performs a real:
 
 ```text
-python -m pip install --dry-run --require-hashes -r evals/litellm/requirements.txt
+python -m pip install --require-hashes -r evals/litellm/requirements.txt
 ```
 
-CI repeats the hash-verified dry-run. Do not use an unpinned `latest` image/package or install from `requirements.in` for benchmark gate runs. A LiteLLM or resolved dependency upgrade is an experiment change and must regenerate the lock and rerun the relevant evals.
+Do not use an unpinned `latest` image/package or install from `requirements.in` for benchmark gate runs. A LiteLLM or resolved-dependency upgrade is an experiment change and must regenerate the lock and rerun the relevant evals.
 
 ## Trust and credential boundary
 
 ```text
-sandbox / harness
+sandbox / pinned harness
       |
-      | short-lived run token only
+      | short-lived signed run token only
       v
-our ModelGateway
+Caddy :443
+      |
+      v
+Node harness HTTP gateway
       |
       | hidden run-scoped LiteLLM virtual key
       v
@@ -36,91 +39,68 @@ LiteLLM proxy
 model provider
 ```
 
-Provider API keys are not accepted by the `ModelGateway` call contract. They are not inserted into prompts, cost rows, logs, benchmark manifests, sandbox environment variables, or this repository. Provider credentials belong only to the LiteLLM process environment.
+Provider API keys are not accepted from the harness. They are not inserted into prompts, cost rows, benchmark manifests, sandbox environment variables, or this repository. Provider credentials belong only to the trusted LiteLLM host environment.
 
-The sandbox receives only a signed token minted by `RunTokenService`. The token contains a run id and expiry and is valid only while that run remains active. The signing secret remains in the control-plane/gateway environment (`MODEL_GATEWAY_RUN_TOKEN_SECRET`) and is never sent to the sandbox.
+The sandbox receives only a signed run credential minted by `RunTokenService`. Run identity comes from that verified token, not from client headers or request bodies. The signing secret stays on the trusted host.
 
-The LiteLLM admin credential (`LITELLM_GATEWAY_TOKEN`) also remains gateway-side. At run start, `LiteLLMAdapter` uses it to create a temporary LiteLLM virtual key with the same run lifetime and spend cap. Only our gateway stores that upstream virtual key; the sandbox never sees it.
+The Node composition is `evals/src/gateway/http/server.ts`. It fails closed if the run-token signing secret, LiteLLM URL/admin credential, durable store paths, or model list-price configuration is missing.
 
-## Per-run spend cap
+## Harness HTTP surface
 
-The default Phase 0 run cap is `$10`, inherited from `runLimits.spendCapUsd`.
+The frozen route registry is `evals/config/http-gateway.json`.
 
-Two layers enforce it:
+- `POST /v1/messages` — enabled, paid, streaming allowed.
+- `POST /v1/messages/count_tokens` — enabled, zero-cost/non-paid.
+- `POST /v1/responses` — enabled, paid, streaming allowed.
+- `POST /v1/chat/completions` — implemented but **disabled**.
 
-1. `PersistentModelGateway` rejects a call before inference when an adapter can provide a conservative maximum-cost estimate that would push the run over its cap.
-2. The LiteLLM adapter creates a run-scoped virtual key with `max_budget` equal to the run cap. LiteLLM's database-backed budget reservation is the authoritative pre-provider guard for real LiteLLM calls.
+`/v1/chat/completions` must remain disabled unless a sanitized transcript from the exact pinned benchmark harness demonstrates that the route is required and the reviewed transcript digest is added to route evidence. The protocol recorder stores only request/response shape metadata, never prompt contents, tool arguments, model output, or credentials.
 
-A Phase 0 LiteLLM deployment therefore **must use its database-backed virtual-key/budget path**. A database-less LiteLLM proxy is not acceptable for gate runs because its budget configuration is not a hard per-run boundary.
+Harness calls deliberately do not reuse control-plane idempotency semantics: repeated harness HTTP requests receive distinct server-generated call ids and each paid attempt remains accountable.
 
-When either layer reports a spend limit, the gateway records the run status as `limit-hit` and refuses new paid calls for that run.
+## Per-run spend cap and reservation
 
-## Idempotency and crash recovery
+The default Phase 0 run cap is `$10` unless the run explicitly uses a smaller cap.
 
-Every control-plane inference request has a non-empty `(runId, idempotencyKey)` pair.
+The HTTP gateway reserves budget before dispatch. The server composition uses `createListPriceCostEstimator`: it conservatively treats each UTF-8 request byte as one uncached input token and adds the requested `max_output_tokens`/`max_tokens` (or the configured model default) at current list price. The reservation is only a pre-dispatch guard; LiteLLM's persisted spend is authoritative after dispatch.
 
-A stored call also includes a SHA-256 request fingerprint over the request's wire API, model, model settings, and request body. Object keys are canonicalized before hashing. Reusing an idempotency key with a different fingerprint is rejected rather than replaying the wrong response.
+Reservations are held only for the short critical section needed to prevent same-process overbooking; upstream model work is never performed while that lock is held. A `spend_reserved` refusal is part of the live smoke evidence contract.
 
-Before calling the adapter, the gateway checks its durable store. If a completed call already exists for that pair and its request fingerprint matches, the stored response and original cost record are returned with `replayed: true`; the upstream adapter is not called.
+LiteLLM virtual-key budgets provide the second, upstream-side containment layer. Provider prepaid balances are an outer containment layer for the Phase 0 live run.
 
-For a new paid call, the gateway stores the request fingerprint, provider response, and cost record together in one durable call record **before returning the response to the caller**. The file-backed Phase 0 store writes to a private temporary file and atomically links it into place, so a completed idempotency key never becomes visible with a partial response.
+## Streaming lifecycle
 
-Stored calls are partitioned by run: `calls/<run-hash>/<idempotency-hash>.json`. `listCostRecords(runId)` enumerates only that run's directory. It does not scan or parse another run's call files.
+The HTTP gateway passes SSE bytes through incrementally and observes events in parallel for usage accounting. A stream is `completed` only after the provider-specific terminal event is observed. If upstream EOF arrives without that terminal event, the call is recorded as `truncated`, not `completed`.
 
-This is the checkpoint boundary for the task runner: the caller marks its own task step complete only after `ModelGateway.call()` returns. If the caller crashes after the model response was persisted but before the task step is committed, retrying the same control-plane idempotency key returns the stored response without a second provider call.
+Timeout, interruption, failure, and truncated lifecycle states remain visible in the harness call record. Timeout/interrupted/truncated calls use LiteLLM's persisted usage/spend as the authoritative accounting fallback when client-facing terminal usage is unavailable.
 
-## Cost records and token semantics
+Caddy is configured without response buffering; incremental delivery is still verified by live smoke rather than inferred from static configuration alone.
 
-Each unique paid call produces exactly one `CostRecord` with:
+## Usage and spend reconciliation
 
-- run id and idempotency key;
-- provider and model;
-- frozen model settings;
-- total input tokens;
-- cached/read input tokens;
-- cache-write input tokens;
-- output tokens;
-- reasoning tokens;
-- latency;
-- list-price model cost in USD.
+Normalized usage has the same semantics across supported wire APIs:
 
-`inputTokens` has one meaning across supported wire APIs: **total input tokens consumed by the request**. Cache counters are additional breakdowns and are not subtracted from the total.
+- `inputTokens`: total input consumed;
+- `cachedInputTokens`: cache-read subset;
+- `cacheWriteInputTokens`: cache-write subset when exposed;
+- `outputTokens` and `reasoningTokens`: corresponding provider counters when exposed.
 
-Normalization is wire-specific:
+OpenAI Responses uses `input_tokens` plus `input_tokens_details.cached_tokens`. Anthropic total input is normalized from base input plus cache-read and cache-creation input.
 
-- OpenAI Chat Completions: `prompt_tokens` is total input; `prompt_tokens_details.cached_tokens` is the cache-read subset; cache writes are reported as zero because the wire response does not expose a separate write count.
-- OpenAI Responses: `input_tokens` is total input; `input_tokens_details.cached_tokens` is the cache-read subset; cache writes are reported as zero for the same reason.
-- Anthropic Messages: provider `input_tokens` is the non-cached/base input, so normalized total input is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`; cache reads and cache writes are also recorded separately.
+LiteLLM spend persistence is asynchronous. The reconciler therefore polls with bounded backoff and matches by the server-generated LiteLLM call id. Duplicate/unexpected rows, monetary differences above `$0.000001`, or token mismatches fail loudly. Failed non-2xx calls with no observed usage have a narrow zero-cost fallback only after the bounded window and only when no LiteLLM row exists; if a row exists it remains authoritative.
 
-The LiteLLM adapter reads list-price cost from the `x-litellm-response-cost` response header. Replays reuse the existing row and add no cost.
+Before the Phase 0 benchmark relies on exact token equality as a gate, the live runner must prove gateway/LiteLLM parity for cached and uncached calls on both OpenAI and Anthropic. That evidence is implemented in `evals/smoke/http-gateway-smoke.ts`.
 
-`ModelGateway.getRunCostSummary()` aggregates these rows into the token and `modelCostUsd` fields consumed by the Phase 0 result row. Sandbox seconds/cost are added later by the collector.
+## Control-plane idempotency and crash recovery
 
-Neither prompts nor provider responses are written to a log line by this gateway implementation. The idempotency store contains the response because it is required for safe replay; its root belongs under ignored/private benchmark results, not source control.
+The earlier `PersistentModelGateway` control-plane path still uses `(runId, idempotencyKey)` plus a request fingerprint. A completed control-plane call is persisted before return and an identical retry replays the stored response/cost rather than making another provider call. Reusing an idempotency key with a different request fingerprint is rejected.
 
-## LiteLLM request behavior
+This is separate from harness HTTP behavior. For harness attempts, a crashed attempt is rerun with a new call id and the earlier spend remains counted. The live smoke contract verifies that boundary.
 
-The adapter supports the three wire APIs the later harness adapters will need:
+## Deployment and live verification
 
-- `/v1/chat/completions`
-- `/v1/responses`
-- `/v1/messages`
+The reviewed Phase 0 deployment target lives under `evals/deploy/http-gateway/`: Caddy -> Node gateway -> LiteLLM -> provider APIs, with PostgreSQL on the private Compose network. These files configure a target but do not provision a VM, fund accounts, change DNS, or write secrets.
 
-This PR does not implement harness runners, an HTTP compatibility surface, streaming proxying, or model routing. Callers still specify the provider/model/configuration being benchmarked.
+Credentialed validation is intentionally outside public CI. `evals/smoke/http-gateway-smoke.ts` requires `LIVE_SMOKE=1`, uses reviewed protocol transcript digests, writes only sanitized ignored evidence, and validates auth, route/model policy, streaming, timeouts, metering/reconciliation, token parity, distinct attempts, crash/rerun accounting, reservation refusal, and spend-cap behavior.
 
-The adapter forwards only the run-scoped LiteLLM virtual key in the `Authorization` header. The LiteLLM admin token is used only on the key-management call and is never copied into an inference body. Model-setting names that look like credential fields are rejected.
-
-## CI policy
-
-Unit tests use mocked adapters / mocked `fetch` only. CI must not contain or require an OpenAI, Anthropic, Google, LiteLLM, or other provider credential, and must never make a live model request. The Python CI step only verifies that the hash-locked LiteLLM dependency set is installable; it does not start LiteLLM or call a model provider.
-
-## Later live smoke test
-
-Before Phase 0 gate runs, a credentialed smoke environment must prove all of the following against the pinned LiteLLM version:
-
-1. **Real metering:** one real inference call returns usage and a LiteLLM response cost, and our persisted cost row matches it.
-2. **Free control-plane replay:** retrying the same control-plane idempotency key returns the stored response and does not create a second LiteLLM/provider spend event.
-3. **Hard cap:** a run-scoped key at a deliberately tiny budget is rejected before another provider call would exceed that budget, and our run becomes `limit-hit`.
-4. **Token scope/expiry:** a token for one run cannot operate on another run and stops authorizing new calls when the run expires or is finished.
-
-The smoke test is intentionally not part of public CI because it requires gateway credentials and incurs real model cost.
+No live smoke result is implied by the presence of the runner. A Phase 0 gate may use it only after the operator has provisioned the reviewed host, supplied host-only secrets, funded the two provider accounts with the agreed prepaid limits/auto-reload off, and completed the separate harness licence/terms check required by the PRD.

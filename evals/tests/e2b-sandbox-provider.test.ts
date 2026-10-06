@@ -148,7 +148,7 @@ describe("E2BSandboxProvider", () => {
       metadata: { taskId: "task-001" },
       network: {
         allowOut: [],
-        denyOut: ["0.0.0.0/0"],
+        denyOut: ["0.0.0.0/0", "::/0"],
         allowPublicTraffic: false,
       },
       lifecycle: {
@@ -203,7 +203,7 @@ describe("E2BSandboxProvider", () => {
 
     expect(sandbox.networkUpdates[1]).toEqual({
       allowOut: ["gateway.example.com"],
-      denyOut: ["0.0.0.0/0"],
+      denyOut: ["0.0.0.0/0", "::/0"],
     });
     expect(sandbox.networkUpdates[2]).toEqual(sandbox.networkUpdates[1]);
   });
