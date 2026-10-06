@@ -228,16 +228,17 @@ export class LiteLLMHarnessTransport {
       };
     } catch (error) {
       void error;
-      const timedOut = controller.signal.aborted && !externalSignal?.aborted;
+      const interrupted = externalSignal?.aborted === true;
+      const timedOut = controller.signal.aborted && !interrupted;
       record = {
         ...record,
-        state: timedOut ? "timeout" : "interrupted",
+        state: timedOut ? "timeout" : interrupted ? "interrupted" : "failed",
         latencyMs: Math.max(0, this.clock() - startedAt),
         updatedAtMs: this.clock(),
       };
       await this.callStore.saveCall(record);
       if (timedOut) return safeError(504, "upstream_timeout", "upstream request timed out");
-      if (externalSignal?.aborted) return safeError(499, "client_closed", "client disconnected");
+      if (interrupted) return safeError(499, "client_closed", "client disconnected");
       return safeError(502, "upstream_error", "upstream model gateway request failed");
     } finally {
       clearTimeout(timer);
