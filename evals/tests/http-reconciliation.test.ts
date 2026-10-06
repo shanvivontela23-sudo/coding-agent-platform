@@ -239,6 +239,7 @@ describe("bounded reconciliation", () => {
         state: "failed",
         usage: emptyUsage,
         costPending: false,
+        zeroCostIfSpendMissing: true,
       }),
     );
     await store.createCall(
@@ -246,6 +247,7 @@ describe("bounded reconciliation", () => {
         state: "failed",
         usage: emptyUsage,
         costPending: false,
+        zeroCostIfSpendMissing: true,
       }),
     );
     let now = 0;
@@ -286,6 +288,7 @@ describe("bounded reconciliation", () => {
         state: "failed",
         usage: emptyUsage,
         costPending: false,
+        zeroCostIfSpendMissing: true,
       }),
     );
     await store.createCall(
@@ -293,6 +296,7 @@ describe("bounded reconciliation", () => {
         state: "failed",
         usage: emptyUsage,
         costPending: false,
+        zeroCostIfSpendMissing: true,
       }),
     );
     const rateLimitedSpend: LiteLLMSpendRecord = {
