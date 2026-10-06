@@ -3,6 +3,7 @@ export {
   FileGatewayStore,
   type FileGatewayStoreOptions,
 } from "./file-store.js";
+export * from "./http/index.js";
 export {
   LiteLLMAdapter,
   type GatewayFetch,
