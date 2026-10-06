@@ -83,7 +83,7 @@ function normalizedUpstream(value: string): URL {
   return url;
 }
 
-export async function runProtocolRecorderCli(): Promise<void> {
+async function runProtocolRecorderCli(): Promise<void> {
   const credential = requiredEnv("PROTOCOL_RECORDER_CREDENTIAL");
   const upstreamToken = requiredEnv("PROTOCOL_RECORDER_UPSTREAM_TOKEN");
   const upstream = normalizedUpstream(requiredEnv("PROTOCOL_RECORDER_UPSTREAM_URL"));
@@ -103,15 +103,15 @@ export async function runProtocolRecorderCli(): Promise<void> {
       const target = new URL(`${source.pathname}${source.search}`, upstream);
       const headers = new Headers(request.headers);
       headers.set("authorization", `Bearer ${upstreamToken}`);
-      const body = request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : Buffer.from(await request.arrayBuffer());
-      return await fetch(target, {
+      const init: RequestInit = {
         method: request.method,
         headers,
-        body,
         redirect: "manual",
-      });
+      };
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        init.body = Buffer.from(await request.arrayBuffer());
+      }
+      return await fetch(target, init);
     },
   });
 
@@ -147,10 +147,8 @@ export async function runProtocolRecorderCli(): Promise<void> {
   process.once("SIGINT", shutdown);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  void runProtocolRecorderCli().catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "protocol recorder failed";
-    console.error(message);
-    process.exitCode = 1;
-  });
-}
+void runProtocolRecorderCli().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "protocol recorder failed";
+  console.error(message);
+  process.exitCode = 1;
+});
