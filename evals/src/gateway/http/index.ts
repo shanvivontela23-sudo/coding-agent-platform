@@ -18,6 +18,12 @@ export {
   type LiteLLMSpendRecord,
   type LiteLLMSpendSource,
 } from "./litellm-spend.js";
+export {
+  ProtocolRecorder,
+  type ProtocolRecorderHeaders,
+  type ProtocolRecorderOptions,
+  type ProtocolRecorderRequest,
+} from "./protocol-recorder.js";
 export { RunTokenBucket } from "./rate-limiter.js";
 export {
   HarnessSpendReconciler,
@@ -44,6 +50,13 @@ export type {
   HarnessCallStore,
   HarnessRefusalRecord,
 } from "./store.js";
+export {
+  protocolTranscriptSha256,
+  writeProtocolTranscript,
+  type ProtocolExchange,
+  type ProtocolHarnessIdentity,
+  type ProtocolTranscript,
+} from "./transcript.js";
 export type {
   HarnessHttpConfig,
   HarnessHttpLimits,
