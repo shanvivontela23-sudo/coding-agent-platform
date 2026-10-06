@@ -24,3 +24,7 @@ export type {
   HarnessRouteEvidence,
   HarnessRouteSpec,
 } from "./types.js";
+export {
+  LiteLLMHarnessTransport,
+  type LiteLLMHarnessTransportOptions,
+} from "./upstream.js";
