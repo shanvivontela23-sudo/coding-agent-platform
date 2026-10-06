@@ -195,23 +195,26 @@ export function proxyMeteredStream(options: MeteredStreamOptions): MeteredStream
         options.maxDurationMs,
       );
       if (options.signal?.aborted) {
-        void upstreamReader.cancel("client interrupted").catch(() => undefined);
         finish("interrupted");
+        void upstreamReader.cancel("client interrupted").catch(() => undefined);
         return;
       }
       options.signal?.addEventListener(
         "abort",
         () => {
-          void upstreamReader.cancel("client interrupted").catch(() => undefined);
           finish("interrupted");
+          void upstreamReader.cancel("client interrupted").catch(() => undefined);
         },
         { once: true },
       );
       void pump();
     },
     async cancel() {
-      await upstreamReader.cancel("client interrupted").catch(() => undefined);
+      // Record the client-side terminal state before cancelling the upstream reader.
+      // reader.cancel() resolves a pending pump read with done=true; if we awaited it
+      // first, the pump could incorrectly win the race and mark the stream completed.
       finish("interrupted");
+      await upstreamReader.cancel("client interrupted").catch(() => undefined);
     },
   });
 
