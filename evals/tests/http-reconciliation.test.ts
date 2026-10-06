@@ -101,7 +101,7 @@ describe("LiteLLM spend client", () => {
       return new Response(
         JSON.stringify([
           {
-            request_id: "provider-1",
+            request_id: "provider-call-1",
             litellm_call_id: "call-1",
             spend: 0.07,
             prompt_tokens: 10,
@@ -164,14 +164,12 @@ describe("bounded reconciliation", () => {
   it("deduplicates concurrent inline reconciliation for the same pending call", async () => {
     const store = await callStore();
     await store.createCall(paidCall("call-1"));
-    let release!: () => void;
-    const rowReady = new Promise<void>((resolve) => {
-      release = resolve;
+    let resolveRows!: (rows: readonly LiteLLMSpendRecord[]) => void;
+    const rows = new Promise<readonly LiteLLMSpendRecord[]>((resolve) => {
+      resolveRows = resolve;
     });
-    const listCallSpend = vi.fn(async () => {
-      await rowReady;
-      return [spend("call-1")];
-    });
+    const listCallSpend = vi.fn(async () => await rows);
+    let now = 0;
     const reconciler = new HarnessSpendReconciler({
       callStore: store,
       spendSource: {
@@ -179,74 +177,83 @@ describe("bounded reconciliation", () => {
         listRunSpend: async () => [],
       },
       timeoutMs: 30_000,
-      initialDelayMs: 1,
-      maxDelayMs: 2,
+      initialDelayMs: 500,
+      maxDelayMs: 2_000,
       costToleranceUsd: 0.000001,
-      sleep: async () => undefined,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
     });
 
     const first = reconciler.reconcileCall(run, "call-1");
     const second = reconciler.reconcileCall(run, "call-1");
-    release();
+    await Promise.resolve();
+    resolveRows([spend("call-1")]);
 
-    await Promise.all([first, second]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { callId: "call-1", costUsd: 0.07 },
+      { callId: "call-1", costUsd: 0.07 },
+    ]);
     expect(listCallSpend).toHaveBeenCalledTimes(1);
   });
 
   it("keeps timeout/interrupted lifecycle state while filling authoritative cost", async () => {
     const store = await callStore();
     await store.createCall(
-      paidCall("call-timeout", {
-        state: "timeout",
+      paidCall("call-1", {
+        state: "interrupted",
         usage: emptyUsage,
       }),
     );
+    let now = 0;
     const reconciler = new HarnessSpendReconciler({
       callStore: store,
       spendSource: {
-        listCallSpend: async () => [
-          {
-            ...spend("call-timeout", 0.03),
-            inputTokens: 6,
-            outputTokens: 2,
-          },
-        ],
+        listCallSpend: async () => [spend("call-1")],
         listRunSpend: async () => [],
       },
       timeoutMs: 30_000,
-      initialDelayMs: 1,
-      maxDelayMs: 2,
+      initialDelayMs: 500,
+      maxDelayMs: 2_000,
       costToleranceUsd: 0.000001,
-      sleep: async () => undefined,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
     });
 
-    await reconciler.reconcileCall(run, "call-timeout");
-    expect(await store.getCall("run-1", "call-timeout")).toMatchObject({
-      state: "timeout",
-      listPriceCostUsd: 0.03,
+    await reconciler.reconcileCall(run, "call-1");
+    expect(await store.getCall("run-1", "call-1")).toMatchObject({
+      state: "interrupted",
+      usage: { inputTokens: 10, outputTokens: 4 },
+      listPriceCostUsd: 0.07,
       costPending: false,
-      usage: { inputTokens: 6, outputTokens: 2 },
     });
   });
 
   it("fails clearly for duplicate call rows", async () => {
     const store = await callStore();
     await store.createCall(paidCall("call-1"));
+    let now = 0;
     const reconciler = new HarnessSpendReconciler({
       callStore: store,
       spendSource: {
         listCallSpend: async () => [spend("call-1"), spend("call-1")],
         listRunSpend: async () => [],
       },
-      timeoutMs: 10,
-      initialDelayMs: 1,
-      maxDelayMs: 2,
+      timeoutMs: 30_000,
+      initialDelayMs: 500,
+      maxDelayMs: 2_000,
       costToleranceUsd: 0.000001,
-      sleep: async () => undefined,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
     });
 
     await expect(reconciler.reconcileCall(run, "call-1")).rejects.toThrow(
-      /duplicate/i,
+      "duplicate LiteLLM spend rows",
     );
   });
 
@@ -255,16 +262,17 @@ describe("bounded reconciliation", () => {
     await store.createCall(paidCall("call-1"));
     await store.createCall(paidCall("call-2"));
     let now = 0;
-    const listRunSpend = vi
-      .fn<() => Promise<readonly LiteLLMSpendRecord[]>>()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([spend("call-1")])
-      .mockResolvedValueOnce([spend("call-1"), spend("call-2")]);
+    const snapshots: readonly LiteLLMSpendRecord[][] = [
+      [],
+      [spend("call-1")],
+      [spend("call-1"), spend("call-2")],
+    ];
+    let index = 0;
     const reconciler = new HarnessSpendReconciler({
       callStore: store,
       spendSource: {
         listCallSpend: async () => [],
-        listRunSpend: async () => await listRunSpend(),
+        listRunSpend: async () => snapshots[Math.min(index++, snapshots.length - 1)] ?? [],
       },
       timeoutMs: 30_000,
       initialDelayMs: 500,
@@ -281,22 +289,24 @@ describe("bounded reconciliation", () => {
       reconciledCallIds: ["call-1", "call-2"],
     });
 
-    const extra = new HarnessSpendReconciler({
+    const unexpected = new HarnessSpendReconciler({
       callStore: store,
       spendSource: {
         listCallSpend: async () => [],
-        listRunSpend: async () => [
-          spend("call-1"),
-          spend("call-2"),
-          spend("unexpected"),
-        ],
+        listRunSpend: async () => [spend("call-1"), spend("call-2"), spend("extra")],
       },
-      timeoutMs: 10,
-      initialDelayMs: 1,
-      maxDelayMs: 2,
+      timeoutMs: 30_000,
+      initialDelayMs: 500,
+      maxDelayMs: 2_000,
       costToleranceUsd: 0.000001,
-      sleep: async () => undefined,
+      clock: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
     });
-    await expect(extra.reconcileRun(run)).rejects.toThrow(/unexpected/i);
+
+    await expect(unexpected.reconcileRun(run)).rejects.toThrow(
+      "unexpected LiteLLM spend row",
+    );
   });
 });
