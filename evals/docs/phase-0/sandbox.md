@@ -1,14 +1,14 @@
 # P0-03 sandbox boundary
 
-P0-03 introduces a provider-neutral sandbox contract and the first E2B adapter for the Phase 0 benchmark.
+P0-03 introduces a provider-neutral sandbox contract and the first E2B adapter for the Phase 0 benchmark. P0-05 keeps that boundary intact and adds a committed live network-smoke runner that verifies the coding-phase policy from a real E2B guest.
 
 ## Security boundary
 
 The sandbox is assumed compromised. The control plane owns credentials, repository acquisition, network policy, lifecycle, and the artifact/diff boundary.
 
-The E2B API key is used only by the control-plane SDK client. It is never placed in sandbox environment variables.
+The E2B API key is used only by the trusted control-plane/smoke-runner SDK client. It is never placed in sandbox environment variables. GitHub credentials, provider keys, LiteLLM admin/master credentials, and the model-gateway signing secret are never placed in the sandbox.
 
-GitHub credentials are never placed in the sandbox.
+During coding/testing the harness receives only the public HTTPS model-gateway hostname and its short-lived signed run credential.
 
 ## Repository materialization
 
@@ -36,7 +36,7 @@ The sandbox therefore has:
 - no earlier or later source commits;
 - no GitHub credential.
 
-A later GitHub-materializer slice must preserve this contract: it must resolve the archive outside the sandbox by the exact pinned SHA and must never pass a clone or source `.git` directory into the sandbox.
+Any later repository materializer must preserve this contract: resolve the archive outside the sandbox by exact pinned SHA and never pass a clone or source `.git` directory into the guest.
 
 ## Network phases
 
@@ -53,13 +53,13 @@ Skipping forward or moving backward is rejected. Re-applying the current phase i
 | coding | model gateway hostname only |
 | testing | model gateway hostname only |
 
-GitHub hosts are **not** in the default dependency allowlist. If one repository genuinely needs a GitHub-hosted dependency artifact during setup, the exact hostname must be opted in for that repository through `extraDependencyHosts`. That opt-in disappears when the sandbox advances to coding.
+GitHub hosts are **not** in the default dependency allowlist. If a repository genuinely needs a GitHub-hosted dependency artifact during setup, the exact hostname must be opted in through `extraDependencyHosts`. That opt-in disappears when the sandbox advances to coding.
 
 Additional dependency hosts must be exact DNS hostnames. Wildcards, URLs, CIDRs, ports, localhost, and all-traffic entries are rejected.
 
-The sandbox is also created with public ingress disabled.
+The sandbox is created with public ingress disabled. E2B network wiring combines the exact hostname allowlist with deny-all CIDRs for both IP families: `0.0.0.0/0` and `::/0`. The allowlist is therefore the exception to an explicit IPv4/IPv6 deny-all policy, not a best-effort DNS-only restriction.
 
-E2B's network-update API replaces the egress policy atomically. The adapter therefore sends a complete allow/deny egress policy on every phase change.
+E2B's network-update API replaces the egress policy atomically. The adapter sends a complete allow/deny policy on every phase change.
 
 ## Provider contract
 
@@ -86,24 +86,20 @@ The sandbox never pushes to GitHub. At the end of a run the control plane asks t
 
 The control plane validates and stores that patch. GitHub branch/commit/PR creation remains outside the sandbox.
 
-The later evaluation collector must **not** run hidden tests against the potentially stateful harness workspace. It must apply the exported patch to a clean copy of the exact pinned source tree and run hidden/reference and regression tests there. This makes the collected proof independent of untracked state, generated files, or commits left behind by the harness.
+The evaluation collector must **not** run hidden tests against the potentially stateful harness workspace. It must apply the exported patch to a clean copy of the exact pinned source tree and run hidden/reference and regression tests there. This makes the collected proof independent of untracked state, generated files, or commits left behind by the harness.
 
-## Live-provider verification
+## Live E2B network verification
 
-CI unit tests do not call E2B or require an E2B API key. Before gate runs, the rig still needs a live E2B smoke test against the selected stack images to verify:
+Public CI does not call E2B and does not require an E2B API key. The credentialed runner is `evals/smoke/e2b-network-smoke.ts`; it is deliberately opt-in behind `LIVE_SMOKE=1` and is not invoked by `.github/workflows/ci.yml`.
 
-- sandbox creation/destruction;
-- archive upload/extraction;
-- baseline recording and patch export after harness commits;
-- one-way network phase enforcement;
-- command timeouts;
-- patch export.
+The live runner starts a fresh E2B guest directly in the coding-phase policy and proves all of the following:
 
-The network smoke test must also prove the negative cases, not just an allowed request. At minimum it must verify that these fail when they are not allowlisted:
+- the reviewed public HTTPS gateway hostname is reachable;
+- a normal non-allowlisted hostname is blocked;
+- a raw IPv4 destination is blocked;
+- a separate outside DNS hostname is blocked;
+- direct IPv6 egress is blocked.
 
-- a normal non-allowlisted hostname;
-- a raw IPv4 address;
-- an outside DNS name;
-- an IPv6 destination.
+The current probes include a non-allowlisted host, raw `1.1.1.1`, an outside DNS name, and an IPv6 literal. A reachable negative target fails the smoke run. Sanitized evidence is written under ignored `evals/results/smoke/`; E2B credentials and guest command contents containing secrets are not evidence fields.
 
-That smoke test is operational validation, not a reason to put provider credentials in this public repository.
+This smoke is operational validation only. The repository does not provision the E2B account, host, provider accounts, DNS, or credentials, and the presence of the runner is not evidence that live validation has been executed.
