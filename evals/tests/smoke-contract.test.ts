@@ -94,6 +94,8 @@ describe("live smoke contract", () => {
     expect(httpSmoke).not.toContain("0.000001");
     expect(httpSmoke).toContain("token_parity_openai_cached");
     expect(httpSmoke).toContain("token_parity_anthropic_cached");
+    expect(httpSmoke).toContain('call.state !== "completed" || call.costPending || call.listPriceCostUsd === null');
+    expect(httpSmoke).toContain("before reconciliation enforcement");
 
     expect(networkSmoke).toContain("non_allowlisted_hostname_blocked");
     expect(networkSmoke).toContain("raw_ipv4_blocked");
