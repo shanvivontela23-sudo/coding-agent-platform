@@ -26,14 +26,15 @@ function httpsGatewayUrl(): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function pythonReachabilityCommand(url: string): string {
+function pythonReachabilityCommand(url: string, verifyTls: boolean): string {
   const encoded = JSON.stringify(url);
+  const context = verifyTls ? "None" : "ssl._create_unverified_context()";
   return [
     "python -c '",
     "import ssl,sys,urllib.request; ",
     "from urllib.error import HTTPError; ",
     `u=${encoded}; `,
-    "ctx=ssl._create_unverified_context(); ",
+    `ctx=${context}; `,
     "\ntry:\n urllib.request.urlopen(u, timeout=8, context=ctx); sys.exit(0)",
     "\nexcept HTTPError:\n sys.exit(0)",
     "\nexcept Exception:\n sys.exit(7)'",
@@ -71,9 +72,9 @@ async function main(): Promise<void> {
     }
   };
 
-  const probe = async (url: string): Promise<number> => {
+  const probe = async (url: string, verifyTls: boolean): Promise<number> => {
     try {
-      const result = await sandbox.commands.run(pythonReachabilityCommand(url), {
+      const result = await sandbox.commands.run(pythonReachabilityCommand(url, verifyTls), {
         timeoutMs: 15_000,
       });
       return result.exitCode;
@@ -92,9 +93,9 @@ async function main(): Promise<void> {
 
   try {
     await record("gateway_https_reachable", async () => {
-      const exitCode = await probe(gatewayUrl);
-      if (exitCode !== 0) throw new Error(`gateway probe exit code ${exitCode}`);
-      return { reachable: true };
+      const exitCode = await probe(gatewayUrl, true);
+      if (exitCode !== 0) throw new Error(`gateway HTTPS/TLS probe exit code ${exitCode}`);
+      return { reachable: true, tlsVerified: true };
     });
 
     for (const [assertion, url] of [
@@ -104,7 +105,9 @@ async function main(): Promise<void> {
       ["ipv6_egress_blocked", "https://[2606:4700:4700::1111]/"],
     ] as const) {
       await record(assertion, async () => {
-        const exitCode = await probe(url);
+        // TLS is intentionally unverified for negative probes so certificate-name
+        // mismatches cannot masquerade as successful network isolation evidence.
+        const exitCode = await probe(url, false);
         if (exitCode === 0) throw new Error(`${url} was reachable from coding-phase sandbox`);
         return { blocked: true, exitCode };
       });
