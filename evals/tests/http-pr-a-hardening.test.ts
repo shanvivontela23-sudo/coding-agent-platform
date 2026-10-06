@@ -14,7 +14,9 @@ import {
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 function body(value: unknown) {
@@ -41,17 +43,24 @@ async function setup() {
     status: "active",
   });
   const token = tokenService.issue("run-1", 10_000);
-  const dispatch = vi.fn(async (_request: HarnessDispatchRequest) => ({
-    status: 200,
-    headers: { "content-type": "application/json" },
-    body: Buffer.from("{}"),
-  }));
+  const dispatch = vi.fn(async (request: HarnessDispatchRequest) => {
+    void request;
+    return {
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: Buffer.from("{}"),
+    };
+  });
   const handler = createHarnessHttpHandler({
     config: loadHarnessHttpConfig(),
     tokenService,
     gatewayStore,
     callStore,
-    rateLimiter: new RunTokenBucket({ ratePerMinute: 120, burst: 20, clock: () => 1_000 }),
+    rateLimiter: new RunTokenBucket({
+      ratePerMinute: 120,
+      burst: 20,
+      clock: () => 1_000,
+    }),
     clock: () => 1_000,
     dispatch,
   });
@@ -59,17 +68,20 @@ async function setup() {
 }
 
 describe("P0-05A security hardening", () => {
-  it.each([true, "true", 1])("refuses every non-false stream request in PR A: %j", async (stream) => {
-    const { dispatch, handler, token } = await setup();
-    const response = await handler({
-      method: "POST",
-      path: "/v1/responses",
-      headers: { authorization: `Bearer ${token}` },
-      body: body({ model: "primary-model", input: "x", stream }),
-    });
-    expect(response.status).toBe(400);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
+  it.each([true, "true", 1])(
+    "refuses every non-false stream request in PR A: %j",
+    async (stream) => {
+      const { dispatch, handler, token } = await setup();
+      const response = await handler({
+        method: "POST",
+        path: "/v1/responses",
+        headers: { authorization: `Bearer ${token}` },
+        body: body({ model: "primary-model", input: "x", stream }),
+      });
+      expect(response.status).toBe(400);
+      expect(dispatch).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps arbitrary nested request data out of persisted-safe model settings", async () => {
     const { dispatch, handler, token } = await setup();
