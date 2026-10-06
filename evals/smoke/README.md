@@ -13,7 +13,8 @@ The operator must first:
 3. create an E2B account/key;
 4. record sanitized protocol transcripts with the exact pinned Claude Code and Codex versions and review their SHA-256 digests;
 5. confirm the harness licences/terms permit the intended commercial multi-tenant use before benchmark results are used to choose a harness;
-6. source the host-only secret environment without pasting any secret into chat or committing it.
+6. source the host-only secret environment without pasting any secret into chat or committing it;
+7. have Python 3 with `venv` and `pip` available on the trusted host, because the hash-lock preflight installs LiteLLM into a disposable virtual environment rather than changing system Python.
 
 The deployment binds LiteLLM management access to loopback only for the trusted operator runner. The sandbox never receives the LiteLLM master key, provider keys, E2B key, or GitHub credentials.
 
@@ -36,11 +37,13 @@ Required smoke-only environment:
 - `SMOKE_CODEX_TRANSCRIPT_PATH`, `SMOKE_CODEX_TRANSCRIPT_SHA256`;
 - the normal trusted-host secrets `MODEL_GATEWAY_RUN_TOKEN_SECRET` and `LITELLM_MASTER_KEY` (aliased to `LITELLM_ADMIN_TOKEN` only for the smoke process as shown above).
 
-The HTTP runner performs a **real** `python -m pip install --require-hashes -r evals/litellm/requirements.txt` preflight. It then creates disposable run-scoped LiteLLM keys/runs and validates the frozen HTTP contract.
+The HTTP runner performs a **real** `python -m pip install --require-hashes -r evals/litellm/requirements.txt` inside a disposable virtual environment. It then creates disposable run-scoped LiteLLM keys/runs and validates the frozen HTTP contract.
 
-For the carry-over token rule, the sequence is deliberate: it first compares the gateway call record against the matching LiteLLM spend row for OpenAI and Anthropic, uncached and cached. Cached probes must show `cachedInputTokens > 0`. Only after those four parity assertions does the runner execute the final reconciliation/mismatch checks. This makes the live evidence explicit before the exact-match rule is relied on as a gate.
+For the carry-over token rule, the sequence is deliberate: each OpenAI/Anthropic cached/uncached probe must finish as an immediately metered non-streaming call (`completed`, `costPending=false`, cost present) before the runner reads the matching LiteLLM spend row and compares token counters. Cached probes must show `cachedInputTokens > 0`. Only after those four independent parity assertions does the runner rely on the reconciler's exact-match rule for later audit/mismatch checks.
 
-The runner also counts observed HTTP `spend_reserved` refusals; at least one is required. Timeout mechanics use deterministic local application fixtures so the smoke run does not spend provider money trying to manufacture stalls. The public Caddy path is still used for real incremental SSE validation.
+The `spend_reserved` probe also proves a real active-reservation conflict rather than a request that is individually too expensive: one streaming request must first be persisted in `streaming` state under a cap sized between one and two identical estimates, then the second request must be refused with `spend_reserved` while the first reservation is active.
+
+Timeout mechanics use deterministic local application fixtures so the smoke run does not spend provider money trying to manufacture stalls. The public Caddy path is still used for real incremental SSE validation.
 
 ## E2B network smoke
 
@@ -52,11 +55,13 @@ LIVE_SMOKE=1 pnpm smoke:e2b-network
 
 The E2B sandbox starts directly in the coding-phase network policy: only the public gateway hostname is allowlisted, while IPv4 and IPv6 default routes are denied. The runner proves:
 
-- the gateway HTTPS hostname is reachable;
+- the gateway HTTPS hostname is reachable with normal TLS certificate verification;
 - a non-allowlisted hostname is blocked;
 - a raw IPv4 destination is blocked;
 - a separate outside DNS hostname is blocked;
 - direct IPv6 egress is blocked.
+
+Negative probes intentionally disable certificate verification so a certificate-name error cannot be mistaken for evidence of network isolation.
 
 ## Evidence handling
 
