@@ -25,7 +25,7 @@ afterEach(async () => {
 function jsonBody(value: unknown, tracker?: { chunks: number }) {
   const bytes = Buffer.from(JSON.stringify(value));
   return (async function* () {
-    tracker && (tracker.chunks += 1);
+    if (tracker) tracker.chunks += 1;
     yield bytes;
   })();
 }
@@ -72,7 +72,16 @@ async function fixture() {
     clock,
     dispatch,
   });
-  return { callStore, dispatch, gatewayStore, handler, token, setNow: (value: number) => (now = value) };
+  return {
+    callStore,
+    dispatch,
+    gatewayStore,
+    handler,
+    token,
+    setNow: (value: number) => {
+      now = value;
+    },
+  };
 }
 
 describe("harness HTTP auth and limits", () => {
@@ -97,7 +106,9 @@ describe("harness HTTP auth and limits", () => {
       { authorization: `Bearer ${token}`, "x-api-key": "different-token" },
     ]) {
       const tracker = { chunks: 0 };
-      const response = await handler(request(headers, jsonBody({ model: "primary-model" }, tracker)));
+      const response = await handler(
+        request(headers, jsonBody({ model: "primary-model" }, tracker)),
+      );
       expect(response.status).toBe(401);
       expect(tracker.chunks).toBe(0);
     }
@@ -112,7 +123,9 @@ describe("harness HTTP auth and limits", () => {
         yield new Uint8Array(1024 * 1024);
       }
     })();
-    const response = await handler(request({ authorization: `Bearer ${token}` }, body));
+    const response = await handler(
+      request({ authorization: `Bearer ${token}` }, body),
+    );
     expect(response.status).toBe(413);
     expect(chunks).toBeLessThan(20);
   });
@@ -127,7 +140,9 @@ describe("harness HTTP auth and limits", () => {
         ),
       );
 
-    for (let index = 0; index < 20; index += 1) expect((await call()).status).toBe(200);
+    for (let index = 0; index < 20; index += 1) {
+      expect((await call()).status).toBe(200);
+    }
     expect((await call()).status).toBe(429);
     setNow(1_500);
     expect((await call()).status).toBe(200);
@@ -137,12 +152,20 @@ describe("harness HTTP auth and limits", () => {
     const { callStore, dispatch, handler, token } = await fixture();
     for (const model of ["primary-model", "background-model"]) {
       expect(
-        (await handler(request({ "x-api-key": token }, jsonBody({ model, input: "x" })))).status,
+        (
+          await handler(
+            request({ "x-api-key": token }, jsonBody({ model, input: "x" })),
+          )
+        ).status,
       ).toBe(200);
     }
     for (const model of ["Primary-model", "primary-model-latest", "other-model"]) {
       expect(
-        (await handler(request({ "x-api-key": token }, jsonBody({ model, input: "x" })))).status,
+        (
+          await handler(
+            request({ "x-api-key": token }, jsonBody({ model, input: "x" })),
+          )
+        ).status,
       ).toBe(400);
     }
     expect(dispatch).toHaveBeenCalledTimes(2);
@@ -154,12 +177,20 @@ describe("harness HTTP auth and limits", () => {
     const headers = { authorization: `Bearer ${token}` };
 
     expect(
-      (await handler(request(headers, jsonBody({ model: "primary-model" }), "/v1/unknown"))).status,
+      (
+        await handler(
+          request(headers, jsonBody({ model: "primary-model" }), "/v1/unknown"),
+        )
+      ).status,
     ).toBe(404);
     expect(
       (
         await handler(
-          request(headers, jsonBody({ model: "primary-model" }), "/v1/chat/completions"),
+          request(
+            headers,
+            jsonBody({ model: "primary-model" }),
+            "/v1/chat/completions",
+          ),
         )
       ).status,
     ).toBe(404);
