@@ -64,6 +64,8 @@ async function setup(fetchImpl: typeof fetch, timeoutMs = 500) {
       clock: () => 1_000,
     }),
     clock: () => 1_000,
+    estimateCostUsd: async () => 0.1,
+    reconcilePendingCall: async () => undefined,
     dispatch: (request) => transport.forward(request),
   });
   return { callStore, gatewayStore, handler, token };
