@@ -46,10 +46,14 @@ function requiredCost(value: unknown): number {
   return value;
 }
 
+const privateHttpLiteLLMHosts = new Set(["localhost", "127.0.0.1", "litellm"]);
+
 function normalizeBaseUrl(baseUrl: string): string {
   const parsed = new URL(baseUrl);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
-    throw new Error("LiteLLM baseUrl must use https outside localhost");
+  const privateHttp =
+    parsed.protocol === "http:" && privateHttpLiteLLMHosts.has(parsed.hostname);
+  if (parsed.protocol !== "https:" && !privateHttp) {
+    throw new Error("LiteLLM baseUrl must use https except for loopback/private Compose LiteLLM");
   }
   return parsed.toString().replace(/\/$/, "");
 }
