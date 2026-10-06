@@ -104,6 +104,7 @@ function completedHarnessCall(cost: number): HarnessCallRecord {
     latencyMs: 10,
     litellmCallId: "prior-harness-call",
     listPriceCostUsd: cost,
+    costPending: false,
     createdAtMs: 900,
     updatedAtMs: 900,
   };
@@ -286,5 +287,25 @@ describe("P0-05A upstream errors and spend enforcement", () => {
       listPriceCostUsd: null,
       costPending: true,
     });
+  });
+
+  it("fails closed on another paid dispatch while a successful call cost is pending", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          id: "resp",
+          usage: { input_tokens: 2, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const { gatewayStore, handler, token } = await setup(fetchMock as typeof fetch);
+
+    expect((await handler(inbound(token))).status).toBe(200);
+    const second = await handler(inbound(token));
+
+    expect(second.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await gatewayStore.getRun("run-1")).status).toBe("active");
   });
 });
