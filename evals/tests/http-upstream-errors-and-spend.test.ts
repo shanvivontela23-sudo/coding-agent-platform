@@ -37,7 +37,18 @@ function emptyUsage() {
   } as const;
 }
 
-async function setup(fetchImpl: typeof fetch, spendCapUsd = 10) {
+function responseBytes(responseBody: Uint8Array | ReadableStream<Uint8Array>): Uint8Array {
+  if (responseBody instanceof ReadableStream) {
+    throw new Error("expected a non-streaming response body");
+  }
+  return responseBody;
+}
+
+async function setup(
+  fetchImpl: typeof fetch,
+  spendCapUsd = 10,
+  settlePendingInline = false,
+) {
   const root = await mkdtemp(join(tmpdir(), "coding-agent-http-upstream-"));
   roots.push(root);
   const gatewayStore = new FileGatewayStore({ rootDir: join(root, "gateway") });
@@ -63,6 +74,7 @@ async function setup(fetchImpl: typeof fetch, spendCapUsd = 10) {
     nonStreamingTimeoutMs: 500,
     clock: () => 1_000,
   });
+  let reconciliations = 0;
   const handler = createHarnessHttpHandler({
     config: loadHarnessHttpConfig(),
     tokenService,
@@ -74,9 +86,29 @@ async function setup(fetchImpl: typeof fetch, spendCapUsd = 10) {
       clock: () => 1_000,
     }),
     clock: () => 1_000,
+    estimateCostUsd: async () => 0.01,
+    reconcilePendingCall: async (run, callId) => {
+      reconciliations += 1;
+      if (!settlePendingInline) {
+        throw new Error("spend log row not available in this fixture");
+      }
+      const record = await callStore.getCall(run.runId, callId);
+      await callStore.saveCall({
+        ...record,
+        listPriceCostUsd: 0.02,
+        costPending: false,
+        updatedAtMs: 1_000,
+      });
+    },
     dispatch: (request) => transport.forward(request),
   });
-  return { callStore, gatewayStore, handler, token };
+  return {
+    callStore,
+    gatewayStore,
+    handler,
+    token,
+    getReconciliations: () => reconciliations,
+  };
 }
 
 function inbound(token: string) {
@@ -110,10 +142,8 @@ function completedHarnessCall(cost: number): HarnessCallRecord {
   };
 }
 
-describe("P0-05A upstream errors and spend enforcement", () => {
+describe("P0-05 upstream errors and spend enforcement", () => {
   it("recognizes LiteLLM v1.103.2 budget_exceeded by explicit error type regardless of HTTP status", async () => {
-    // v1.103.2 auth_exception_handler maps BudgetExceededError to
-    // ProxyException(type=budget_exceeded, code=e.status_code), so status is not the discriminator.
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
@@ -158,7 +188,7 @@ describe("P0-05A upstream errors and spend enforcement", () => {
 
     expect(response.status).toBe(429);
     expect(response.headers["retry-after"]).toBe("7");
-    expect(JSON.parse(Buffer.from(response.body).toString("utf8"))).toEqual({
+    expect(JSON.parse(Buffer.from(responseBytes(response.body)).toString("utf8"))).toEqual({
       error: {
         message: "litellm.RateLimitError: OpenAIException - rate limit reached",
         type: "throttling_error",
@@ -188,7 +218,7 @@ describe("P0-05A upstream errors and spend enforcement", () => {
     const { handler, token } = await setup(fetchMock as typeof fetch);
 
     const response = await handler(inbound(token));
-    const responseBody = Buffer.from(response.body).toString("utf8");
+    const responseBody = Buffer.from(responseBytes(response.body)).toString("utf8");
 
     expect(response.status).toBe(400);
     expect(responseBody).not.toContain("should-not-leak");
@@ -226,9 +256,9 @@ describe("P0-05A upstream errors and spend enforcement", () => {
 
     expect(response.status).toBe(503);
     expect(response.headers["retry-after"]).toBe("2");
-    expect(JSON.parse(Buffer.from(response.body).toString("utf8"))).toMatchObject({
-      error: { type: "overloaded_error", code: "503" },
-    });
+    expect(
+      JSON.parse(Buffer.from(responseBytes(response.body)).toString("utf8")),
+    ).toMatchObject({ error: { type: "overloaded_error", code: "503" } });
   });
 
   it("refuses before dispatch when direct plus harness recorded cost has reached the run cap", async () => {
@@ -289,7 +319,7 @@ describe("P0-05A upstream errors and spend enforcement", () => {
     });
   });
 
-  it("fails closed on another paid dispatch while a successful call cost is pending", async () => {
+  it("reconciles a prior pending call inline and then allows the next paid dispatch", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
@@ -299,13 +329,17 @@ describe("P0-05A upstream errors and spend enforcement", () => {
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     );
-    const { gatewayStore, handler, token } = await setup(fetchMock as typeof fetch);
+    const { handler, token, getReconciliations } = await setup(
+      fetchMock as typeof fetch,
+      10,
+      true,
+    );
 
     expect((await handler(inbound(token))).status).toBe(200);
     const second = await handler(inbound(token));
 
-    expect(second.status).toBe(503);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((await gatewayStore.getRun("run-1")).status).toBe("active");
+    expect(second.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getReconciliations()).toBeGreaterThanOrEqual(1);
   });
 });
