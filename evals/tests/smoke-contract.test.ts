@@ -94,4 +94,16 @@ describe("live smoke contract", () => {
     expect(networkSmoke).toContain("outside_dns_name_blocked");
     expect(networkSmoke).toContain("ipv6_egress_blocked");
   });
+
+  it("keeps the Phase 0 boundary docs synchronized with the HTTP gateway and live smoke", async () => {
+    const [gatewayDoc, sandboxDoc] = await Promise.all([
+      readFile("evals/docs/phase-0/model-gateway.md", "utf8"),
+      readFile("evals/docs/phase-0/sandbox.md", "utf8"),
+    ]);
+    expect(gatewayDoc).toContain("evals/src/gateway/http/server.ts");
+    expect(gatewayDoc).toContain("evals/smoke/http-gateway-smoke.ts");
+    expect(gatewayDoc).toContain("truncated");
+    expect(sandboxDoc).toContain("evals/smoke/e2b-network-smoke.ts");
+    expect(sandboxDoc).toContain("::/0");
+  });
 });
