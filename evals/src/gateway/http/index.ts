@@ -1,5 +1,11 @@
 export { authenticateHarnessRequest } from "./auth.js";
 export { loadHarnessHttpConfig } from "./config.js";
+export {
+  createListPriceCostEstimator,
+  parseModelListPrices,
+  type ModelListPrice,
+  type ModelListPrices,
+} from "./cost-estimator.js";
 export { FileHarnessCallStore } from "./file-store.js";
 export {
   createHarnessHttpHandler,
@@ -33,6 +39,12 @@ export {
 } from "./reconciler.js";
 export { readJsonBodyWithinLimit, RequestBodyTooLargeError } from "./request-body.js";
 export { getHarnessRoute } from "./route-registry.js";
+export {
+  createGatewayServerRuntime,
+  loadGatewayServerConfig,
+  type GatewayServerConfig,
+  type GatewayServerRuntime,
+} from "./server.js";
 export {
   SseEventParser,
   type SseEvent,
