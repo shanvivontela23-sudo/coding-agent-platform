@@ -13,7 +13,7 @@ async function responseText(response: Response): Promise<string> {
 }
 
 describe("protocol recorder", () => {
-  it("records only safe protocol shape and never credential, prompt, tool args, or model output", async () => {
+  it("records safe protocol shape including auth header names but never credential values, prompt, tool args, or model output", async () => {
     const forward = vi.fn(async (request: Request) => {
       expect(request.headers.get("authorization")).toBeNull();
       expect(request.headers.get("x-api-key")).toBeNull();
@@ -58,7 +58,7 @@ describe("protocol recorder", () => {
           timestampMs: 1234,
           method: "POST",
           path: "/v1/messages",
-          headerNames: ["anthropic-version", "content-type"],
+          headerNames: ["anthropic-version", "authorization", "content-type"],
           contentType: "application/json",
           topLevelFields: ["messages", "model", "stream", "tools"],
           requestedModel: "claude-primary",
@@ -79,6 +79,32 @@ describe("protocol recorder", () => {
     }
     expect(protocolTranscriptSha256(transcript)).toMatch(/^[0-9a-f]{64}$/);
     expect(forward).toHaveBeenCalledTimes(1);
+  });
+
+  it("records x-api-key as protocol shape while stripping its value before forwarding", async () => {
+    const forward = vi.fn(async (request: Request) => {
+      expect(request.headers.get("x-api-key")).toBeNull();
+      return new Response("ok", { status: 200 });
+    });
+    const recorder = new ProtocolRecorder({
+      credential: "RECORDER_KEY_VALUE_MUST_NOT_BE_RECORDED",
+      harness: { name: "codex", version: "1.2.3" },
+      forward,
+    });
+
+    await recorder.handle({
+      method: "POST",
+      path: "/v1/responses",
+      headers: {
+        "x-api-key": "RECORDER_KEY_VALUE_MUST_NOT_BE_RECORDED",
+        "content-type": "application/json",
+      },
+      body: bytes(JSON.stringify({ model: "openai-primary", input: "do not record this" })),
+    });
+
+    const transcript = recorder.transcript();
+    expect(transcript.exchanges[0]?.headerNames).toEqual(["content-type", "x-api-key"]);
+    expect(JSON.stringify(transcript)).not.toContain("RECORDER_KEY_VALUE_MUST_NOT_BE_RECORDED");
   });
 
   it("returns real forwarded responses so a harness can continue into background and token-count traffic", async () => {
