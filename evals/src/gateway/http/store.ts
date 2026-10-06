@@ -4,6 +4,7 @@ export type HarnessCallState =
   | "accepted"
   | "streaming"
   | "completed"
+  | "truncated"
   | "timeout"
   | "interrupted"
   | "failed";
