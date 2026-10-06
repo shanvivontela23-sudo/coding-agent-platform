@@ -92,7 +92,7 @@ describe("committed deployment contract", () => {
     expect(compose).toContain("gateway:");
     expect(compose).toContain("litellm:");
     expect(compose).toContain("postgres:");
-    expect(compose).toContain("gateway:8080");
+    expect(compose).toContain("HTTP_GATEWAY_PORT: 8080");
     expect(compose).toContain("litellm:4000");
     expect(compose).not.toContain(":latest");
     for (const line of compose.split("\n").filter((line) => line.trim().startsWith("image:"))) {
