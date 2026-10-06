@@ -180,8 +180,31 @@ async function appendRefusal(
   });
 }
 
+async function withRunLock<T>(
+  locks: Map<string, Promise<void>>,
+  runId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = locks.get(runId) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  locks.set(runId, tail);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release?.();
+    if (locks.get(runId) === tail) locks.delete(runId);
+  }
+}
+
 export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
   const clock = options.clock ?? Date.now;
+  const paidRunLocks = new Map<string, Promise<void>>();
 
   return async function handle(
     request: HarnessInboundRequest,
@@ -268,20 +291,63 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       return jsonError(400, "model_not_allowed", "requested model is not allowed");
     }
 
-    if (route.paid) {
+    const dispatch = async (activeRun: GatewayRunRecord) =>
+      await options.dispatch({
+        run: activeRun,
+        route,
+        requestHeaders: request.headers,
+        body,
+        callId: randomUUID(),
+        provider: providerFor(route),
+        model,
+        modelSettings: safeModelSettings(body, route),
+      });
+
+    if (!route.paid) return await dispatch(run);
+
+    return await withRunLock(paidRunLocks, run.runId, async () => {
+      let lockedRun: GatewayRunRecord;
+      try {
+        lockedRun = await options.gatewayStore.getRun(run.runId);
+      } catch {
+        return jsonError(401, "unauthorized", "run is not available");
+      }
+
+      if (lockedRun.status === "limit-hit") {
+        return jsonError(429, "spend_limit", "run spend limit has been reached");
+      }
+      if (lockedRun.status !== "active" || clock() >= lockedRun.expiresAtMs) {
+        return jsonError(401, "inactive_run", "run is not active");
+      }
+      if (!lockedRun.allowedModels.includes(model)) {
+        await appendRefusal(
+          options,
+          lockedRun.runId,
+          request.method,
+          path,
+          "model-not-allowed",
+          clock(),
+        );
+        return jsonError(400, "model_not_allowed", "requested model is not allowed");
+      }
+
       let spend;
       try {
-        spend = await recordedRunSpend(run.runId, options.gatewayStore, options.callStore);
+        spend = await recordedRunSpend(
+          lockedRun.runId,
+          options.gatewayStore,
+          options.callStore,
+        );
       } catch {
         return jsonError(500, "spend_state_error", "run spend state is unavailable");
       }
 
-      if (spend.costUsd >= run.spendCapUsd) {
-        run = { ...run, status: "limit-hit" };
-        await options.gatewayStore.saveRun(run);
+      if (spend.costUsd >= lockedRun.spendCapUsd) {
+        lockedRun = { ...lockedRun, status: "limit-hit" };
+        await options.gatewayStore.saveRun(lockedRun);
         await appendRefusal(
           options,
-          run.runId,
+          lockedRun.runId,
           request.method,
           path,
           "spend-limit",
@@ -293,7 +359,7 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
       if (spend.hasPendingPaidCost) {
         await appendRefusal(
           options,
-          run.runId,
+          lockedRun.runId,
           request.method,
           path,
           "spend-reconciliation-pending",
@@ -305,17 +371,8 @@ export function createHarnessHttpHandler(options: HarnessHttpHandlerOptions) {
           "a prior paid call is awaiting spend reconciliation",
         );
       }
-    }
 
-    return await options.dispatch({
-      run,
-      route,
-      requestHeaders: request.headers,
-      body,
-      callId: randomUUID(),
-      provider: providerFor(route),
-      model,
-      modelSettings: safeModelSettings(body, route),
+      return await dispatch(lockedRun);
     });
   };
 }
