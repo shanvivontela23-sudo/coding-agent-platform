@@ -59,9 +59,7 @@ function selectResponseHeaders(
     const value = response.headers.get(name);
     if (value !== null) selected[name] = value;
   }
-  if (!("content-type" in selected)) {
-    selected["content-type"] = "application/json";
-  }
+  if (!("content-type" in selected)) selected["content-type"] = "application/json";
   return selected;
 }
 
@@ -229,6 +227,7 @@ export class LiteLLMHarnessTransport {
         body: bytes,
       };
     } catch (error) {
+      void error;
       const timedOut = controller.signal.aborted && !externalSignal?.aborted;
       record = {
         ...record,
@@ -237,12 +236,8 @@ export class LiteLLMHarnessTransport {
         updatedAtMs: this.clock(),
       };
       await this.callStore.saveCall(record);
-      if (timedOut) {
-        return safeError(504, "upstream_timeout", "upstream request timed out");
-      }
-      if (externalSignal?.aborted) {
-        return safeError(499, "client_closed", "client disconnected");
-      }
+      if (timedOut) return safeError(504, "upstream_timeout", "upstream request timed out");
+      if (externalSignal?.aborted) return safeError(499, "client_closed", "client disconnected");
       return safeError(502, "upstream_error", "upstream model gateway request failed");
     } finally {
       clearTimeout(timer);
