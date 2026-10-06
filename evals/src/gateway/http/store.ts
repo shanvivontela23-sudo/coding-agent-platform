@@ -25,6 +25,12 @@ export type HarnessCallRecord = {
   readonly listPriceCostUsd: number | null;
   /** True while a paid call still needs authoritative LiteLLM spend reconciliation. */
   readonly costPending: boolean;
+  /**
+   * Set only after a paid upstream non-2xx response with no observed usage.
+   * Final run reconciliation may settle a missing LiteLLM row at zero cost,
+   * but an authoritative row still wins if one appears.
+   */
+  readonly zeroCostIfSpendMissing?: boolean;
   readonly createdAtMs: number;
   readonly updatedAtMs: number;
 };
