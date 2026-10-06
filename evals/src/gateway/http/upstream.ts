@@ -327,6 +327,7 @@ export class LiteLLMHarnessTransport {
           ...record,
           state: "failed",
           latencyMs,
+          zeroCostIfSpendMissing: request.route.paid,
           updatedAtMs: this.clock(),
         };
         await this.callStore.saveCall(record);
