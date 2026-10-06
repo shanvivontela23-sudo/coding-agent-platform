@@ -132,19 +132,18 @@ export class ProtocolRecorder {
 
     const shape = parseBodyShape(request.body);
     const headers = sanitizedForwardHeaders(request.headers);
+    const init: RequestInit = { method: request.method, headers };
+    const upperMethod = request.method.toUpperCase();
+    if (upperMethod !== "GET" && upperMethod !== "HEAD") {
+      init.body = Buffer.from(request.body);
+    }
     const response = await this.forward(
-      new Request(new URL(request.path, "https://recorder.invalid"), {
-        method: request.method,
-        headers,
-        body: request.method.toUpperCase() === "GET" || request.method.toUpperCase() === "HEAD"
-          ? undefined
-          : request.body,
-      }),
+      new Request(new URL(request.path, "https://recorder.invalid"), init),
     );
 
     this.exchanges.push({
       timestampMs: this.clock(),
-      method: request.method.toUpperCase(),
+      method: upperMethod,
       path: normalizePath(request.path),
       headerNames: safeHeaderNames(request.headers),
       contentType: findHeader(request.headers, "content-type") ?? null,
