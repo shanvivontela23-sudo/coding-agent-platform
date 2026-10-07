@@ -37,7 +37,7 @@ describe("Phase 0 scope scoring", () => {
   });
 
   it("flags other source files or a diff larger than 3x reference", () => {
-    const otherSource = `${patchFile("src/fix.ts", "-old\n+new")} ${patchFile("src/unrelated.ts", "-a\n+b")}`;
+    const otherSource = `${patchFile("src/fix.ts", "-old\n+new")}${patchFile("src/unrelated.ts", "-a\n+b")}`;
     expect(
       analyzePatchScope(otherSource, {
         referenceFiles: ["src/fix.ts"],
