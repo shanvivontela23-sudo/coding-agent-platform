@@ -2,15 +2,13 @@
   "name": "coding-agent-platform",
   "version": "0.0.0",
   "private": true,
-  "description": "Phase 0 evaluation rig for the Coding Agent Platform",
+  "description": "Coding Agent Platform monorepo with Phase 0 evaluation rig",
   "packageManager": "pnpm@10.17.1",
-  "engines": {
-    "node": ">=22"
-  },
+  "engines": { "node": ">=22" },
   "scripts": {
-    "lint": "eslint evals",
+    "lint": "eslint evals apps packages",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run evals/tests",
+    "test": "vitest run evals/tests apps packages",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "dataset:validate": "tsx evals/src/dataset/cli.ts",
     "protocol:record": "tsx evals/src/gateway/http/recorder-cli.ts",
@@ -27,7 +25,5 @@
     "zod": "^4.1.11",
     "tsx": "^4.20.6"
   },
-  "dependencies": {
-    "e2b": "2.52.0"
-  }
+  "dependencies": { "e2b": "2.52.0" }
 }

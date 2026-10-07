@@ -9,15 +9,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": [
-      "node",
-      "vitest/globals"
-    ],
+    "types": ["node", "vitest/globals"],
     "outDir": "dist"
   },
   "include": [
     "evals/src/**/*.ts",
     "evals/tests/**/*.ts",
+    "apps/api/**/*.ts",
+    "apps/worker/**/*.ts",
+    "apps/**/tests/**/*.ts",
+    "packages/**/*.ts",
     "eslint.config.mjs"
   ]
 }
