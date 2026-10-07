@@ -72,7 +72,7 @@ describe("P0-07 live readiness", () => {
     expect(combined).toContain("smallest change that fits the repository's style");
   });
 
-  it("uses the configured template id and prepends the fixed instruction in the live orchestrator", async () => {
+  it("uses the configured template id, full lifetime, and fixed instruction in the live orchestrator", async () => {
     const session = new FakeSession(async () => ({ exitCode: 0, stdout: "", stderr: "" }), { patch: "diff --git a/src/a.ts b/src/a.ts\n", status: " M src/a.ts\n" });
     const createRequests: SandboxCreateRequest[] = [];
     const provider: SandboxProvider = { create: async (createRequest) => { createRequests.push(createRequest); return session; } };
@@ -88,6 +88,7 @@ describe("P0-07 live readiness", () => {
     const orchestrator = new Phase0RunOrchestrator({ sandboxProvider: provider, liveConfig: { e2bTemplateId: "coding-agent-ts-node-v1" } });
     await orchestrator.run({ taskId: "task-1", repository: { pinnedCommit: "a".repeat(40), archiveSha256: "b".repeat(64), archive: new TextEncoder().encode("archive") }, gatewayUrl: request.gatewayUrl, runToken: request.runToken, ticketText: "Customer sees a duplicate invoice.", model: request.model, maxTurns: request.maxTurns, timeoutMs: request.timeoutMs, harness });
     expect(createRequests[0]?.template).toBe("coding-agent-ts-node-v1");
+    expect(createRequests[0]?.timeoutMs).toBe(960_000);
     expect(seenTickets[0]).toContain("Read the ticket and find the cause");
   });
 
