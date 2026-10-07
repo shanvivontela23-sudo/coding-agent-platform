@@ -44,11 +44,23 @@ export class CodexHarnessRunner implements HarnessRunner {
 
   async run(session: SandboxSession, request: HarnessRunRequest): Promise<HarnessRunOutcome> {
     const versionGuard = `version_output="$(${this.binary} --version 2>&1)" || exit 86; case "$version_output" in *"$BENCHMARK_HARNESS_VERSION"*) ;; *) printf '%s\n' 'harness_version_mismatch' >&2; exit 86 ;; esac`;
+    const providerConfig = [
+      `--config 'model_provider="benchmark_gateway"'`,
+      `--config 'model_providers.benchmark_gateway.name="Benchmark Gateway"'`,
+      `--config 'model_providers.benchmark_gateway.base_url="'"$OPENAI_BASE_URL"'"'`,
+      `--config 'model_providers.benchmark_gateway.env_key="OPENAI_API_KEY"'`,
+      `--config 'model_providers.benchmark_gateway.wire_api="responses"'`,
+      `--config 'features.responses_websockets=false'`,
+    ].join(" ");
     const command = [
       'mkdir -p "$CODEX_HOME"',
       versionGuard,
-      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --full-auto --model "$BENCHMARK_MODEL" --config 'openai_base_url="'"$OPENAI_BASE_URL"'"' -`,
+      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --full-auto --model "$BENCHMARK_MODEL" ${providerConfig} -`,
     ].join("; ");
+
+    // Codex CLI 0.90.0 does not expose a supported hard max-turns switch for
+    // `codex exec`. The sandbox command timeout is therefore the enforced hard
+    // stop. We still count emitted turn.completed events for qualification data.
     return await executeHarnessCommand(
       session,
       request,
@@ -60,7 +72,6 @@ export class CodexHarnessRunner implements HarnessRunner {
           CODEX_HOME: "/tmp/codex-benchmark",
           BENCHMARK_TICKET: request.ticketText,
           BENCHMARK_MODEL: request.model,
-          BENCHMARK_MAX_TURNS: String(request.maxTurns),
           BENCHMARK_HARNESS_VERSION: this.version,
         },
         parseTurns,
