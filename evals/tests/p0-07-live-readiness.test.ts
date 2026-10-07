@@ -4,16 +4,21 @@ import {
   ClaudeCodeHarnessRunner,
   CodexHarnessRunner,
   type HarnessRunRequest,
+  type HarnessRunner,
 } from "../src/harness/index.js";
 import { buildPhase0HarnessTicket, PHASE0_INSTRUCTION_VERSION } from "../src/orchestrator/instruction.js";
 import { loadPhase0LiveConfig } from "../src/orchestrator/live-config.js";
+import { Phase0RunOrchestrator } from "../src/orchestrator/phase0-run.js";
 import type {
   SandboxCommand,
   SandboxCommandResult,
+  SandboxCreateRequest,
   SandboxPatch,
+  SandboxProvider,
   SandboxSession,
   SandboxSnapshot,
 } from "../src/sandbox/types.js";
+import { typescriptNodeHarnessTemplate } from "../sandbox-templates/typescript-node/template.js";
 
 class FakeSession implements SandboxSession {
   readonly id = "sandbox-live";
@@ -63,7 +68,7 @@ describe("P0-07 live readiness", () => {
     expect(session.exportCount).toBe(1);
   });
 
-  it("loads a required configurable E2B template id and keeps pinned harness versions in the template definition", async () => {
+  it("loads a required configurable E2B template id and keeps pinned harness versions in a loadable template definition", async () => {
     expect(loadPhase0LiveConfig({ E2B_TEMPLATE_ID: "coding-agent-ts-node-v1" })).toEqual({
       e2bTemplateId: "coding-agent-ts-node-v1",
     });
@@ -72,6 +77,7 @@ describe("P0-07 live readiness", () => {
     const template = await readFile("evals/sandbox-templates/typescript-node/template.ts", "utf8");
     expect(template).toContain("@anthropic-ai/claude-code@2.0.0");
     expect(template).toContain("@openai/codex@0.90.0");
+    expect(typescriptNodeHarnessTemplate).toBeDefined();
   });
 
   it("prepends the versioned fixed Phase 0 instruction to every ticket", () => {
@@ -81,6 +87,59 @@ describe("P0-07 live readiness", () => {
     expect(combined).toContain("write a test that fails because of the bug");
     expect(combined).toContain("smallest change that fits the repository's style");
     expect(combined.indexOf("Read the ticket")).toBeLessThan(combined.indexOf("Customer sees a duplicate invoice."));
+  });
+
+  it("uses the configured template id and prepends the fixed instruction in the live orchestrator", async () => {
+    const session = new FakeSession(
+      async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      { patch: "diff --git a/src/a.ts b/src/a.ts\n", status: " M src/a.ts\n" },
+    );
+    const createRequests: SandboxCreateRequest[] = [];
+    const provider: SandboxProvider = {
+      create: async (createRequest) => {
+        createRequests.push(createRequest);
+        return session;
+      },
+    };
+    const seenTickets: string[] = [];
+    const harness: HarnessRunner = {
+      name: "codex",
+      version: "0.90.0",
+      run: async (_session, harnessRequest) => {
+        seenTickets.push(harnessRequest.ticketText);
+        return {
+          status: "completed",
+          limit: null,
+          turnsUsed: 1,
+          wallClockSeconds: 1,
+          patch: { patch: "diff --git a/src/a.ts b/src/a.ts\n", status: " M src/a.ts\n" },
+        };
+      },
+    };
+    const orchestrator = new Phase0RunOrchestrator({
+      sandboxProvider: provider,
+      liveConfig: { e2bTemplateId: "coding-agent-ts-node-v1" },
+    });
+
+    await orchestrator.run({
+      taskId: "task-1",
+      repository: {
+        pinnedCommit: "a".repeat(40),
+        archiveSha256: "b".repeat(64),
+        archive: new TextEncoder().encode("archive"),
+      },
+      gatewayUrl: request.gatewayUrl,
+      runToken: request.runToken,
+      ticketText: "Customer sees a duplicate invoice.",
+      model: request.model,
+      maxTurns: request.maxTurns,
+      timeoutMs: request.timeoutMs,
+      harness,
+    });
+
+    expect(createRequests[0]?.template).toBe("coding-agent-ts-node-v1");
+    expect(seenTickets[0]).toContain("Read the ticket and find the cause");
+    expect(seenTickets[0]?.endsWith("Customer sees a duplicate invoice.")).toBe(true);
   });
 
   it("configures Codex with the approved custom Responses provider and no websocket transport", async () => {
