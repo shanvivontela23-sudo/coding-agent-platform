@@ -33,7 +33,8 @@ describe("Dhara members and invite web flow", () => {
     const shell = await readFile("apps/web/components/app-shell.tsx", "utf8");
     const home = await readFile("apps/web/app/home/page.tsx", "utf8");
     const members = await readFile("apps/web/app/members/page.tsx", "utf8");
-    expect(shell).toContain('href="/members"');
+    expect(shell).toContain('href: "/members"');
+    expect(shell).toContain("href={item.href}");
     for (const source of [shell, home, members]) {
       expect(source).not.toMatch(/coming soon|next product slice|planned slice/i);
     }
