@@ -9,6 +9,7 @@ import {
   type SupabaseIdentity,
 } from "./auth.js";
 import type { InviteRole, Membership, ProductDatabase } from "./database.js";
+import { ApiError, safeErrorCode } from "./errors.js";
 
 export type ApiServerOptions = {
   readonly webOrigin: string;
@@ -67,7 +68,7 @@ function logCaughtError(request: IncomingMessage, pathname: string, error: unkno
     event: "api_error",
     method: request.method ?? "UNKNOWN",
     path: pathname,
-    errorType: error instanceof Error ? error.name : "UnknownError",
+    code: safeErrorCode(error),
   }));
 }
 
@@ -95,7 +96,7 @@ export function createApiServer(options: ApiServerOptions) {
       redirect(response, webLocation(options.webOrigin, "/onboarding"));
       return;
     }
-    if (memberships.length > 1) throw new Error("multiple memberships");
+    if (memberships.length > 1) throw new ApiError("conflict", 409);
     const session = sessionFromMembership(memberships[0]!, options.sessionDurationMs);
     appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies));
     redirect(response, webLocation(options.webOrigin, "/home"));
@@ -113,7 +114,12 @@ export function createApiServer(options: ApiServerOptions) {
         const form = new URLSearchParams(await body(request));
         const email = form.get("email") ?? "";
         const password = form.get("password") ?? "";
-        const identity = await options.auth.signInWithPassword(email, password);
+        let identity: SupabaseIdentity;
+        try {
+          identity = await options.auth.signInWithPassword(email, password);
+        } catch {
+          throw new ApiError("auth_failed", 401);
+        }
         await finishIdentity(identity, response);
         return;
       }
@@ -127,19 +133,24 @@ export function createApiServer(options: ApiServerOptions) {
         const code = url.searchParams.get("code");
         const flowId = url.searchParams.get("flow");
         const flowCookie = cookies(request).get("supabase_oauth_flow");
-        if (!code || !flowId || !flowCookie) throw new Error("missing OAuth callback state");
-        const identity = await options.auth.completeGitHubOAuth({ code, flowId, flowCookie });
+        if (!code || !flowId || !flowCookie) throw new ApiError("auth_failed", 401);
+        let identity: SupabaseIdentity;
+        try {
+          identity = await options.auth.completeGitHubOAuth({ code, flowId, flowCookie });
+        } catch {
+          throw new ApiError("auth_failed", 401);
+        }
         appendCookie(response, clearCookie("supabase_oauth_flow", secureCookies));
         await finishIdentity(identity, response);
         return;
       }
       if (request.method === "POST" && url.pathname === "/onboarding/organization") {
         const onboardingCookie = cookies(request).get("onboarding_session");
-        if (!onboardingCookie) throw new Error("missing onboarding session");
+        if (!onboardingCookie) throw new ApiError("auth_required", 401);
         const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret);
         const form = new URLSearchParams(await body(request));
         const organizationName = (form.get("organizationName") ?? "").trim();
-        if (organizationName.length < 2 || organizationName.length > 80) throw new Error("invalid organization name");
+        if (organizationName.length < 2 || organizationName.length > 80) throw new ApiError("invalid_request", 400);
         const created = await options.database.createOrganizationWithOwner(identity, organizationName);
         const session = { ...created, expiresAtMs: Date.now() + options.sessionDurationMs };
         appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies));
@@ -149,7 +160,7 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "GET" && url.pathname === "/api/invitations") {
         const onboardingCookie = cookies(request).get("onboarding_session");
-        if (!onboardingCookie) throw new Error("missing onboarding session");
+        if (!onboardingCookie) throw new ApiError("auth_required", 401);
         const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret);
         const invitations = await options.database.listVerifiedInvitations(identity);
         response.setHeader("content-type", "application/json");
@@ -158,7 +169,7 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "POST" && url.pathname === "/invitations/accept") {
         const onboardingCookie = cookies(request).get("onboarding_session");
-        if (!onboardingCookie) throw new Error("missing onboarding session");
+        if (!onboardingCookie) throw new ApiError("auth_required", 401);
         const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret);
         const form = new URLSearchParams(await body(request));
         const invitationId = form.get("invitationId") ?? "";
@@ -171,7 +182,7 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "POST" && url.pathname === "/invitations/decline") {
         const onboardingCookie = cookies(request).get("onboarding_session");
-        if (!onboardingCookie) throw new Error("missing onboarding session");
+        if (!onboardingCookie) throw new ApiError("auth_required", 401);
         verifyOnboardingToken(onboardingCookie, options.sessionSecret);
         appendCookie(response, clearCookie("onboarding_session", secureCookies));
         redirect(response, options.webOrigin);
@@ -179,7 +190,7 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "GET" && url.pathname === "/api/home") {
         const token = cookies(request).get("tenant_session");
-        if (!token) throw new Error("missing tenant session");
+        if (!token) throw new ApiError("auth_required", 401);
         const session = verifySessionToken(token, options.sessionSecret);
         const home = await options.database.getHome(session);
         response.setHeader("content-type", "application/json");
@@ -188,7 +199,7 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "GET" && url.pathname === "/api/members") {
         const token = cookies(request).get("tenant_session");
-        if (!token) throw new Error("missing tenant session");
+        if (!token) throw new ApiError("auth_required", 401);
         const session = verifySessionToken(token, options.sessionSecret);
         const members = await options.database.getMembers(session);
         response.setHeader("content-type", "application/json");
@@ -197,12 +208,12 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "POST" && url.pathname === "/members/invitations") {
         const token = cookies(request).get("tenant_session");
-        if (!token) throw new Error("missing tenant session");
+        if (!token) throw new ApiError("auth_required", 401);
         const session = verifySessionToken(token, options.sessionSecret);
         const form = new URLSearchParams(await body(request));
         const email = (form.get("email") ?? "").trim().toLowerCase();
         const roleValue = form.get("role");
-        if (roleValue !== "developer" && roleValue !== "rep") throw new Error("invalid invitation role");
+        if (roleValue !== "developer" && roleValue !== "rep") throw new ApiError("invalid_request", 400);
         await options.database.createInvitation(session, email, roleValue satisfies InviteRole);
         redirect(response, webLocation(options.webOrigin, "/members"));
         return;
@@ -237,9 +248,10 @@ export function createApiServer(options: ApiServerOptions) {
         redirect(response, webLocation(options.webOrigin, "/invites", "That invitation could not be used."));
         return;
       }
-      response.statusCode = 401;
+      const apiError = error instanceof ApiError ? error : new ApiError("internal_error", 500);
+      response.statusCode = apiError.status;
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ error: "Authentication required." }));
+      response.end(JSON.stringify({ error: apiError.code }));
     }
   });
 }
