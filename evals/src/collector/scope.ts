@@ -20,7 +20,7 @@ type PatchSection = {
   readonly skipped: boolean;
 };
 
-const dependencyFiles = new Set([
+const dependencyBasenames = new Set([
   "package.json",
   "package-lock.json",
   "npm-shrinkwrap.json",
@@ -30,29 +30,37 @@ const dependencyFiles = new Set([
   ".npmrc",
 ]);
 
+function basename(path: string): string {
+  return path.split("/").at(-1) ?? path;
+}
+
+function isDependencyPath(path: string): boolean {
+  return dependencyBasenames.has(basename(path));
+}
+
 function isBuildOrCiPath(path: string): boolean {
-  const basename = path.split("/").at(-1) ?? path;
+  const name = basename(path);
   return (
     path.startsWith(".github/") ||
     path.startsWith(".circleci/") ||
     path === ".gitlab-ci.yml" ||
     path === "azure-pipelines.yml" ||
-    /^tsconfig(?:\.[^.]+)?\.json$/i.test(basename) ||
-    /^(?:vite|webpack|rollup)\.config\./i.test(basename) ||
-    /^(?:turbo|nx)\.json$/i.test(basename) ||
-    /^Dockerfile(?:\..+)?$/i.test(basename) ||
-    /^(?:docker-)?compose\.ya?ml$/i.test(basename) ||
-    /^Makefile$/i.test(basename)
+    /^tsconfig(?:\.[^.]+)?\.json$/i.test(name) ||
+    /^(?:vite|webpack|rollup)\.config\./i.test(name) ||
+    /^(?:turbo|nx)\.json$/i.test(name) ||
+    /^Dockerfile(?:\..+)?$/i.test(name) ||
+    /^(?:docker-)?compose\.ya?ml$/i.test(name) ||
+    /^Makefile$/i.test(name)
   );
 }
 
 function isTestPath(path: string): boolean {
   const lower = path.toLowerCase();
   const parts = lower.split("/");
-  const basename = parts.at(-1) ?? lower;
+  const name = parts.at(-1) ?? lower;
   return (
     parts.some((part) => ["test", "tests", "__tests__", "spec", "specs"].includes(part)) ||
-    /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(basename)
+    /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(name)
   );
 }
 
@@ -118,7 +126,7 @@ export function analyzePatchScope(
   const testSections = sections.filter((section) => section.test && !section.deleted);
   const violation = sections.some(
     (section) =>
-      dependencyFiles.has(section.path) ||
+      isDependencyPath(section.path) ||
       isBuildOrCiPath(section.path) ||
       section.deleted ||
       section.skipped,
