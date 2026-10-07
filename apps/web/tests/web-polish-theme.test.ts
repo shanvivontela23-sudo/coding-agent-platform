@@ -38,6 +38,8 @@ describe("Dhara signed-in polish and theme", () => {
     }
     expect(css).toContain("font-size: 1rem");
     expect(css).toContain("line-height: 1.5");
+    expect(css).toContain("--text-sm: 0.9375rem");
+    expect(css).toContain("--text-sm--line-height: 1.40625rem");
   });
 
   it("uses control contrast for interactive borders and focus rings while keeping decorative borders subtle", async () => {
