@@ -39,6 +39,14 @@ export function assertUuid(value: string, label: string): void {
   if (!uuidPattern.test(value)) throw new Error(`${label} must be a UUID`);
 }
 
+export function assertRestrictedDatabaseUrl(value: string): string {
+  const url = new URL(value);
+  if (decodeURIComponent(url.username) !== "coding_agent_api") {
+    throw new Error("DATABASE_URL must connect as the restricted coding_agent_api role");
+  }
+  return value;
+}
+
 export async function withTenant<T>(
   pool: Pick<TenantPool, "connect">,
   session: Pick<SessionIdentity, "organizationId">,
@@ -54,7 +62,7 @@ export async function withTenant<T>(
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    try { await client.query("ROLLBACK"); } catch { /* release original failure path */ }
+    try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
     throw error;
   } finally {
     client.release();
