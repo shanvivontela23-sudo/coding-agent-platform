@@ -80,6 +80,7 @@ export function networkPolicyForPhase(
 
   switch (phase) {
     case "locked":
+    case "offline":
       return {
         allowHosts: [],
         denyAllOtherEgress: true,
