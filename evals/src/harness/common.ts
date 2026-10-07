@@ -24,6 +24,22 @@ function askedWithoutPatch(message: string | null, patch: SandboxPatch): boolean
   return patch.patch.trim().length === 0 && Boolean(message?.trim().endsWith("?"));
 }
 
+function thrownText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && error !== null) {
+    const record = error as Record<string, unknown>;
+    return [record.error, record.stderr, record.stdout]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+  }
+  return "";
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return /timeout|timed out/i.test(thrownText(error));
+}
+
 export async function executeHarnessCommand(
   session: SandboxSession,
   request: HarnessRunRequest,
@@ -37,7 +53,23 @@ export async function executeHarnessCommand(
     env: { ...spec.env },
     timeoutMs: request.timeoutMs,
   };
-  const execution = await session.exec(command);
+
+  let execution;
+  try {
+    execution = await session.exec(command);
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    const patch = await session.exportPatch();
+    const finishedAt = clock();
+    return {
+      status: "limit-hit",
+      limit: "time",
+      turnsUsed: 0,
+      wallClockSeconds: Math.max(0, finishedAt - startedAt) / 1_000,
+      patch,
+    };
+  }
+
   const patch = await session.exportPatch();
   const finishedAt = clock();
   const limit = detectLimit(execution.stdout, execution.stderr);

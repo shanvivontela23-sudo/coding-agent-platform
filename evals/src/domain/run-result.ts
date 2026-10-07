@@ -49,6 +49,13 @@ export const runResultSchema = z.object({
     filesChanged: z.number().int().nonnegative(),
     diffLines: z.number().int().nonnegative(),
   }),
+  collector: z.object({
+    taskValidity: z.enum(["valid", "invalid"]),
+    failure: z.object({
+      step: z.string().min(1),
+      stderrTail: z.string().max(2_048),
+    }).nullable(),
+  }).optional(),
   developer: z.object({
     correctness: z.number().int().min(0).max(2),
     repoFit: z.number().int().min(0).max(2),

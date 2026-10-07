@@ -37,6 +37,7 @@ export {
 export * from "./gateway/index.js";
 export * from "./harness/index.js";
 export * from "./collector/index.js";
+export * from "./orchestrator/index.js";
 
 export {
   E2BSandboxProvider,
