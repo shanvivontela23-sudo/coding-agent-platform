@@ -100,7 +100,7 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   const onboardingRejectsLongName = await fails(databaseUrl, `SET ROLE coding_agent_api; SELECT * FROM public.create_organization_with_owner('60000000-0000-4000-8000-000000000005','long@example.com','${"x".repeat(81)}');`);
 
   const attachSupabase = "60000000-0000-4000-8000-000000000006";
-  const attach = (await psql(databaseUrl, `SET ROLE coding_agent_api; SELECT user_id || ',' || organization_id FROM public.create_organization_with_owner('${attachSupabase}','attach@example.com','A');`)).split(",");
+  const attach = (await psql(databaseUrl, `SET ROLE coding_agent_api; SELECT user_id || ',' || organization_id FROM public.create_organization_with_owner('${attachSupabase}','attach@example.com','Existing Org');`)).split(",");
   const attachUserId = attach[0] ?? "";
   const generatedOrgId = attach[1] ?? "";
   const existingAttachCount = await psql(databaseUrl, `SELECT count(*) FROM public.organization_memberships WHERE user_id='${attachUserId}' AND organization_id='${orgA}';`);
