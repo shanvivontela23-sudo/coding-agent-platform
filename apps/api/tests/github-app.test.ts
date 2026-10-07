@@ -131,6 +131,7 @@ describe("GitHub App client", () => {
       { name: "acme-widget-abc123/pnpm-lock.yaml", contents: "lockfileVersion: '9.0'\n" },
       { name: "acme-widget-abc123/src/index.ts", contents: "export const value = 1;" },
     ]);
+    const archiveBody = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
     const calls: Array<{ url: string; authorization: string | null; redirect: RequestRedirect | undefined }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = String(input);
@@ -139,7 +140,7 @@ describe("GitHub App client", () => {
       if (url.includes("/installation/repositories")) return json({ total_count: 1, repositories: [{ id: 101, name: "widget", full_name: "acme/widget", default_branch: "main", private: false }] });
       if (url === "https://api.github.com/repos/acme/widget/commits/main") return json({ sha: "a".repeat(40) });
       if (url === `https://api.github.com/repos/acme/widget/tarball/${"a".repeat(40)}`) return new Response(null, { status: 302, headers: { location: "https://codeload.github.com/acme/widget/legacy.tar.gz/" + "a".repeat(40) } });
-      if (url.startsWith("https://codeload.github.com/")) return new Response(archive, { status: 200, headers: { "content-type": "application/x-gzip" } });
+      if (url.startsWith("https://codeload.github.com/")) return new Response(archiveBody, { status: 200, headers: { "content-type": "application/x-gzip" } });
       throw new Error(`unexpected request ${url}`);
     };
     const client = createGitHubAppClient({ ...config, fetchImpl });
