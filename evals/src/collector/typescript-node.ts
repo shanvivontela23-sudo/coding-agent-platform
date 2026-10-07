@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { RunResult } from "../domain/run-result.js";
 import { runResultSchema } from "../domain/run-result.js";
 import type { HarnessRunOutcome } from "../harness/types.js";
@@ -66,6 +67,7 @@ export type TypeScriptNodeCollectorOptions = {
 
 const fullPatchPath = ".benchmark-full.patch";
 const testPatchPath = ".benchmark-test-only.patch";
+const hiddenRoot = ".benchmark-hidden";
 const defaultCommandTimeoutMs = 10 * 60_000;
 const offlineGatewayPlaceholder = "https://offline.invalid";
 
@@ -129,15 +131,31 @@ function resultRow(
   });
 }
 
+function normalizedHiddenPath(path: string): string {
+  const normalized = posix.normalize(path);
+  if (
+    !path.trim() ||
+    path.startsWith("/") ||
+    normalized === hiddenRoot ||
+    !normalized.startsWith(`${hiddenRoot}/`) ||
+    normalized.split("/").includes("..")
+  ) {
+    throw new Error(`hidden evaluation files must stay under ${hiddenRoot}/: ${path}`);
+  }
+  return normalized;
+}
+
 async function writeHiddenFiles(
   session: SandboxSession,
   files: readonly HiddenEvaluationFile[],
+  timeoutMs: number,
 ): Promise<void> {
   for (const file of files) {
-    if (!file.path.trim() || file.path.startsWith("/") || file.path.split("/").includes("..")) {
-      throw new Error(`invalid hidden evaluation path: ${file.path}`);
-    }
-    await session.writeFile(file.path, file.contents);
+    const path = normalizedHiddenPath(file.path);
+    const parent = posix.dirname(path);
+    const mkdir = await run(session, `mkdir -p ${shellQuote(parent)}`, timeoutMs);
+    if (mkdir.exitCode !== 0) throw new Error(`failed to create hidden evaluation directory: ${parent}`);
+    await session.writeFile(path, file.contents);
   }
 }
 
@@ -164,9 +182,6 @@ function regressionMatchesBaseline(
   baseline: BaselineSuiteResult,
   patched: SandboxCommandResult,
 ): boolean {
-  // The regression command is expected to pass on the frozen pinned tree.
-  // Fail closed if the baseline is already red instead of treating two failures
-  // as proof that no regression was introduced.
   return baseline.exitCode === 0 && patched.exitCode === 0;
 }
 
@@ -264,8 +279,6 @@ export class TypeScriptNodeCollector {
         }
       }
 
-      // Whether or not the reproduction probe ran, score the full patch from a
-      // freshly restored pinned tree rather than from test-only replay state.
       if (!(await restorePinnedTree(session, timeoutMs))) {
         throw new Error("failed to restore pinned tree before scoring");
       }
@@ -281,7 +294,7 @@ export class TypeScriptNodeCollector {
         return row;
       }
 
-      await writeHiddenFiles(session, input.evaluation.hiddenFiles);
+      await writeHiddenFiles(session, input.evaluation.hiddenFiles, timeoutMs);
       const reference = await run(session, input.evaluation.commands.reference, timeoutMs);
       const regression = await run(session, input.evaluation.commands.regression, timeoutMs);
       const build = await run(session, input.evaluation.commands.build, timeoutMs);
