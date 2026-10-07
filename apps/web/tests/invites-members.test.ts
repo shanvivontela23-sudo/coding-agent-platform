@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 describe("Dhara members and invite web flow", () => {
   it("adds a signed-in Members page with owner invite controls and labeled statuses", async () => {
     const page = await readFile("apps/web/app/members/page.tsx", "utf8");
+    const heading = await readFile("apps/web/components/ui/heading.tsx", "utf8");
     expect(page).toContain("AppShell");
     expect(page).toContain("/api/members");
     expect(page).toContain("Invite member");
@@ -12,9 +13,11 @@ describe("Dhara members and invite web flow", () => {
     expect(page).toContain("Developer");
     expect(page).toContain("Support rep");
     expect(page).toContain("Pending");
-    expect(page).toContain("text-2xl");
-    expect(page).toContain("text-lg");
+    expect(page).toContain("PageTitle");
+    expect(page).toContain("SectionTitle");
     expect(page).toContain("text-base");
+    expect(heading).toContain("text-2xl");
+    expect(heading).toContain("text-lg");
   });
 
   it("shows explicit Accept, Decline and create-own choices to an invited first-time user", async () => {
