@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "product-04-red-ci"]
+    branches: ["main", "product-04-red-ci", "product-04-red-ci-2"]
   pull_request:
 
 permissions:

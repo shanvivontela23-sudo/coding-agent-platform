@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createSupabaseAuthClient } from "../src/auth.js";
 import { AppError, safeErrorCode } from "../src/errors.js";
 
