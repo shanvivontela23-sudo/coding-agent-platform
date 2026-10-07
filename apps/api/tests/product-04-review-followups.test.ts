@@ -6,6 +6,7 @@ import { createSupabaseAuthClient } from "../src/auth.js";
 import { createProductDatabase, type ProductDatabase, type TenantClient, type TenantPool } from "../src/database.js";
 import { createApiServer } from "../src/server.js";
 
+// RED contract for review follow-ups; production changes land only after this fails for the requested behavior.
 const supabaseUrl = "https://project-ref.supabase.co";
 const anonKey = "sb_publishable_test";
 const flowSecret = "test-flow-secret-that-is-long-enough";
