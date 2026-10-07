@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withTenant } from "../src/database.js";
+import { assertRestrictedDatabaseUrl, withTenant } from "../src/database.js";
 import type { SessionIdentity } from "../src/auth.js";
 
 type QueryRecord = { readonly text: string; readonly values?: readonly unknown[] };
@@ -21,7 +21,13 @@ const session: SessionIdentity = {
   expiresAtMs: Date.now() + 60_000,
 };
 
-describe("withTenant", () => {
+describe("database boundary", () => {
+  it("accepts only coding_agent_api as the runtime database login", () => {
+    expect(assertRestrictedDatabaseUrl("postgresql://coding_agent_api:secret@localhost:5432/app")).toBe("postgresql://coding_agent_api:secret@localhost:5432/app");
+    expect(() => assertRestrictedDatabaseUrl("postgresql://postgres:secret@localhost:5432/app")).toThrow("coding_agent_api");
+    expect(() => assertRestrictedDatabaseUrl("postgresql://coding_agent_app:secret@localhost:5432/app")).toThrow("coding_agent_api");
+  });
+
   it("validates organization UUID and uses a bound transaction-local set_config", async () => {
     const client = new FakeClient();
     const pool = { connect: async () => client };
