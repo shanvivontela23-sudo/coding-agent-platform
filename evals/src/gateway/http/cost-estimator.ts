@@ -51,10 +51,11 @@ export function createListPriceCostEstimator(
     const price = prices[request.model];
     if (!price) throw new Error(`no list price configured for model ${request.model}`);
 
-    // Reserve one uncached input token per UTF-8 request byte. This is intentionally
-    // conservative and provider-tokenizer-independent for the pre-dispatch guard.
-    // Authoritative usage and money are still reconciled from LiteLLM afterward.
-    const reservedInputTokens = Buffer.byteLength(JSON.stringify(request.body), "utf8");
+    // Reserve one uncached input token per three UTF-8 request bytes, rounded up.
+    // This remains deliberately conservative while avoiding the previous 1 byte =
+    // 1 token over-reservation. Authoritative usage/spend still comes from LiteLLM.
+    const inputBytes = Buffer.byteLength(JSON.stringify(request.body), "utf8");
+    const reservedInputTokens = Math.ceil(inputBytes / 3);
     const reservedOutputTokens = requestedOutputLimit(request, price);
     return (
       reservedInputTokens * price.inputUsdPerMillionTokens +

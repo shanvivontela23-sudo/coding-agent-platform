@@ -2,7 +2,8 @@ export type SandboxNetworkPhase =
   | "locked"
   | "dependency-setup"
   | "coding"
-  | "testing";
+  | "testing"
+  | "offline";
 
 export type SandboxNetworkPolicy = {
   readonly allowHosts: readonly string[];

@@ -73,6 +73,21 @@ describe("networkPolicyForPhase", () => {
     },
   );
 
+  it("denies all network after evaluator dependency setup", () => {
+    const policy = networkPolicyForPhase(
+      "offline",
+      "https://gateway.example.com/v1",
+      ["github.com"],
+    );
+
+    expect(policy.allowHosts).toEqual([]);
+    expect(policy.denyAllOtherEgress).toBe(true);
+    expect(toE2BEgressUpdate(policy)).toEqual({
+      allowOut: [],
+      denyOut: ["0.0.0.0/0", "::/0"],
+    });
+  });
+
   it("rejects a non-HTTPS gateway", () => {
     expect(() =>
       networkPolicyForPhase("coding", "http://gateway.example.com"),
