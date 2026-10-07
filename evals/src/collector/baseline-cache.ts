@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 export type BaselineSuiteResult = {
   readonly exitCode: number;
+  readonly stderrTail?: string;
 };
 
 export interface BaselineSuiteCache {
@@ -56,7 +57,14 @@ export class FileBaselineSuiteCache implements BaselineSuiteCache {
       ) {
         throw new Error("invalid baseline cache row");
       }
-      return { exitCode: (parsed as { exitCode: number }).exitCode };
+      const record = parsed as { exitCode: number; stderrTail?: unknown };
+      if (record.stderrTail !== undefined && typeof record.stderrTail !== "string") {
+        throw new Error("invalid baseline stderr tail");
+      }
+      return {
+        exitCode: record.exitCode,
+        ...(typeof record.stderrTail === "string" ? { stderrTail: record.stderrTail } : {}),
+      };
     } catch (error) {
       if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
         return null;
