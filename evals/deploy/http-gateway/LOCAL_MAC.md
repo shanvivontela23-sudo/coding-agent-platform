@@ -36,7 +36,6 @@ docker compose \
   --env-file .env.local-gateway \
   -f evals/deploy/http-gateway/compose.local.yaml \
   build
-
 docker compose \
   --env-file .env.local-gateway \
   -f evals/deploy/http-gateway/compose.local.yaml \
@@ -64,7 +63,7 @@ set -a
 source .env.local-gateway
 set +a
 export LIVE_SMOKE=1
-pnpm smoke:local-tunnel
+pnpm exec tsx evals/smoke/local-tunnel-preflight.ts
 ```
 
 The command prints its conservative estimated model spend before the provider request. Its **first request through the public tunnel** is an Anthropic streaming request. The preflight fails unless at least two response chunks are observed at distinct read times before `message_stop`, proving the tunnel path is not buffering the stream. It then verifies that the single call was recorded as the configured Anthropic model and that LiteLLM spend reconciled. No Codex or OpenAI model is executed. The actual reconciled model spend is printed at the end.
@@ -111,7 +110,7 @@ Then run:
 ```bash
 export SINGLE_TASK_SPEC_PATH=/absolute/private/task.json
 export LIVE_SMOKE=1
-pnpm eval:run:claude-one
+pnpm exec tsx evals/src/operator/single-claude-task-cli.ts
 ```
 
 This command prints the authorized model-spend ceiling before starting, creates the coding sandbox, runs the pinned Claude Code harness, exports the patch, creates a **second fresh evaluator sandbox**, installs dependencies while registries are allowed, switches the evaluator offline, injects hidden evaluation files there only, scores the patch, finishes/reconciles the run, and atomically writes the final result row. It prints authoritative reconciled model spend at the end.
