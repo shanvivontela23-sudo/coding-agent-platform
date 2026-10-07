@@ -21,7 +21,6 @@ export type ProjectReport = {
 export class RepositoryAnalysisError extends Error {
   readonly code: "REPOSITORY_TOO_LARGE" | "REPOSITORY_INVALID_ARCHIVE";
   readonly publicMessage: string;
-
   constructor(code: RepositoryAnalysisError["code"], publicMessage: string) {
     super(publicMessage);
     this.name = "RepositoryAnalysisError";
@@ -34,17 +33,16 @@ const tooLarge = () => new RepositoryAnalysisError("REPOSITORY_TOO_LARGE", "Repo
 const invalidArchive = () => new RepositoryAnalysisError("REPOSITORY_INVALID_ARCHIVE", "Repository archive could not be analysed.");
 
 const languageByExtension: Readonly<Record<string, string>> = {
-  ".c": "C", ".cc": "C++", ".cpp": "C++", ".cxx": "C++", ".cs": "C#", ".dart": "Dart",
-  ".go": "Go", ".java": "Java", ".js": "JavaScript", ".jsx": "JavaScript", ".cjs": "JavaScript",
-  ".mjs": "JavaScript", ".kt": "Kotlin", ".kts": "Kotlin", ".php": "PHP", ".py": "Python",
-  ".rb": "Ruby", ".rs": "Rust", ".scala": "Scala", ".sh": "Shell", ".svelte": "Svelte",
-  ".swift": "Swift", ".ts": "TypeScript", ".tsx": "TypeScript", ".vue": "Vue",
+  ".c": "C", ".cc": "C++", ".cpp": "C++", ".cxx": "C++", ".cs": "C#", ".dart": "Dart", ".go": "Go",
+  ".java": "Java", ".js": "JavaScript", ".jsx": "JavaScript", ".cjs": "JavaScript", ".mjs": "JavaScript",
+  ".kt": "Kotlin", ".kts": "Kotlin", ".php": "PHP", ".py": "Python", ".rb": "Ruby", ".rs": "Rust",
+  ".scala": "Scala", ".sh": "Shell", ".svelte": "Svelte", ".swift": "Swift", ".ts": "TypeScript",
+  ".tsx": "TypeScript", ".vue": "Vue",
 };
-
 const recognizedManifests = new Set([
-  "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "bun.lockb",
-  "pyproject.toml", "requirements.txt", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock",
-  "pom.xml", "build.gradle", "build.gradle.kts", "gradlew", "go.mod", "Cargo.toml", "Gemfile",
+  "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "bun.lockb", "pyproject.toml",
+  "requirements.txt", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock", "pom.xml", "build.gradle",
+  "build.gradle.kts", "gradlew", "go.mod", "Cargo.toml", "Gemfile",
 ]);
 const generatedSegments = new Set([".git", ".next", ".venv", "build", "coverage", "dist", "node_modules", "obj", "target", "vendor", "venv"]);
 
@@ -68,15 +66,10 @@ function parseHeader(header: Buffer<ArrayBufferLike>): TarHeader | null {
   if (header.every((value) => value === 0)) return null;
   const name = nulTerminated(header.subarray(0, 100));
   const prefix = nulTerminated(header.subarray(345, 500));
-  return {
-    name: prefix ? `${prefix}/${name}` : name,
-    size: parseOctal(header.subarray(124, 136)),
-    type: String.fromCharCode(header[156] ?? 0),
-  };
+  return { name: prefix ? `${prefix}/${name}` : name, size: parseOctal(header.subarray(124, 136)), type: String.fromCharCode(header[156] ?? 0) };
 }
 function safeArchivePath(path: string): boolean {
-  if (!path || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path) || path.includes("..")) return false;
-  return !path.includes("\0");
+  return Boolean(path) && !path.startsWith("/") && !path.startsWith("\\") && !/^[A-Za-z]:[\\/]/.test(path) && !path.includes("..") && !path.includes("\0");
 }
 function withoutArchiveRoot(path: string): string {
   const parts = path.replaceAll("\\", "/").replace(/^\.\//, "").split("/").filter(Boolean);
@@ -86,14 +79,14 @@ function basename(path: string): string {
   const normalized = path.replaceAll("\\", "/");
   return normalized.slice(normalized.lastIndexOf("/") + 1);
 }
-function depth(path: string): number { return path ? path.split("/").filter(Boolean).length : 0; }
+function pathDepth(path: string): number { return path ? path.split("/").filter(Boolean).length : 0; }
 function extension(path: string): string {
   const name = basename(path).toLowerCase();
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot) : "";
 }
-function shouldCountLanguage(path: string): boolean {
-  return !path.split("/").filter(Boolean).some((part) => generatedSegments.has(part));
+function countableLanguagePath(path: string): boolean {
+  return !path.split("/").filter(Boolean).some((segment) => generatedSegments.has(segment.toLowerCase()));
 }
 function commandForScript(manager: string | null, script: "build" | "test"): string {
   if (manager === "pnpm") return `pnpm ${script}`;
@@ -132,7 +125,7 @@ function parsePackageJson(manifests: readonly SeenManifest[]) {
       if (manifest === packages[0] && typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) {
         for (const script of Object.keys(parsed.scripts as Record<string, unknown>)) scripts.add(script);
       }
-    } catch { /* malformed manifests contribute no detections */ }
+    } catch { /* malformed manifest contributes no detections */ }
   }
   return { dependencies, scripts, hasTypescript };
 }
@@ -169,39 +162,38 @@ function detectCommands(manifests: readonly SeenManifest[], manager: string | nu
 }
 
 export async function analyseRepositoryArchive(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<ProjectReport> {
-  if (!Number.isSafeInteger(input.byteLength) || input.byteLength > limits.maxCompressedBytes) throw tooLarge();
-  const gunzip = createGunzip();
+  if (input.byteLength > limits.maxCompressedBytes) throw tooLarge();
   const source = Readable.from([Buffer.from(input)]);
+  const gunzip = createGunzip();
   source.pipe(gunzip);
 
-  let uncompressedBytes = 0;
   let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  let uncompressedBytes = 0;
   let current: TarHeader | null = null;
-  let remaining = 0;
+  let dataRemaining = 0;
   let paddingRemaining = 0;
   let capture: Array<Buffer<ArrayBufferLike>> | null = null;
-  let fileCount = 0;
+  let entryCount = 0;
   let ended = false;
   const languageCounts = new Map<string, number>();
   const manifests: SeenManifest[] = [];
   const manifestNames = new Set<string>();
 
-  const finishCurrent = () => {
+  const finishEntry = () => {
     if (!current) return;
     if (capture) {
       const relative = withoutArchiveRoot(current.name);
       const name = basename(relative);
-      manifests.push({ name, depth: depth(relative), contents: Buffer.concat(capture).toString("utf8") });
+      manifests.push({ name, depth: pathDepth(relative), contents: Buffer.concat(capture).toString("utf8") });
       manifestNames.add(name);
     }
     current = null;
     capture = null;
-    paddingRemaining = 0;
   };
 
   try {
-    for await (const rawChunk of gunzip) {
-      const chunk: Buffer<ArrayBufferLike> = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk as Uint8Array);
+    for await (const raw of gunzip) {
+      const chunk: Buffer<ArrayBufferLike> = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as Uint8Array);
       uncompressedBytes += chunk.length;
       if (uncompressedBytes > limits.maxUncompressedBytes) throw tooLarge();
       pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
@@ -209,62 +201,56 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
       while (pending.length > 0 && !ended) {
         if (!current) {
           if (paddingRemaining > 0) {
-            const consumed = Math.min(paddingRemaining, pending.length);
-            pending = pending.subarray(consumed);
-            paddingRemaining -= consumed;
+            const consumePadding = Math.min(paddingRemaining, pending.length);
+            pending = pending.subarray(consumePadding);
+            paddingRemaining -= consumePadding;
             if (paddingRemaining > 0) break;
           }
           if (pending.length < 512) break;
           const header = parseHeader(pending.subarray(0, 512));
           pending = pending.subarray(512);
           if (!header) { ended = true; break; }
-          const regular = header.type === "0" || header.type === "\0";
-          if (regular) {
-            fileCount += 1;
-            if (fileCount > limits.maxFiles || header.size > limits.maxFileBytes) throw tooLarge();
-          }
+          entryCount += 1;
+          if (entryCount > limits.maxFiles || header.size > limits.maxFileBytes) throw tooLarge();
           current = header;
-          remaining = header.size;
+          dataRemaining = header.size;
           paddingRemaining = (512 - (header.size % 512)) % 512;
+          const regular = header.type === "0" || header.type === "\0";
           if (regular && safeArchivePath(header.name)) {
             const relative = withoutArchiveRoot(header.name);
-            const normalized = relative.split("/").filter(Boolean).map((part) => part.toLowerCase()).join("/");
             const name = basename(relative);
             if (recognizedManifests.has(name)) capture = [];
-            if (shouldCountLanguage(normalized)) {
-              const language = languageByExtension[extension(relative).toLowerCase()];
+            if (countableLanguagePath(relative)) {
+              const language = languageByExtension[extension(relative)];
               if (language) languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1);
             }
           }
-          if (remaining === 0) finishCurrent();
+          if (dataRemaining === 0) finishEntry();
           continue;
         }
-        if (remaining > 0) {
-          const consumed = Math.min(remaining, pending.length);
+
+        if (dataRemaining > 0) {
+          const consumed = Math.min(dataRemaining, pending.length);
           if (capture && consumed > 0) capture.push(Buffer.from(pending.subarray(0, consumed)));
           pending = pending.subarray(consumed);
-          remaining -= consumed;
-          if (remaining > 0) break;
-          finishCurrent();
+          dataRemaining -= consumed;
+          if (dataRemaining > 0) break;
+          finishEntry();
           continue;
         }
-        finishCurrent();
+        finishEntry();
       }
     }
   } catch (error) {
-    source.destroy();
-    gunzip.destroy();
+    source.destroy(); gunzip.destroy();
     if (error instanceof RepositoryAnalysisError) throw error;
     throw invalidArchive();
   } finally {
-    source.destroy();
-    gunzip.destroy();
-    pending = Buffer.alloc(0);
-    capture = null;
+    source.destroy(); gunzip.destroy(); pending = Buffer.alloc(0); capture = null;
   }
 
-  if (!ended && (current || pending.length > 0)) throw invalidArchive();
-  const totalLanguageFiles = [...languageCounts.values()].reduce((sum, value) => sum + value, 0);
+  if (!ended && (current !== null || pending.length > 0 || paddingRemaining > 0)) throw invalidArchive();
+  const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
   const languages = [...languageCounts.entries()]
     .map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 }))
     .sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
@@ -272,7 +258,6 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
   const packageManager = detectPackageManager(manifestNames);
   const frameworks = detectFrameworks(manifests, packageData.dependencies);
   const commands = detectCommands(manifests, packageManager, packageData.scripts);
-  const hasNodeLanguage = languageCounts.has("TypeScript") || languageCounts.has("JavaScript");
-  const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || hasNodeLanguage) ? "typescript-node" : "generic";
+  const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
   return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, stackSkill, manifests: [...manifestNames] };
 }
