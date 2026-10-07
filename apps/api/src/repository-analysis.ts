@@ -314,8 +314,9 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
     if (capture && captureKind === "pax") {
       nextPaxPath = parsePaxPath(Buffer.concat(capture));
     } else if (capture && captureKind === "manifest" && currentPath) {
-      const name = basename(currentPath);
-      manifests.push({ name, path: currentPath, directory: dirname(currentPath), depth: pathDepth(currentPath), contents: Buffer.concat(capture).toString("utf8") });
+      const path = withoutArchiveRoot(currentPath);
+      const name = basename(path);
+      manifests.push({ name, path, directory: dirname(path), depth: pathDepth(path), contents: Buffer.concat(capture).toString("utf8") });
       manifestNames.add(name);
     }
     current = null;
