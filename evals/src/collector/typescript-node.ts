@@ -91,11 +91,7 @@ async function run(
   command: string,
   timeoutMs: number,
 ): Promise<SandboxCommandResult> {
-  return await session.exec({
-    command,
-    cwd: session.workspacePath,
-    timeoutMs,
-  });
+  return await session.exec({ command, cwd: session.workspacePath, timeoutMs });
 }
 
 function automaticFailure(scope: ReturnType<typeof analyzePatchScope>) {
@@ -159,12 +155,8 @@ async function writeHiddenFiles(
   }
 }
 
-async function restorePinnedTree(
-  session: SandboxSession,
-  timeoutMs: number,
-): Promise<boolean> {
-  const restored = await run(session, restoreCommand(session.baselineCommitSha), timeoutMs);
-  return restored.exitCode === 0;
+async function restorePinnedTree(session: SandboxSession, timeoutMs: number): Promise<boolean> {
+  return (await run(session, restoreCommand(session.baselineCommitSha), timeoutMs)).exitCode === 0;
 }
 
 async function applyPatch(
@@ -174,8 +166,7 @@ async function applyPatch(
   timeoutMs: number,
 ): Promise<boolean> {
   await session.writeFile(path, patch);
-  const applied = await run(session, applyPatchCommand(path), timeoutMs);
-  return applied.exitCode === 0;
+  return (await run(session, applyPatchCommand(path), timeoutMs)).exitCode === 0;
 }
 
 function regressionMatchesBaseline(
@@ -201,19 +192,21 @@ export class TypeScriptNodeCollector {
       referenceFiles: input.evaluation.referenceFiles,
       referenceDiffLines: input.evaluation.referenceDiffLines,
     });
+    if (!input.harnessOutcome.patch.patch.trim()) {
+      const row = resultRow(input, automaticFailure(scope));
+      await this.resultWriter.write(row);
+      return row;
+    }
+
     const timeoutMs = input.evaluation.commandTimeoutMs ?? defaultCommandTimeoutMs;
     let session: SandboxSession | null = null;
-
     try {
       session = await this.sandboxProvider.create({
         taskId: `${input.result.taskId}:collector`,
         repository: input.repository,
         gatewayUrl: offlineGatewayPlaceholder,
-        ...(input.evaluation.extraDependencyHosts
-          ? { extraDependencyHosts: input.evaluation.extraDependencyHosts }
-          : {}),
+        ...(input.evaluation.extraDependencyHosts ? { extraDependencyHosts: input.evaluation.extraDependencyHosts } : {}),
       });
-
       await session.setNetworkPhase("dependency-setup");
       const install = await run(session, input.evaluation.commands.install, timeoutMs);
       if (install.exitCode !== 0) {
@@ -221,7 +214,6 @@ export class TypeScriptNodeCollector {
         await this.resultWriter.write(row);
         return row;
       }
-
       await session.setNetworkPhase("offline");
 
       const baselineKey = baselineSuiteCacheKey({
@@ -231,63 +223,30 @@ export class TypeScriptNodeCollector {
       });
       let baseline = await this.baselineCache.get(baselineKey);
       if (!baseline) {
-        const baselineRun = await run(
-          session,
-          input.evaluation.commands.regression,
-          timeoutMs,
-        );
+        const baselineRun = await run(session, input.evaluation.commands.regression, timeoutMs);
         baseline = { exitCode: baselineRun.exitCode };
         await this.baselineCache.set(baselineKey, baseline);
       }
 
       let reproduction = false;
       if (scope.testOnlyPatch.trim()) {
-        if (!(await restorePinnedTree(session, timeoutMs))) {
-          throw new Error("failed to restore pinned tree before reproduction probe");
-        }
-        const testsApplied = await applyPatch(
-          session,
-          testPatchPath,
-          scope.testOnlyPatch,
-          timeoutMs,
-        );
+        if (!(await restorePinnedTree(session, timeoutMs))) throw new Error("failed to restore pinned tree before reproduction probe");
+        const testsApplied = await applyPatch(session, testPatchPath, scope.testOnlyPatch, timeoutMs);
         if (testsApplied) {
-          const testOnlyRun = await run(
-            session,
-            input.evaluation.commands.reproduction,
-            timeoutMs,
-          );
+          const testOnlyRun = await run(session, input.evaluation.commands.reproduction, timeoutMs);
           if (testOnlyRun.exitCode !== 0) {
-            if (!(await restorePinnedTree(session, timeoutMs))) {
-              throw new Error("failed to restore pinned tree before full patch replay");
-            }
-            const fullApplied = await applyPatch(
-              session,
-              fullPatchPath,
-              input.harnessOutcome.patch.patch,
-              timeoutMs,
-            );
-            if (fullApplied) {
-              const fullRun = await run(
-                session,
-                input.evaluation.commands.reproduction,
-                timeoutMs,
-              );
+            if (!(await restorePinnedTree(session, timeoutMs))) throw new Error("failed to restore pinned tree before full patch replay");
+            const fullAppliedForReproduction = await applyPatch(session, fullPatchPath, input.harnessOutcome.patch.patch, timeoutMs);
+            if (fullAppliedForReproduction) {
+              const fullRun = await run(session, input.evaluation.commands.reproduction, timeoutMs);
               reproduction = fullRun.exitCode === 0;
             }
           }
         }
       }
 
-      if (!(await restorePinnedTree(session, timeoutMs))) {
-        throw new Error("failed to restore pinned tree before scoring");
-      }
-      const fullApplied = await applyPatch(
-        session,
-        fullPatchPath,
-        input.harnessOutcome.patch.patch,
-        timeoutMs,
-      );
+      if (!(await restorePinnedTree(session, timeoutMs))) throw new Error("failed to restore pinned tree before scoring");
+      const fullApplied = await applyPatch(session, fullPatchPath, input.harnessOutcome.patch.patch, timeoutMs);
       if (!fullApplied) {
         const row = resultRow(input, automaticFailure(scope));
         await this.resultWriter.write(row);
@@ -299,7 +258,6 @@ export class TypeScriptNodeCollector {
       const regression = await run(session, input.evaluation.commands.regression, timeoutMs);
       const build = await run(session, input.evaluation.commands.build, timeoutMs);
       const lint = await run(session, input.evaluation.commands.lint, timeoutMs);
-
       const row = resultRow(input, {
         reproduction,
         referenceTests: reference.exitCode === 0,
