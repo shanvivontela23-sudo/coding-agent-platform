@@ -23,13 +23,15 @@ describe("tenant data model", () => {
     expect(sql).toContain("FOREIGN KEY (organization_id, task_id) REFERENCES tasks (organization_id, id)");
   });
 
-  it("enforces cross-tenant FKs, append-only audit events, and membership-scoped user visibility", async () => {
+  it("enforces every cross-tenant reference, append-only audit events, and membership-scoped user visibility", async () => {
     const databaseUrl = process.env.TEST_DATABASE_URL;
     if (!databaseUrl) return;
     await expect(runTenantIsolationProbe(databaseUrl)).resolves.toEqual({
       tenantAVisibleProjects: 1,
       tenantBVisibleProjects: 0,
-      crossTenantRepositoryRejected: true,
+      crossTenantProjectReferenceRejected: true,
+      crossTenantRepositoryReferenceRejected: true,
+      crossTenantTaskReferenceRejected: true,
       auditUpdateDenied: true,
       auditDeleteDenied: true,
       tenantAVisibleUsers: 1,
