@@ -2,20 +2,19 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-function gitBlobSha1(content: Buffer): string {
-  const header = Buffer.from(`blob ${content.byteLength}\0`, "utf8");
-  return createHash("sha1").update(header).update(content).digest("hex");
-}
+const directory = "packages/db/migrations";
 
 describe("database migration immutability", () => {
-  it("never rewrites migration 0001 and only advances with new ordered files", async () => {
-    const migration = await readFile("packages/db/migrations/0001_tenant_core.sql");
-    expect(gitBlobSha1(migration)).toBe("789ccd2835de3d065dfdaa874e799e5405edac6c");
+  it("requires every SQL migration to be listed with its exact SHA-256 checksum", async () => {
+    const files = (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
+    const manifest = JSON.parse(await readFile(`${directory}/checksums.json`, "utf8")) as Record<string, string>;
+    const computed = Object.fromEntries(await Promise.all(files.map(async (file) => {
+      const content = await readFile(`${directory}/${file}`);
+      return [file, createHash("sha256").update(content).digest("hex")] as const;
+    })));
 
-    const files = (await readdir("packages/db/migrations")).filter((name) => name.endsWith(".sql")).sort();
-    expect(files[0]).toBe("0001_tenant_core.sql");
-    expect(files).toContain("0002_organization_invitations.sql");
     expect(new Set(files).size).toBe(files.length);
-    expect(files).toEqual([...files].sort());
+    expect(Object.keys(manifest).sort()).toEqual(files);
+    expect(manifest).toEqual(computed);
   });
 });

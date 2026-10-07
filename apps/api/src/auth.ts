@@ -38,13 +38,13 @@ function normalizeSupabaseUrl(value: string): string {
 }
 async function readIdentity(response: Response, provider: SupabaseIdentity["provider"]): Promise<SupabaseIdentity> {
   if (!response.ok) throw new Error(`Supabase Auth failed with status ${response.status}`);
-  const body = await response.json() as { user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown; confirmed_at?: unknown } };
+  const body = await response.json() as { user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown } };
   if (typeof body.user?.id !== "string" || !body.user.id) throw new Error("Supabase Auth response did not include a user id");
   const identity: SupabaseIdentity = {
     supabaseUserId: body.user.id,
     email: typeof body.user.email === "string" ? body.user.email : null,
     provider,
-    ...((typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at) || (typeof body.user.confirmed_at === "string" && body.user.confirmed_at)
+    ...(typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at
       ? { emailConfirmed: true }
       : {}),
   };

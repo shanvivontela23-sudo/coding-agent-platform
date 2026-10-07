@@ -1,4 +1,6 @@
+import type { ProjectReport } from "../../../packages/project-analysis/index.js";
 import type { OnboardingIdentity, SessionIdentity, SupabaseIdentity } from "./auth.js";
+import { ApiError } from "./errors.js";
 
 export type QueryResult<Row> = { readonly rows: Row[] };
 export type TenantQuery = <Row = Record<string, unknown>>(
@@ -48,6 +50,32 @@ export type MembersData = {
   readonly invitations: ReadonlyArray<{ readonly id: string; readonly email: string; readonly role: InviteRole; readonly expiresAt: string }>;
 };
 
+export type GitHubProjectInput = {
+  readonly repositoryId: number;
+  readonly repositoryName: string;
+  readonly fullName: string;
+  readonly defaultBranch: string;
+  readonly commitSha: string;
+  readonly report: ProjectReport;
+};
+
+export type ProjectData = {
+  readonly organization: { readonly id: string; readonly name: string };
+  readonly user: { readonly id: string; readonly email: string | null };
+  readonly project: {
+    readonly id: string;
+    readonly name: string;
+    readonly repository: {
+      readonly id: string;
+      readonly externalId: string;
+      readonly fullName: string;
+      readonly defaultBranch: string;
+      readonly lastAnalyzedCommitSha: string;
+    };
+    readonly report: ProjectReport;
+  };
+};
+
 export type ProductDatabase = {
   lookupMemberships(identity: VerifiedSupabaseUser): Promise<Membership[]>;
   createOrganizationWithOwner(identity: VerifiedSupabaseUser, organizationName: string): Promise<Pick<SessionIdentity, "userId" | "organizationId">>;
@@ -58,7 +86,18 @@ export type ProductDatabase = {
   acceptVerifiedInvitation(identity: OnboardingIdentity, invitationId: string): Promise<Pick<SessionIdentity, "userId" | "organizationId">>;
 };
 
+export type GitHubDatabase = {
+  getCurrentMemberRole(session: SessionIdentity): Promise<MemberRole>;
+  createGitHubInstallState(session: SessionIdentity, expiresAtMs: number): Promise<{ readonly id: string; readonly expiresAtMs: number }>;
+  consumeGitHubInstallState(session: SessionIdentity, stateId: string): Promise<void>;
+  bindGitHubInstallation(session: SessionIdentity, installationId: number): Promise<void>;
+  getGitHubInstallation(session: SessionIdentity): Promise<number | null>;
+  createProjectFromRepository(session: SessionIdentity, input: GitHubProjectInput): Promise<{ readonly projectId: string }>;
+  getProject(session: SessionIdentity, projectId: string): Promise<ProjectData>;
+};
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const commitShaPattern = /^[0-9a-f]{40}$/;
 
 export function assertUuid(value: string, label: string): void {
   if (!uuidPattern.test(value)) throw new Error(`${label} must be a UUID`);
@@ -76,6 +115,33 @@ function normalizeInviteEmail(value: string): string {
   const email = value.trim().toLowerCase();
   if (email.length < 3 || email.length > 320 || !email.includes("@")) throw new Error("invalid invitation email");
   return email;
+}
+
+function isConnectorRole(role: MemberRole): boolean {
+  return role === "owner" || role === "developer";
+}
+
+function databaseErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  return typeof (error as { readonly code?: unknown }).code === "string" ? (error as { readonly code: string }).code : null;
+}
+
+function validateProjectInput(input: GitHubProjectInput): void {
+  if (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0) throw new ApiError("invalid_request", 400);
+  if (!input.repositoryName.trim() || input.repositoryName.length > 255) throw new ApiError("invalid_request", 400);
+  if (!/^[^/\s]+\/[^/\s]+$/.test(input.fullName) || input.fullName.length > 255) throw new ApiError("invalid_request", 400);
+  if (!input.defaultBranch.trim() || input.defaultBranch.length > 255) throw new ApiError("invalid_request", 400);
+  if (!commitShaPattern.test(input.commitSha)) throw new ApiError("invalid_request", 400);
+}
+
+async function currentMemberRole(database: Pick<TenantClient, "query">, session: Pick<SessionIdentity, "organizationId" | "userId">): Promise<MemberRole> {
+  const membership = await database.query<{ role: MemberRole }>(
+    "SELECT role FROM organization_memberships WHERE organization_id = $1 AND user_id = $2 LIMIT 1",
+    [session.organizationId, session.userId],
+  );
+  const role = membership.rows[0]?.role;
+  if (role !== "owner" && role !== "developer" && role !== "rep") throw new ApiError("auth_required", 401);
+  return role;
 }
 
 export async function withTenant<T>(
@@ -100,7 +166,7 @@ export async function withTenant<T>(
   }
 }
 
-export function createProductDatabase(pool: TenantPool): ProductDatabase {
+export function createProductDatabase(pool: TenantPool): ProductDatabase & GitHubDatabase {
   return {
     async lookupMemberships(identity) {
       assertUuid(identity.supabaseUserId, "supabaseUserId");
@@ -173,13 +239,15 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
             ORDER BY m.created_at, u.id`,
           [session.organizationId],
         );
-        const invitations = await database.query<{ id: string; email: string; role: InviteRole; expires_at: Date | string }>(
-          `SELECT id, email, role, expires_at
-             FROM organization_invitations
-            WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()
-            ORDER BY created_at, id`,
-          [session.organizationId],
-        );
+        const invitations = currentUser.role === "owner"
+          ? await database.query<{ id: string; email: string; role: InviteRole; expires_at: Date | string }>(
+            `SELECT id, email, role, expires_at
+               FROM organization_invitations
+              WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()
+              ORDER BY created_at, id`,
+            [session.organizationId],
+          )
+          : { rows: [] };
 
         return {
           organization: { id: organizationRow.id, name: organizationRow.name },
@@ -267,6 +335,182 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
       const row = result.rows[0];
       if (!row) throw new Error("invitation acceptance returned no membership");
       return { userId: row.user_id, organizationId: row.organization_id };
+    },
+
+    async getCurrentMemberRole(session) {
+      return await withTenant(pool, session, async (database) => await currentMemberRole(database, session));
+    },
+
+    async createGitHubInstallState(session, expiresAtMs) {
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) throw new ApiError("github_state_invalid", 400);
+      return await withTenant(pool, session, async (database) => {
+        const role = await currentMemberRole(database, session);
+        if (!isConnectorRole(role)) throw new ApiError("forbidden", 403);
+        const result = await database.query<{ id: string; expires_at: Date | string }>(
+          `INSERT INTO github_installation_states (id, organization_id, user_id, expires_at)
+           VALUES (gen_random_uuid(), $1, $2, $3)
+           RETURNING id, expires_at`,
+          [session.organizationId, session.userId, new Date(expiresAtMs)],
+        );
+        const row = result.rows[0];
+        if (!row) throw new ApiError("internal_error", 500);
+        const parsedExpiry = row.expires_at instanceof Date ? row.expires_at.getTime() : new Date(row.expires_at).getTime();
+        if (!Number.isFinite(parsedExpiry)) throw new ApiError("internal_error", 500);
+        return { id: row.id, expiresAtMs: parsedExpiry };
+      });
+    },
+
+    async consumeGitHubInstallState(session, stateId) {
+      assertUuid(stateId, "stateId");
+      await withTenant(pool, session, async (database) => {
+        const result = await database.query<{ id: string }>(
+          `UPDATE github_installation_states
+              SET consumed_at = now()
+            WHERE id = $1
+              AND organization_id = $2
+              AND user_id = $3
+              AND consumed_at IS NULL
+              AND expires_at > now()
+          RETURNING id`,
+          [stateId, session.organizationId, session.userId],
+        );
+        if (!result.rows[0]) throw new ApiError("github_state_invalid", 400);
+      });
+    },
+
+    async bindGitHubInstallation(session, installationId) {
+      if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new ApiError("github_installation_unverified", 400);
+      try {
+        await withTenant(pool, session, async (database) => {
+          const role = await currentMemberRole(database, session);
+          if (!isConnectorRole(role)) throw new ApiError("forbidden", 403);
+          await database.query(
+            `INSERT INTO github_installations (organization_id, installation_id, connected_by_user_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (organization_id) DO UPDATE SET
+               installation_id = EXCLUDED.installation_id,
+               connected_by_user_id = EXCLUDED.connected_by_user_id,
+               updated_at = now()`,
+            [session.organizationId, installationId, session.userId],
+          );
+        });
+      } catch (error) {
+        if (databaseErrorCode(error) === "23505") throw new ApiError("github_installation_conflict", 409);
+        throw error;
+      }
+    },
+
+    async getGitHubInstallation(session) {
+      return await withTenant(pool, session, async (database) => {
+        const result = await database.query<{ installation_id: number | string }>(
+          "SELECT installation_id FROM github_installations WHERE organization_id = $1 LIMIT 1",
+          [session.organizationId],
+        );
+        const raw = result.rows[0]?.installation_id;
+        if (raw === undefined) return null;
+        const installationId = typeof raw === "number" ? raw : Number.parseInt(raw, 10);
+        if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new ApiError("internal_error", 500);
+        return installationId;
+      });
+    },
+
+    async createProjectFromRepository(session, input) {
+      validateProjectInput(input);
+      try {
+        return await withTenant(pool, session, async (database) => {
+          const role = await currentMemberRole(database, session);
+          if (!isConnectorRole(role)) throw new ApiError("forbidden", 403);
+          const externalId = String(input.repositoryId);
+          const existing = await database.query<{ id: string }>(
+            "SELECT id FROM repositories WHERE provider = 'github' AND external_id = $1 LIMIT 1",
+            [externalId],
+          );
+          if (existing.rows[0]) throw new ApiError("conflict", 409);
+          const project = await database.query<{ id: string }>(
+            `INSERT INTO projects (id, organization_id, name)
+             VALUES (gen_random_uuid(), $1, $2)
+             RETURNING id`,
+            [session.organizationId, input.repositoryName.trim()],
+          );
+          const projectId = project.rows[0]?.id;
+          if (!projectId) throw new ApiError("internal_error", 500);
+          await database.query(
+            `INSERT INTO repositories (
+               id, organization_id, project_id, provider, external_id, display_name,
+               github_full_name, default_branch, last_analyzed_commit_sha, analysis_report
+             ) VALUES (gen_random_uuid(), $1, $2, 'github', $3, $4, $5, $6, $7, $8::jsonb)`,
+            [
+              session.organizationId,
+              projectId,
+              externalId,
+              input.repositoryName.trim(),
+              input.fullName,
+              input.defaultBranch,
+              input.commitSha,
+              JSON.stringify(input.report),
+            ],
+          );
+          return { projectId };
+        });
+      } catch (error) {
+        if (databaseErrorCode(error) === "23505") throw new ApiError("conflict", 409);
+        throw error;
+      }
+    },
+
+    async getProject(session, projectId) {
+      assertUuid(projectId, "projectId");
+      return await withTenant(pool, session, async (database) => {
+        const organization = await database.query<{ id: string; name: string }>(
+          "SELECT id, name FROM organizations WHERE id = $1 LIMIT 1",
+          [session.organizationId],
+        );
+        const organizationRow = organization.rows[0];
+        if (!organizationRow) throw new ApiError("not_found", 404);
+        const user = await database.query<{ id: string; email: string | null }>(
+          "SELECT id, email FROM users WHERE id = $1 LIMIT 1",
+          [session.userId],
+        );
+        const userRow = user.rows[0];
+        if (!userRow) throw new ApiError("auth_required", 401);
+        const result = await database.query<{
+          project_id: string;
+          project_name: string;
+          repository_id: string;
+          external_id: string;
+          github_full_name: string | null;
+          default_branch: string | null;
+          last_analyzed_commit_sha: string | null;
+          analysis_report: ProjectReport | null;
+        }>(
+          `SELECT p.id AS project_id, p.name AS project_name,
+                  r.id AS repository_id, r.external_id, r.github_full_name,
+                  r.default_branch, r.last_analyzed_commit_sha, r.analysis_report
+             FROM projects AS p
+             JOIN repositories AS r ON r.project_id = p.id AND r.organization_id = p.organization_id
+            WHERE p.id = $1 AND p.organization_id = $2
+            LIMIT 1`,
+          [projectId, session.organizationId],
+        );
+        const row = result.rows[0];
+        if (!row || !row.github_full_name || !row.default_branch || !row.last_analyzed_commit_sha || !row.analysis_report) throw new ApiError("not_found", 404);
+        return {
+          organization: { id: organizationRow.id, name: organizationRow.name },
+          user: { id: userRow.id, email: userRow.email },
+          project: {
+            id: row.project_id,
+            name: row.project_name,
+            repository: {
+              id: row.repository_id,
+              externalId: row.external_id,
+              fullName: row.github_full_name,
+              defaultBranch: row.default_branch,
+              lastAnalyzedCommitSha: row.last_analyzed_commit_sha,
+            },
+            report: row.analysis_report,
+          },
+        };
+      });
     },
   };
 }
