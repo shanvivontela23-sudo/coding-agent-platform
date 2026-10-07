@@ -34,83 +34,28 @@ const tooLarge = () => new RepositoryAnalysisError("REPOSITORY_TOO_LARGE", "Repo
 const invalidArchive = () => new RepositoryAnalysisError("REPOSITORY_INVALID_ARCHIVE", "Repository archive could not be analysed.");
 
 const languageByExtension: Readonly<Record<string, string>> = {
-  ".c": "C",
-  ".cc": "C++",
-  ".cpp": "C++",
-  ".cxx": "C++",
-  ".cs": "C#",
-  ".dart": "Dart",
-  ".go": "Go",
-  ".java": "Java",
-  ".js": "JavaScript",
-  ".jsx": "JavaScript",
-  ".cjs": "JavaScript",
-  ".mjs": "JavaScript",
-  ".kt": "Kotlin",
-  ".kts": "Kotlin",
-  ".php": "PHP",
-  ".py": "Python",
-  ".rb": "Ruby",
-  ".rs": "Rust",
-  ".scala": "Scala",
-  ".sh": "Shell",
-  ".svelte": "Svelte",
-  ".swift": "Swift",
-  ".ts": "TypeScript",
-  ".tsx": "TypeScript",
-  ".vue": "Vue",
+  ".c": "C", ".cc": "C++", ".cpp": "C++", ".cxx": "C++", ".cs": "C#", ".dart": "Dart",
+  ".go": "Go", ".java": "Java", ".js": "JavaScript", ".jsx": "JavaScript", ".cjs": "JavaScript",
+  ".mjs": "JavaScript", ".kt": "Kotlin", ".kts": "Kotlin", ".php": "PHP", ".py": "Python",
+  ".rb": "Ruby", ".rs": "Rust", ".scala": "Scala", ".sh": "Shell", ".svelte": "Svelte",
+  ".swift": "Swift", ".ts": "TypeScript", ".tsx": "TypeScript", ".vue": "Vue",
 };
 
 const recognizedManifests = new Set([
-  "package.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "package-lock.json",
-  "bun.lock",
-  "bun.lockb",
-  "pyproject.toml",
-  "requirements.txt",
-  "poetry.lock",
-  "uv.lock",
-  "Pipfile",
-  "Pipfile.lock",
-  "pom.xml",
-  "build.gradle",
-  "build.gradle.kts",
-  "gradlew",
-  "go.mod",
-  "Cargo.toml",
-  "Gemfile",
+  "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "bun.lockb",
+  "pyproject.toml", "requirements.txt", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock",
+  "pom.xml", "build.gradle", "build.gradle.kts", "gradlew", "go.mod", "Cargo.toml", "Gemfile",
 ]);
-
-const generatedSegments = new Set([
-  ".git",
-  ".next",
-  ".venv",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "obj",
-  "target",
-  "vendor",
-  "venv",
-]);
+const generatedSegments = new Set([".git", ".next", ".venv", "build", "coverage", "dist", "node_modules", "obj", "target", "vendor", "venv"]);
 
 type SeenManifest = { readonly name: string; readonly depth: number; readonly contents: string };
+type TarHeader = { readonly name: string; readonly size: number; readonly type: string };
 
-type TarHeader = {
-  readonly name: string;
-  readonly size: number;
-  readonly type: string;
-};
-
-function nulTerminated(buffer: Buffer): string {
+function nulTerminated(buffer: Buffer<ArrayBufferLike>): string {
   const zero = buffer.indexOf(0);
   return buffer.subarray(0, zero < 0 ? buffer.length : zero).toString("utf8");
 }
-
-function parseOctal(buffer: Buffer): number {
+function parseOctal(buffer: Buffer<ArrayBufferLike>): number {
   const text = nulTerminated(buffer).trim().replace(/^\0+/, "");
   if (!text) return 0;
   if (!/^[0-7]+$/.test(text)) throw invalidArchive();
@@ -118,58 +63,44 @@ function parseOctal(buffer: Buffer): number {
   if (!Number.isSafeInteger(value) || value < 0) throw invalidArchive();
   return value;
 }
-
-function parseHeader(header: Buffer): TarHeader | null {
+function parseHeader(header: Buffer<ArrayBufferLike>): TarHeader | null {
   if (header.length !== 512) throw invalidArchive();
   if (header.every((value) => value === 0)) return null;
   const name = nulTerminated(header.subarray(0, 100));
   const prefix = nulTerminated(header.subarray(345, 500));
-  const fullName = prefix ? `${prefix}/${name}` : name;
   return {
-    name: fullName,
+    name: prefix ? `${prefix}/${name}` : name,
     size: parseOctal(header.subarray(124, 136)),
     type: String.fromCharCode(header[156] ?? 0),
   };
 }
-
 function safeArchivePath(path: string): boolean {
   if (!path || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path) || path.includes("..")) return false;
   return !path.includes("\0");
 }
-
 function withoutArchiveRoot(path: string): string {
-  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  const parts = normalized.split("/").filter(Boolean);
+  const parts = path.replaceAll("\\", "/").replace(/^\.\//, "").split("/").filter(Boolean);
   return parts.length > 1 ? parts.slice(1).join("/") : parts[0] ?? "";
 }
-
 function basename(path: string): string {
   const normalized = path.replaceAll("\\", "/");
   return normalized.slice(normalized.lastIndexOf("/") + 1);
 }
-
-function depth(path: string): number {
-  return path ? path.split("/").filter(Boolean).length : 0;
-}
-
+function depth(path: string): number { return path ? path.split("/").filter(Boolean).length : 0; }
 function extension(path: string): string {
   const name = basename(path).toLowerCase();
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot) : "";
 }
-
 function shouldCountLanguage(path: string): boolean {
-  const parts = path.split("/").filter(Boolean);
-  return !parts.some((part) => generatedSegments.has(part));
+  return !path.split("/").filter(Boolean).some((part) => generatedSegments.has(part));
 }
-
 function commandForScript(manager: string | null, script: "build" | "test"): string {
   if (manager === "pnpm") return `pnpm ${script}`;
   if (manager === "yarn") return `yarn ${script}`;
   if (manager === "bun") return script === "test" ? "bun test" : "bun run build";
   return script === "test" ? "npm test" : "npm run build";
 }
-
 function detectPackageManager(names: ReadonlySet<string>): string | null {
   if (names.has("pnpm-lock.yaml")) return "pnpm";
   if (names.has("yarn.lock")) return "yarn";
@@ -182,8 +113,7 @@ function detectPackageManager(names: ReadonlySet<string>): string | null {
   if (names.has("Cargo.toml")) return "cargo";
   return names.has("package.json") ? "npm" : null;
 }
-
-function parsePackageJson(manifests: readonly SeenManifest[]): { readonly dependencies: Set<string>; readonly scripts: Set<string>; readonly hasTypescript: boolean } {
+function parsePackageJson(manifests: readonly SeenManifest[]) {
   const packages = manifests.filter((manifest) => manifest.name === "package.json").sort((a, b) => a.depth - b.depth);
   const dependencies = new Set<string>();
   const scripts = new Set<string>();
@@ -202,46 +132,30 @@ function parsePackageJson(manifests: readonly SeenManifest[]): { readonly depend
       if (manifest === packages[0] && typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) {
         for (const script of Object.keys(parsed.scripts as Record<string, unknown>)) scripts.add(script);
       }
-    } catch {
-      // Invalid project manifests are treated as absent; repository content is never evaluated.
-    }
+    } catch { /* malformed manifests contribute no detections */ }
   }
   return { dependencies, scripts, hasTypescript };
 }
-
 function detectFrameworks(manifests: readonly SeenManifest[], dependencies: ReadonlySet<string>): string[] {
   const found = new Set<string>();
   const dependencyMap: ReadonlyArray<readonly [string, string]> = [
-    ["next", "Next.js"],
-    ["react", "React"],
-    ["vite", "Vite"],
-    ["express", "Express"],
-    ["fastify", "Fastify"],
-    ["@nestjs/core", "NestJS"],
-    ["@angular/core", "Angular"],
-    ["vue", "Vue"],
-    ["svelte", "Svelte"],
+    ["next", "Next.js"], ["react", "React"], ["vite", "Vite"], ["express", "Express"], ["fastify", "Fastify"],
+    ["@nestjs/core", "NestJS"], ["@angular/core", "Angular"], ["vue", "Vue"], ["svelte", "Svelte"],
   ];
   for (const [dependency, framework] of dependencyMap) if (dependencies.has(dependency)) found.add(framework);
   for (const manifest of manifests) {
     const lower = manifest.contents.toLowerCase();
-    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])(django)([^a-z]|$)/m.test(lower)) found.add("Django");
-    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])(fastapi)([^a-z]|$)/m.test(lower)) found.add("FastAPI");
-    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])(flask)([^a-z]|$)/m.test(lower)) found.add("Flask");
+    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])django([^a-z]|$)/m.test(lower)) found.add("Django");
+    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])fastapi([^a-z]|$)/m.test(lower)) found.add("FastAPI");
+    if ((manifest.name === "pyproject.toml" || manifest.name === "requirements.txt") && /(^|[^a-z])flask([^a-z]|$)/m.test(lower)) found.add("Flask");
     if ((manifest.name === "pom.xml" || manifest.name.startsWith("build.gradle")) && lower.includes("spring-boot")) found.add("Spring Boot");
     if (manifest.name === "Gemfile" && /(^|\s)gem\s+["']rails["']/.test(lower)) found.add("Rails");
   }
   return [...found].sort((a, b) => a.localeCompare(b));
 }
-
-function detectCommands(manifests: readonly SeenManifest[], manager: string | null, scripts: ReadonlySet<string>): { buildCommand: string | null; testCommand: string | null } {
+function detectCommands(manifests: readonly SeenManifest[], manager: string | null, scripts: ReadonlySet<string>) {
   const names = new Set(manifests.map((manifest) => manifest.name));
-  if (names.has("package.json")) {
-    return {
-      buildCommand: scripts.has("build") ? commandForScript(manager, "build") : null,
-      testCommand: scripts.has("test") ? commandForScript(manager, "test") : null,
-    };
-  }
+  if (names.has("package.json")) return { buildCommand: scripts.has("build") ? commandForScript(manager, "build") : null, testCommand: scripts.has("test") ? commandForScript(manager, "test") : null };
   if (names.has("pom.xml")) return { buildCommand: "mvn package", testCommand: "mvn test" };
   if (names.has("build.gradle") || names.has("build.gradle.kts")) return { buildCommand: names.has("gradlew") ? "./gradlew build" : "gradle build", testCommand: names.has("gradlew") ? "./gradlew test" : "gradle test" };
   if (names.has("go.mod")) return { buildCommand: "go build ./...", testCommand: "go test ./..." };
@@ -261,11 +175,11 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
   source.pipe(gunzip);
 
   let uncompressedBytes = 0;
-  let pending = Buffer.alloc(0);
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let current: TarHeader | null = null;
   let remaining = 0;
   let paddingRemaining = 0;
-  let capture: Buffer[] | null = null;
+  let capture: Array<Buffer<ArrayBufferLike>> | null = null;
   let fileCount = 0;
   let ended = false;
   const languageCounts = new Map<string, number>();
@@ -287,12 +201,9 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
 
   try {
     for await (const rawChunk of gunzip) {
-      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk as Uint8Array);
+      const chunk: Buffer<ArrayBufferLike> = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk as Uint8Array);
       uncompressedBytes += chunk.length;
-      if (uncompressedBytes > limits.maxUncompressedBytes) {
-        gunzip.destroy(tooLarge());
-        throw tooLarge();
-      }
+      if (uncompressedBytes > limits.maxUncompressedBytes) throw tooLarge();
       pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
 
       while (pending.length > 0 && !ended) {
@@ -306,10 +217,7 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
           if (pending.length < 512) break;
           const header = parseHeader(pending.subarray(0, 512));
           pending = pending.subarray(512);
-          if (!header) {
-            ended = true;
-            break;
-          }
+          if (!header) { ended = true; break; }
           const regular = header.type === "0" || header.type === "\0";
           if (regular) {
             fileCount += 1;
@@ -318,13 +226,12 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
           current = header;
           remaining = header.size;
           paddingRemaining = (512 - (header.size % 512)) % 512;
-
           if (regular && safeArchivePath(header.name)) {
             const relative = withoutArchiveRoot(header.name);
-            const lowerSegments = relative.split("/").filter(Boolean).map((part) => part.toLowerCase());
+            const normalized = relative.split("/").filter(Boolean).map((part) => part.toLowerCase()).join("/");
             const name = basename(relative);
             if (recognizedManifests.has(name)) capture = [];
-            if (shouldCountLanguage(lowerSegments.join("/"))) {
+            if (shouldCountLanguage(normalized)) {
               const language = languageByExtension[extension(relative).toLowerCase()];
               if (language) languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1);
             }
@@ -332,7 +239,6 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
           if (remaining === 0) finishCurrent();
           continue;
         }
-
         if (remaining > 0) {
           const consumed = Math.min(remaining, pending.length);
           if (capture && consumed > 0) capture.push(Buffer.from(pending.subarray(0, consumed)));
@@ -358,26 +264,15 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
   }
 
   if (!ended && (current || pending.length > 0)) throw invalidArchive();
-
   const totalLanguageFiles = [...languageCounts.values()].reduce((sum, value) => sum + value, 0);
   const languages = [...languageCounts.entries()]
     .map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 }))
     .sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-
   const packageData = parsePackageJson(manifests);
   const packageManager = detectPackageManager(manifestNames);
   const frameworks = detectFrameworks(manifests, packageData.dependencies);
   const commands = detectCommands(manifests, packageManager, packageData.scripts);
   const hasNodeLanguage = languageCounts.has("TypeScript") || languageCounts.has("JavaScript");
   const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || hasNodeLanguage) ? "typescript-node" : "generic";
-
-  return {
-    languages,
-    frameworks,
-    packageManager,
-    buildCommand: commands.buildCommand,
-    testCommand: commands.testCommand,
-    stackSkill,
-    manifests: [...manifestNames],
-  };
+  return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, stackSkill, manifests: [...manifestNames] };
 }
