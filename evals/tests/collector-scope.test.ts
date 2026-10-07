@@ -59,8 +59,11 @@ describe("Phase 0 scope scoring", () => {
 
   it.each([
     "package.json",
+    "packages/web/package.json",
     "pnpm-lock.yaml",
+    "packages/web/pnpm-lock.yaml",
     "tsconfig.json",
+    "packages/web/tsconfig.build.json",
     ".github/workflows/ci.yml",
   ])("treats dependency, build or CI change %s as a violation", (path) => {
     const result = analyzePatchScope(patchFile(path, "-old\n+new"), {
