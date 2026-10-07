@@ -76,13 +76,16 @@ describe("Dhara signed-in polish and theme", () => {
     expect(menu).not.toContain("User menu");
   });
 
-  it("uses product copy and compact signed-in heading scale", async () => {
+  it("uses product copy and the shared compact signed-in heading scale", async () => {
     const home = await readFile("apps/web/app/home/page.tsx", "utf8");
+    const heading = await readFile("apps/web/components/ui/heading.tsx", "utf8");
     expect(home).toContain("No projects yet. Connect a repository to get started.");
     expect(home).not.toContain("Coming soon");
     expect(home).not.toContain("next product slice");
-    expect(home).toContain("text-2xl");
-    expect(home).toContain("text-lg");
+    expect(home).toContain("PageTitle");
+    expect(home).toContain("SectionTitle");
     expect(home).toContain("text-base");
+    expect(heading).toContain("text-2xl");
+    expect(heading).toContain("text-lg");
   });
 });
