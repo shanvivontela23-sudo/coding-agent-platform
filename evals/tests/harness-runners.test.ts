@@ -7,7 +7,6 @@ import {
 import type {
   SandboxCommand,
   SandboxCommandResult,
-  SandboxNetworkPhase,
   SandboxPatch,
   SandboxSession,
   SandboxSnapshot,
@@ -35,7 +34,7 @@ class FakeSession implements SandboxSession {
 
   async writeFile(): Promise<void> {}
 
-  async setNetworkPhase(_phase: SandboxNetworkPhase): Promise<void> {}
+  async setNetworkPhase(): Promise<void> {}
 
   async exportPatch(): Promise<SandboxPatch> {
     return this.patch;
