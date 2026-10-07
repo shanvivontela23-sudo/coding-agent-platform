@@ -12,12 +12,14 @@ describe("Dhara signed-in web flow", () => {
     expect(page).toContain("error");
   });
 
-  it("renders organization name, projects empty state, and sign out on home", async () => {
+  it("renders organization name and projects through the signed-in app shell", async () => {
     const page = await readFile("apps/web/app/home/page.tsx", "utf8");
-    expect(page).toContain("PRODUCT_NAME");
+    const shell = await readFile("apps/web/components/app-shell.tsx", "utf8");
+    expect(page).toContain("AppShell");
     expect(page).toContain("/api/home");
     expect(page).toContain("organization.name");
     expect(page).toContain("No projects yet");
-    expect(page).toContain("/auth/sign-out");
+    expect(shell).toContain("PRODUCT_NAME");
+    expect(shell).toContain("/auth/sign-out");
   });
 });
