@@ -38,20 +38,18 @@ function normalizeSupabaseUrl(value: string): string {
 }
 async function readIdentity(response: Response, provider: SupabaseIdentity["provider"]): Promise<SupabaseIdentity> {
   if (!response.ok) throw new Error(`Supabase Auth failed with status ${response.status}`);
-  const body = await response.json() as { user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown; confirmed_at?: unknown } };
+  const body = await response.json() as { user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown } };
   if (typeof body.user?.id !== "string" || !body.user.id) throw new Error("Supabase Auth response did not include a user id");
   const identity: SupabaseIdentity = {
     supabaseUserId: body.user.id,
     email: typeof body.user.email === "string" ? body.user.email : null,
     provider,
-    ...((typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at) || (typeof body.user.confirmed_at === "string" && body.user.confirmed_at)
-      ? { emailConfirmed: true }
-      : {}),
+    ...(typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at ? { emailConfirmed: true } : {}),
   };
   return identity;
 }
-function parseFlowCookie(cookie: string, secret: string, nowMs: number): OAuthFlowPayload {
-  const [payload, signature, extra] = cookie.split(".");
+function parseFlowCookie(cookieValue: string, secret: string, nowMs: number): OAuthFlowPayload {
+  const [payload, signature, extra] = cookieValue.split(".");
   if (!payload || !signature || extra !== undefined || !safeEqual(signature, hmac(payload, secret))) throw new Error("invalid Supabase OAuth flow cookie");
   const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as OAuthFlowPayload;
   if (!parsed.flowId || !parsed.codeVerifier || parsed.expiresAtMs <= nowMs) throw new Error("expired or invalid Supabase OAuth flow");
@@ -63,10 +61,10 @@ export function createSupabaseAuthClient(options: SupabaseAuthClientOptions): Su
   const fetchImpl = options.fetchImpl ?? fetch;
   const random = options.randomBytes ?? (() => nodeRandomBytes(48));
   const now = options.nowMs ?? Date.now;
-  const post = async (url: string, body: unknown) => await fetchImpl(url, {
+  const post = async (url: string, requestBody: unknown) => await fetchImpl(url, {
     method: "POST",
     headers: { apikey: options.anonKey, authorization: `Bearer ${options.anonKey}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
   return {
     signInWithPassword: async (email, password) => readIdentity(await post(`${base}/auth/v1/token?grant_type=password`, { email, password }), "email"),
@@ -76,11 +74,11 @@ export function createSupabaseAuthClient(options: SupabaseAuthClientOptions): Su
       const payload: OAuthFlowPayload = { flowId, codeVerifier, expiresAtMs: now() + 10 * 60_000 };
       const encoded = b64(JSON.stringify(payload));
       const flowCookie = `${encoded}.${hmac(encoded, options.flowSecret)}`;
-      const redirect = new URL(callbackUrl);
-      redirect.searchParams.set("flow", flowId);
+      const redirectUrl = new URL(callbackUrl);
+      redirectUrl.searchParams.set("flow", flowId);
       const authorize = new URL(`${base}/auth/v1/authorize`);
       authorize.searchParams.set("provider", "github");
-      authorize.searchParams.set("redirect_to", redirect.toString());
+      authorize.searchParams.set("redirect_to", redirectUrl.toString());
       authorize.searchParams.set("code_challenge", createHash("sha256").update(codeVerifier).digest("base64url"));
       authorize.searchParams.set("code_challenge_method", "s256");
       return { authorizationUrl: authorize.toString(), flowId, flowCookie };
