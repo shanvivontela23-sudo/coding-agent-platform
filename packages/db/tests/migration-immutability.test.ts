@@ -15,10 +15,11 @@ describe("database migration immutability", () => {
     const manifest = JSON.parse(await readFile(`${directory}/checksums.json`, "utf8")) as ChecksumManifest;
 
     expect(Object.keys(manifest).sort()).toEqual(files);
-    for (const file of files) {
-      const expected = manifest[file];
-      expect(expected, `${file} must be listed`).toMatch(/^[0-9a-f]{64}$/);
-      expect(sha256(await readFile(`${directory}/${file}`)), `${file} checksum`).toBe(expected);
+    for (const [file, checksum] of Object.entries(manifest)) {
+      expect(checksum, `${file} checksum format`).toMatch(/^[0-9a-f]{64}$/);
     }
+
+    const actual = Object.fromEntries(await Promise.all(files.map(async (file) => [file, sha256(await readFile(`${directory}/${file}`))] as const)));
+    expect(actual).toEqual(manifest);
   });
 });
