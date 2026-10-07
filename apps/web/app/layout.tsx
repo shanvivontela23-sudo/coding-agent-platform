@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { PRODUCT_NAME } from "../src/product-config.js";
+import { PRODUCT_NAME } from "../src/product-config";
 
 export const metadata: Metadata = {
   title: PRODUCT_NAME,
