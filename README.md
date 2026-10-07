@@ -102,7 +102,7 @@ Put these values in the server `.env` (the committed `.env.example` contains emp
 
 The private key may be provided with literal `\n` escapes; the API converts them to newlines only in memory. GitHub user-access tokens used to verify installation ownership and GitHub installation tokens used to read repositories are short-lived server-side credentials. Dhara does not persist them, expose them to the browser, or log them.
 
-**Later pull-request slice:** the GitHub App will also need **Contents: Write** when Dhara begins writing branches/files. Do not grant that permission for this read-only analysis slice.
+**Contents: Write** will be needed in the later pull-request slice when Dhara begins writing branches/files. Do not grant that permission for this read-only analysis slice.
 
 ### Database trust boundary
 
