@@ -73,7 +73,7 @@ describe("GitHub App client", () => {
     await expect(client.verifyUserInstallation("callback-code", 42)).resolves.toBeUndefined();
     expect(requests[0]?.body).toContain("callback-code");
     expect(requests[1]?.authorization).toBe("Bearer github-user-secret");
-    expect(JSON.stringify(await client.verifyUserInstallation)).not.toContain("github-user-secret");
+    expect(JSON.stringify(client)).not.toContain("github-user-secret");
   });
 
   it("rejects a callback installation the user cannot access and never logs the user token", async () => {
