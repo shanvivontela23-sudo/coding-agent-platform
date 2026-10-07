@@ -35,8 +35,8 @@ export class MeteredSandboxProvider implements SandboxProvider {
   }
 
   async create(request: SandboxCreateRequest): Promise<SandboxSession> {
-    const session = await this.provider.create(request);
     const startedAtMs = this.clock();
+    const session = await this.provider.create(request);
     let destroyed = false;
     const recordDestroyed = () => {
       this.totalMilliseconds += Math.max(0, this.clock() - startedAtMs);
