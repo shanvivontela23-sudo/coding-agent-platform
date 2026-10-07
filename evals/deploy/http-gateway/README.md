@@ -1,10 +1,10 @@
 # Phase 0 harness gateway deployment
 
-This directory is a working **deployment target**, not an infrastructure provisioner. Nothing here creates a DigitalOcean resource, changes DNS, funds an account, or writes a secret.
+This directory is a working **deployment target**, not an infrastructure provisioner. Nothing here creates cloud resources, changes DNS, funds an account, or writes a secret.
 
 ## Target
 
-For Phase 0 use one DigitalOcean Basic-class VM with **2 vCPU / 4 GB RAM** and a stable public IP. The host exposes public TCP/443 through Caddy. Do not publish the Node gateway or PostgreSQL container ports. LiteLLM management is bound only to host loopback for the trusted operator/smoke runner. Restrict SSH to the operator's known source addresses or equivalent administrative access controls.
+For Phase 0 use one operator-provided Linux host with roughly **2 vCPU / 4 GB RAM**, a stable public IP, and an HTTPS DNS name. The owner may use an existing AWS account or another suitable host provider; this repository is deliberately host-neutral. The host exposes public TCP/443 through Caddy. Do not publish the Node gateway or PostgreSQL container ports. LiteLLM management is bound only to host loopback for the trusted operator/smoke runner. Restrict SSH or equivalent administrative access to the operator's known sources.
 
 The Compose topology is:
 
@@ -16,7 +16,7 @@ LiteLLM also uses PostgreSQL on the private Compose network.
 
 Before any record-and-forward or live smoke command is run, the operator owns these actions outside the repository:
 
-1. create the VM and HTTPS DNS name;
+1. provide the Linux host and HTTPS DNS name;
 2. create/fund the OpenAI account with **$25 prepaid** and automatic reload off;
 3. create/fund the Anthropic account with **$25 prepaid** and automatic reload off;
 4. create the E2B account/key;
@@ -55,7 +55,7 @@ A model-price object has this shape:
 
 Use real current list prices on the host. The repository intentionally does not freeze a price table that can go stale.
 
-The pre-dispatch reservation treats each UTF-8 request byte as one uncached input token and adds the request's `max_output_tokens`/`max_tokens` (or the configured default) at list price. This is a conservative guard only; LiteLLM's persisted usage/spend is authoritative after dispatch.
+The pre-dispatch reservation estimates uncached input at `ceil(UTF-8 request bytes / 3)` and adds the request's `max_output_tokens`/`max_tokens` (or the configured default) at list price. This is a conservative guard only; LiteLLM's persisted usage/spend is authoritative after dispatch.
 
 ## Host state directory
 
@@ -76,7 +76,7 @@ docker compose --env-file .env -f evals/deploy/http-gateway/compose.yaml up -d
 
 The LiteLLM image build performs the real hash-locked install from `evals/litellm/requirements.txt`. Public CI intentionally performs only the dry-run verification.
 
-Caddy is intentionally simple. No response-body transformation is configured. The live smoke test, not static config inspection, is authoritative for incremental SSE delivery and client-disconnect propagation.
+Caddy is intentionally simple. The reverse proxy uses `flush_interval -1` so streamed model events are flushed immediately instead of being buffered. The live smoke test remains authoritative for incremental SSE delivery and client-disconnect propagation.
 
 ## Route/model policy
 
@@ -86,4 +86,4 @@ The Node gateway remains the policy boundary. LiteLLM's wildcard forwarding entr
 
 ## What this does not do
 
-This deployment does not create provider/E2B accounts, preload balances, create the VM, change DNS, or execute live smoke. Those remain deliberate operator actions after PR C is reviewed and merged.
+This deployment does not create provider/E2B accounts, preload balances, create a host, change DNS, or execute live smoke. Those remain deliberate operator actions after the reviewed deployment files are merged.
