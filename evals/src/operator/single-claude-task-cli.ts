@@ -30,6 +30,10 @@ class NoopWriter implements RunResultWriter {
   async write(): Promise<void> {}
 }
 
+async function ownedArrayBuffer(path: string): Promise<ArrayBuffer> {
+  return Uint8Array.from(await readFile(resolve(path))).buffer;
+}
+
 async function main(): Promise<void> {
   requireLiveSmoke();
   const specPath = resolve(required("SINGLE_TASK_SPEC_PATH"));
@@ -41,7 +45,7 @@ async function main(): Promise<void> {
   };
   const hiddenFiles = await Promise.all(spec.hiddenFiles.map(async (file) => ({
     path: file.path,
-    contents: new Uint8Array(await readFile(resolve(file.sourcePath))),
+    contents: await ownedArrayBuffer(file.sourcePath),
   })));
 
   const hostname = required("GATEWAY_HOSTNAME");
