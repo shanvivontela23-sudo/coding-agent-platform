@@ -9,3 +9,8 @@ export {
   type Phase0RunInput,
   type Phase0RunOrchestratorOptions,
 } from "./phase0-run.js";
+export {
+  DEFAULT_SETUP_TIMEOUT_MS,
+  SANDBOX_LIFETIME_MARGIN_MS,
+  sandboxLifetimeMs,
+} from "./sandbox-lifetime.js";
