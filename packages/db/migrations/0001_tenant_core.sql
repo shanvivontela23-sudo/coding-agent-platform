@@ -1,4 +1,5 @@
 BEGIN;
+SELECT pg_advisory_xact_lock(7102026);
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coding_agent_app') THEN
