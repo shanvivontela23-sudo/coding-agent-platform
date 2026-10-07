@@ -1,0 +1,50 @@
+services:
+  gateway:
+    build:
+      context: ../../..
+      dockerfile: evals/deploy/http-gateway/Dockerfile.gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      MODEL_GATEWAY_RUN_TOKEN_SECRET: ${MODEL_GATEWAY_RUN_TOKEN_SECRET:?MODEL_GATEWAY_RUN_TOKEN_SECRET is required}
+      LITELLM_ADMIN_TOKEN: ${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required}
+      HARNESS_MODEL_PRICES_JSON: ${HARNESS_MODEL_PRICES_JSON:?HARNESS_MODEL_PRICES_JSON is required}
+      GATEWAY_HOSTNAME: ${GATEWAY_HOSTNAME:?GATEWAY_HOSTNAME is required}
+      HTTP_GATEWAY_HOST: 0.0.0.0
+      HTTP_GATEWAY_PORT: "8080"
+      LITELLM_GATEWAY_URL: http://litellm:4000
+      GATEWAY_STORE_DIR: /var/lib/coding-agent/gateway
+      HARNESS_CALL_STORE_DIR: /var/lib/coding-agent/http
+    volumes:
+      - ${LOCAL_GATEWAY_STATE_DIR:-../../../.local/gateway-state}:/var/lib/coding-agent
+    depends_on:
+      - litellm
+
+  litellm:
+    build:
+      context: ../../..
+      dockerfile: evals/deploy/http-gateway/Dockerfile.litellm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      OPENAI_API_KEY: ""
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/litellm
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_local_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_local_data:
