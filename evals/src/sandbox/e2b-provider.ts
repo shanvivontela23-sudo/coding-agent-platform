@@ -86,12 +86,15 @@ export type E2BSandboxProviderOptions = {
   readonly client?: E2BClientLike;
 };
 
-const networkPhaseOrder: readonly SandboxNetworkPhase[] = [
-  "locked",
-  "dependency-setup",
-  "coding",
-  "testing",
-];
+const allowedNetworkTransitions: Readonly<
+  Record<SandboxNetworkPhase, readonly SandboxNetworkPhase[]>
+> = {
+  locked: ["dependency-setup"],
+  "dependency-setup": ["coding", "offline"],
+  coding: ["testing"],
+  testing: [],
+  offline: [],
+};
 
 function isCommandExitLike(error: unknown): error is E2BCommandResult {
   return (
@@ -184,11 +187,7 @@ class E2BSandboxSession implements SandboxSession {
 
     if (phase === this.networkPhase) return;
 
-    const currentIndex = networkPhaseOrder.indexOf(this.networkPhase);
-    const requestedIndex = networkPhaseOrder.indexOf(phase);
-    const expectedPhase = networkPhaseOrder[currentIndex + 1];
-
-    if (requestedIndex !== currentIndex + 1 || expectedPhase !== phase) {
+    if (!allowedNetworkTransitions[this.networkPhase].includes(phase)) {
       throw new Error(
         `invalid sandbox network phase transition: ${this.networkPhase} -> ${phase}`,
       );
