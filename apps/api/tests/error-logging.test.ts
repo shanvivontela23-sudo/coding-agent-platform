@@ -5,12 +5,18 @@ import type { ProductDatabase } from "../src/database.js";
 
 const sessionSecret = "test-session-secret-that-is-long-enough";
 const secretPassword = "dont-log-this-password";
+const userId = "10000000-0000-4000-8000-000000000041";
+const organizationId = "00000000-0000-4000-8000-000000000041";
 
 function database(): ProductDatabase {
   return {
     lookupMemberships: async () => [],
-    createOrganizationWithOwner: async () => ({ userId: "10000000-0000-4000-8000-000000000041", organizationId: "00000000-0000-4000-8000-000000000041" }),
-    getHome: async () => ({ organization: { id: "00000000-0000-4000-8000-000000000041", name: "Acme" }, projects: [] }),
+    createOrganizationWithOwner: async () => ({ userId, organizationId }),
+    getHome: async () => ({ organization: { id: organizationId, name: "Acme" }, user: { id: userId, email: "owner@example.com" }, projects: [] }),
+    getMembers: async () => ({ organization: { id: organizationId, name: "Acme" }, currentUser: { id: userId, email: "owner@example.com", role: "owner" }, members: [], invitations: [] }),
+    createInvitation: async (_session, email, role) => ({ id: "70000000-0000-4000-8000-000000000041", organizationId, organizationName: "Acme", email, role, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    listVerifiedInvitations: async () => [],
+    acceptVerifiedInvitation: async () => ({ userId, organizationId }),
   };
 }
 
