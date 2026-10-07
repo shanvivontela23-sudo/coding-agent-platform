@@ -7,7 +7,9 @@ const migrationPath = "packages/db/migrations/0001_tenant_core.sql";
 export type TenantIsolationProbeResult = {
   readonly tenantAVisibleProjects: number;
   readonly tenantBVisibleProjects: number;
-  readonly crossTenantRepositoryRejected: boolean;
+  readonly crossTenantProjectReferenceRejected: boolean;
+  readonly crossTenantRepositoryReferenceRejected: boolean;
+  readonly crossTenantTaskReferenceRejected: boolean;
   readonly auditUpdateDenied: boolean;
   readonly auditDeleteDenied: boolean;
   readonly tenantAVisibleUsers: number;
@@ -32,18 +34,38 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   const userB = "10000000-0000-4000-8000-000000000002";
   const projectA = "20000000-0000-4000-8000-000000000001";
   const projectB = "20000000-0000-4000-8000-000000000002";
-  const repository = "30000000-0000-4000-8000-000000000001";
-  const audit = "40000000-0000-4000-8000-000000000001";
+  const repositoryA = "30000000-0000-4000-8000-000000000001";
+  const repositoryB = "30000000-0000-4000-8000-000000000002";
+  const taskB = "40000000-0000-4000-8000-000000000002";
+  const audit = "50000000-0000-4000-8000-000000000001";
+
   await psql(databaseUrl, `
     INSERT INTO organizations (id,name) VALUES ('${orgA}','A'),('${orgB}','B');
     INSERT INTO users (id,supabase_user_id,email) VALUES
-      ('${userA}','50000000-0000-4000-8000-000000000001','a@example.com'),
-      ('${userB}','50000000-0000-4000-8000-000000000002','b@example.com');
+      ('${userA}','60000000-0000-4000-8000-000000000001','a@example.com'),
+      ('${userB}','60000000-0000-4000-8000-000000000002','b@example.com');
     INSERT INTO organization_memberships (organization_id,user_id,role) VALUES ('${orgA}','${userA}','rep'),('${orgB}','${userB}','rep');
     INSERT INTO projects (id,organization_id,name) VALUES ('${projectA}','${orgA}','A project'),('${projectB}','${orgB}','B project');
+    INSERT INTO repositories (id,organization_id,project_id,provider,external_id,display_name) VALUES
+      ('${repositoryA}','${orgA}','${projectA}','github','a','A repo'),
+      ('${repositoryB}','${orgB}','${projectB}','github','b','B repo');
+    INSERT INTO tasks (id,organization_id,project_id,repository_id,requested_by_user_id,status,requirement) VALUES
+      ('${taskB}','${orgB}','${projectB}','${repositoryB}','${userB}','open','B task');
   `);
 
-  const crossTenantRepositoryRejected = await fails(databaseUrl, `INSERT INTO repositories (id,organization_id,project_id,provider,external_id,display_name) VALUES ('${repository}','${orgA}','${projectB}','github','x','bad');`);
+  const crossTenantProjectReferenceRejected = await fails(databaseUrl, `
+    INSERT INTO repositories (id,organization_id,project_id,provider,external_id,display_name)
+    VALUES ('70000000-0000-4000-8000-000000000001','${orgA}','${projectB}','github','bad-project','bad');
+  `);
+  const crossTenantRepositoryReferenceRejected = await fails(databaseUrl, `
+    INSERT INTO tasks (id,organization_id,project_id,repository_id,requested_by_user_id,status,requirement)
+    VALUES ('70000000-0000-4000-8000-000000000002','${orgA}','${projectA}','${repositoryB}','${userA}','open','bad repo');
+  `);
+  const crossTenantTaskReferenceRejected = await fails(databaseUrl, `
+    INSERT INTO task_steps (id,organization_id,task_id,step_key,status)
+    VALUES ('70000000-0000-4000-8000-000000000003','${orgA}','${taskB}','bad','open');
+  `);
+
   const counts = (await psql(databaseUrl, `SET ROLE coding_agent_app; SET app.organization_id='${orgA}'; SELECT (SELECT count(*) FROM projects) || ',' || (SELECT count(*) FROM projects WHERE organization_id='${orgB}') || ',' || (SELECT count(*) FROM users) || ',' || (SELECT count(*) FROM users WHERE id='${userB}');`)).split(",").map(Number);
 
   await psql(databaseUrl, `SET ROLE coding_agent_app; SET app.organization_id='${orgA}'; INSERT INTO audit_events (id,organization_id,actor_user_id,event_type) VALUES ('${audit}','${orgA}','${userA}','probe');`);
@@ -53,7 +75,9 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   return {
     tenantAVisibleProjects: counts[0] ?? -1,
     tenantBVisibleProjects: counts[1] ?? -1,
-    crossTenantRepositoryRejected,
+    crossTenantProjectReferenceRejected,
+    crossTenantRepositoryReferenceRejected,
+    crossTenantTaskReferenceRejected,
     auditUpdateDenied,
     auditDeleteDenied,
     tenantAVisibleUsers: counts[2] ?? -1,
