@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MeteredSandboxProvider } from "../src/operator/metered-sandbox-provider.js";
 import type {
-  SandboxCommand,
   SandboxCommandResult,
   SandboxCreateRequest,
-  SandboxNetworkPhase,
   SandboxPatch,
   SandboxProvider,
   SandboxSession,
@@ -17,10 +15,10 @@ class FakeSession implements SandboxSession {
   readonly baselineCommitSha = "a".repeat(40);
   destroys = 0;
   constructor(id: string) { this.id = id; }
-  async exec(_command: SandboxCommand): Promise<SandboxCommandResult> { return { exitCode: 0, stdout: "", stderr: "" }; }
+  async exec(): Promise<SandboxCommandResult> { return { exitCode: 0, stdout: "", stderr: "" }; }
   async readFile(): Promise<string> { return ""; }
   async writeFile(): Promise<void> {}
-  async setNetworkPhase(_phase: SandboxNetworkPhase): Promise<void> {}
+  async setNetworkPhase(): Promise<void> {}
   async exportPatch(): Promise<SandboxPatch> { return { patch: "", status: "" }; }
   async snapshot(): Promise<SandboxSnapshot> { return { id: `${this.id}-snapshot` }; }
   async destroy(): Promise<void> { this.destroys += 1; }
@@ -28,7 +26,7 @@ class FakeSession implements SandboxSession {
 
 class FakeProvider implements SandboxProvider {
   created = 0;
-  async create(_request: SandboxCreateRequest): Promise<SandboxSession> {
+  async create(): Promise<SandboxSession> {
     this.created += 1;
     return new FakeSession(`sandbox-${this.created}`);
   }
