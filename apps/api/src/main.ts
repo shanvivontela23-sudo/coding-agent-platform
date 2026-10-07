@@ -5,6 +5,7 @@ import {
   createProductDatabase,
   type TenantPool,
 } from "./database.js";
+import { createGitHubAppClient } from "./github-app.js";
 import { createApiServer } from "./server.js";
 
 function required(name: string): string {
@@ -24,6 +25,13 @@ const auth = createSupabaseAuthClient({
   anonKey: required("SUPABASE_ANON_KEY"),
   flowSecret: required("SUPABASE_FLOW_SECRET"),
 });
+const github = createGitHubAppClient({
+  appSlug: required("GITHUB_APP_SLUG"),
+  appId: required("GITHUB_APP_ID"),
+  clientId: required("GITHUB_APP_CLIENT_ID"),
+  clientSecret: required("GITHUB_APP_CLIENT_SECRET"),
+  privateKey: required("GITHUB_APP_PRIVATE_KEY").replace(/\\n/g, "\n"),
+});
 const server = createApiServer({
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   apiOrigin: process.env.API_ORIGIN ?? `http://localhost:${port}`,
@@ -32,6 +40,9 @@ const server = createApiServer({
   onboardingDurationMs: 15 * 60_000,
   auth,
   database,
+  github,
+  githubStateSecret: required("GITHUB_APP_STATE_SECRET"),
+  githubStateDurationMs: 10 * 60_000,
 });
 
 server.listen(port, "127.0.0.1", () => {
