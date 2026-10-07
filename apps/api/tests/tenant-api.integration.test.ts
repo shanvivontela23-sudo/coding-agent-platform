@@ -112,6 +112,7 @@ describe.skipIf(!baseDatabaseUrl)("restricted tenant API integration", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
         organization: { id: orgA, name: "Tenant A" },
+        user: { id: userA, email: "a@example.com" },
         projects: [{ id: projectA, name: "A project" }],
       });
     } finally {
