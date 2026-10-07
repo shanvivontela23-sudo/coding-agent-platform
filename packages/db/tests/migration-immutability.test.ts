@@ -8,14 +8,13 @@ describe("database migration immutability", () => {
   it("requires every SQL migration to be listed with its exact SHA-256 checksum", async () => {
     const files = (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
     const manifest = JSON.parse(await readFile(`${directory}/checksums.json`, "utf8")) as Record<string, string>;
-    expect(Object.keys(manifest).sort()).toEqual(files);
-    expect(new Set(files).size).toBe(files.length);
-    expect(files).toEqual([...files].sort());
-
-    for (const file of files) {
+    const computed = Object.fromEntries(await Promise.all(files.map(async (file) => {
       const content = await readFile(`${directory}/${file}`);
-      const digest = createHash("sha256").update(content).digest("hex");
-      expect(manifest[file], `${file} checksum`).toBe(digest);
-    }
+      return [file, createHash("sha256").update(content).digest("hex")] as const;
+    })));
+
+    expect(new Set(files).size).toBe(files.length);
+    expect(Object.keys(manifest).sort()).toEqual(files);
+    expect(manifest).toEqual(computed);
   });
 });
