@@ -1,0 +1,5 @@
+{
+  "0001_tenant_core.sql": "a2bd51200e4232257004b121f9252af2e0920721120711815cd383c4c8a39725",
+  "0002_organization_invitations.sql": "8a8d098b931dacadf72fbfd336fce6bc65646fbba3157ee3dfbdb1d8017e3935",
+  "0003_github_projects.sql": "344d3c7cdc7dfcd04eea849ca06f5a33e5f13cc906f1d3e29e7613ef1a91514a"
+}

@@ -2,20 +2,24 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-function gitBlobSha1(content: Buffer): string {
-  const header = Buffer.from(`blob ${content.byteLength}\0`, "utf8");
-  return createHash("sha1").update(header).update(content).digest("hex");
+type ChecksumManifest = Readonly<Record<string, string>>;
+
+function sha256(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 describe("database migration immutability", () => {
-  it("never rewrites migration 0001 and only advances with new ordered files", async () => {
-    const migration = await readFile("packages/db/migrations/0001_tenant_core.sql");
-    expect(gitBlobSha1(migration)).toBe("789ccd2835de3d065dfdaa874e799e5405edac6c");
+  it("requires every migration to be listed in the checksum manifest and unchanged", async () => {
+    const directory = "packages/db/migrations";
+    const files = (await readdir(directory)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+    const manifest = JSON.parse(await readFile(`${directory}/checksums.json`, "utf8")) as ChecksumManifest;
 
-    const files = (await readdir("packages/db/migrations")).filter((name) => name.endsWith(".sql")).sort();
-    expect(files[0]).toBe("0001_tenant_core.sql");
-    expect(files).toContain("0002_organization_invitations.sql");
-    expect(new Set(files).size).toBe(files.length);
-    expect(files).toEqual([...files].sort());
+    expect(Object.keys(manifest).sort()).toEqual(files);
+    for (const [file, checksum] of Object.entries(manifest)) {
+      expect(checksum, `${file} checksum format`).toMatch(/^[0-9a-f]{64}$/);
+    }
+
+    const actual = Object.fromEntries(await Promise.all(files.map(async (file) => [file, sha256(await readFile(`${directory}/${file}`))] as const)));
+    expect(actual).toEqual(manifest);
   });
 });

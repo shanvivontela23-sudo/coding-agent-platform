@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppShell } from "../../components/app-shell";
@@ -21,10 +22,7 @@ const howItWorks = [
 async function loadHome(): Promise<HomePayload> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; ");
-  const response = await fetch(`${apiOrigin}/api/home`, {
-    headers: cookieHeader ? { cookie: cookieHeader } : {},
-    cache: "no-store",
-  });
+  const response = await fetch(`${apiOrigin}/api/home`, { headers: cookieHeader ? { cookie: cookieHeader } : {}, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load your organization.");
   return await response.json() as HomePayload;
@@ -32,16 +30,13 @@ async function loadHome(): Promise<HomePayload> {
 
 export default async function HomePage() {
   const home = await loadHome();
-
   return (
-    <AppShell organizationName={home.organization.name} userEmail={home.user.email}>
+    <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/home">
       <div className="space-y-10">
         <section className="space-y-2">
           <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Overview</p>
           <h1 className="text-2xl font-semibold tracking-tight">Welcome to Dhara</h1>
-          <p className="max-w-2xl text-muted-foreground">
-            Start with a repository, describe the change you need, and keep developer review at the center.
-          </p>
+          <p className="max-w-2xl text-muted-foreground">Start with a repository, describe the change you need, and keep developer review at the center.</p>
         </section>
 
         <section className="space-y-4" aria-labelledby="projects-heading">
@@ -50,7 +45,9 @@ export default async function HomePage() {
               <h2 id="projects-heading" className="text-lg font-semibold tracking-tight">Projects</h2>
               <p className="mt-1 text-sm text-muted-foreground">Repositories and active work appear here.</p>
             </div>
-            <Button disabled className="w-full sm:w-auto">Connect a repository</Button>
+            <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
+              <Button type="submit" className="w-full sm:w-auto">Connect a repository</Button>
+            </form>
           </div>
 
           {home.projects.length === 0 ? (
@@ -63,12 +60,14 @@ export default async function HomePage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {home.projects.map((project) => (
-                <Card key={project.id}>
-                  <CardHeader>
-                    <CardTitle className="text-base">{project.name}</CardTitle>
-                    <CardDescription>Connected project</CardDescription>
-                  </CardHeader>
-                </Card>
+                <Link key={project.id} href={`/projects/${project.id}`} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <Card className="h-full transition-colors hover:bg-muted/50">
+                    <CardHeader>
+                      <CardTitle className="text-base font-medium">{project.name}</CardTitle>
+                      <CardDescription>Connected project</CardDescription>
+                    </CardHeader>
+                  </Card>
+                </Link>
               ))}
             </div>
           )}
@@ -84,7 +83,7 @@ export default async function HomePage() {
               <Card key={step.number}>
                 <CardHeader>
                   <p className="text-caption font-semibold tracking-[0.16em] text-accent">{step.number}</p>
-                  <CardTitle className="text-base">{step.title}</CardTitle>
+                  <CardTitle className="text-base font-medium">{step.title}</CardTitle>
                   <CardDescription>{step.description}</CardDescription>
                 </CardHeader>
               </Card>

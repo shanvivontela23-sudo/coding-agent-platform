@@ -19,7 +19,7 @@ describe("Supabase Auth", () => {
     expect(calls[0]?.headers.get("apikey")).toBe(anonKey);
   });
 
-  it("preserves Supabase confirmed-email state for invitation matching", async () => {
+  it("preserves Supabase email_confirmed_at state for invitation matching", async () => {
     const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
       access_token: "supabase-access-token",
       user: {
@@ -33,6 +33,24 @@ describe("Supabase Auth", () => {
       supabaseUserId: "33333333-3333-4333-8333-333333333333",
       email: "invitee@example.com",
       emailConfirmed: true,
+      provider: "email",
+    });
+  });
+
+  it("does not treat confirmed_at alone as confirmed email", async () => {
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+      access_token: "supabase-access-token",
+      user: {
+        id: "44444444-4444-4444-8444-444444444444",
+        email: "oauth@example.com",
+        confirmed_at: "2026-10-07T12:00:00Z",
+        email_confirmed_at: null,
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const client = createSupabaseAuthClient({ supabaseUrl, anonKey, flowSecret, fetchImpl });
+    await expect(client.signInWithPassword("oauth@example.com", "password")).resolves.toEqual({
+      supabaseUserId: "44444444-4444-4444-8444-444444444444",
+      email: "oauth@example.com",
       provider: "email",
     });
   });
