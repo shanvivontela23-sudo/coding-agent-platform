@@ -23,7 +23,7 @@ function database(): ProductDatabase {
 afterEach(() => vi.restoreAllMocks());
 
 describe("API caught-error logging", () => {
-  it("logs one structured server-side event without request secrets or raw error messages", async () => {
+  it("logs a short safe code without request secrets or raw error messages", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const server = createApiServer({
       webOrigin: "http://localhost:3000",
@@ -52,9 +52,12 @@ describe("API caught-error logging", () => {
       expect(error).toHaveBeenCalledTimes(1);
       const raw = String(error.mock.calls[0]?.[0]);
       const entry = JSON.parse(raw) as Record<string, unknown>;
-      expect(entry).toMatchObject({ event: "api_error", method: "POST", path: "/auth/email" });
+      expect(entry).toMatchObject({ event: "api_error", method: "POST", path: "/auth/email", code: "AUTH_SIGN_IN_FAILED" });
+      expect(entry).not.toHaveProperty("errorType");
+      expect(entry.code).toMatch(/^[A-Z0-9_]{3,48}$/);
       expect(raw).not.toContain(secretPassword);
       expect(raw).not.toContain("provider rejected");
+      expect(entry).not.toHaveProperty("message");
       expect(entry).not.toHaveProperty("body");
       expect(entry).not.toHaveProperty("cookie");
       expect(entry).not.toHaveProperty("authorization");
