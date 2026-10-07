@@ -4,7 +4,9 @@
   "private": true,
   "description": "Phase 0 evaluation rig for the Coding Agent Platform",
   "packageManager": "pnpm@10.17.1",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lint": "eslint evals",
     "typecheck": "tsc --noEmit",
@@ -13,9 +15,7 @@
     "dataset:validate": "tsx evals/src/dataset/cli.ts",
     "protocol:record": "tsx evals/src/gateway/http/recorder-cli.ts",
     "smoke:http-gateway": "tsx evals/smoke/http-gateway-smoke.ts",
-    "smoke:e2b-network": "tsx evals/smoke/e2b-network-smoke.ts",
-    "smoke:local-tunnel": "tsx evals/smoke/local-tunnel-preflight.ts",
-    "eval:run:claude-one": "tsx evals/src/operator/single-claude-task-cli.ts"
+    "smoke:e2b-network": "tsx evals/smoke/e2b-network-smoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
@@ -27,5 +27,7 @@
     "zod": "^4.1.11",
     "tsx": "^4.20.6"
   },
-  "dependencies": { "e2b": "2.52.0" }
+  "dependencies": {
+    "e2b": "2.52.0"
+  }
 }
