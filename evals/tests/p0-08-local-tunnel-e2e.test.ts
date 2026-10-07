@@ -106,17 +106,17 @@ describe("P0-08 local tunnel profile", () => {
     expect(note).toMatch(/wall-clock|command timeout/i);
   });
 
-  it("exposes operator-only paid commands for local preflight and one-task Claude end to end", async () => {
-    const pkg = JSON.parse(await readFile("package.json", "utf8")) as { scripts?: Record<string, string> };
-    expect(pkg.scripts?.["smoke:local-tunnel"]).toBe("tsx evals/smoke/local-tunnel-preflight.ts");
-    expect(pkg.scripts?.["eval:run:claude-one"]).toBe("tsx evals/src/operator/single-claude-task-cli.ts");
+  it("exposes operator-only paid CLIs for local preflight and one-task Claude end to end", async () => {
     const preflight = await readFile("evals/smoke/local-tunnel-preflight.ts", "utf8");
     const command = await readFile("evals/src/operator/single-claude-task-cli.ts", "utf8");
+    const runbook = await readFile("evals/deploy/http-gateway/LOCAL_MAC.md", "utf8");
     for (const source of [preflight, command]) {
       expect(source).toContain("requireLiveSmoke");
       expect(source).toMatch(/Estimated.*spend/i);
       expect(source).toMatch(/Actual.*spend/i);
     }
+    expect(runbook).toContain("pnpm exec tsx evals/smoke/local-tunnel-preflight.ts");
+    expect(runbook).toContain("pnpm exec tsx evals/src/operator/single-claude-task-cli.ts");
     const start = command.indexOf("startLocalHttpRun(");
     const harness = command.indexOf("orchestrator.run(");
     const collect = command.indexOf("collector.collect(");
