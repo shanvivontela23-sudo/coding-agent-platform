@@ -91,7 +91,7 @@ describe("Claude Code harness runner", () => {
 });
 
 describe("Codex harness runner", () => {
-  it("uses pinned JSONL exec mode, an isolated home, and an explicit gateway override", async () => {
+  it("uses pinned JSONL exec mode, an isolated home, and the approved custom Responses provider", async () => {
     const session = new FakeSession(
       [{
         exitCode: 0,
@@ -107,13 +107,17 @@ describe("Codex harness runner", () => {
     const outcome = await new CodexHarnessRunner({ version: "0.90.0", clock: () => 0 }).run(session, request);
     expect(outcome.status).toBe("completed");
     expect(outcome.turnsUsed).toBe(2);
-    expect(session.commands[0]?.command).toContain("codex");
-    expect(session.commands[0]?.command).toContain("--version");
-    expect(session.commands[0]?.command).toContain("codex exec");
-    expect(session.commands[0]?.command).toContain("--json");
-    expect(session.commands[0]?.command).toContain("--full-auto");
-    expect(session.commands[0]?.command).toContain("openai_base_url");
-    expect(session.commands[0]?.command).not.toContain(request.runToken);
+    const command = session.commands[0]?.command ?? "";
+    expect(command).toContain("codex");
+    expect(command).toContain("--version");
+    expect(command).toContain("codex exec");
+    expect(command).toContain("--json");
+    expect(command).toContain("--full-auto");
+    expect(command).toContain('model_provider="benchmark_gateway"');
+    expect(command).toContain("model_providers.benchmark_gateway.base_url");
+    expect(command).toContain('wire_api="responses"');
+    expect(command).toContain("responses_websockets=false");
+    expect(command).not.toContain(request.runToken);
     expect(session.commands[0]?.env).toMatchObject({
       OPENAI_BASE_URL: request.gatewayUrl,
       OPENAI_API_KEY: request.runToken,
