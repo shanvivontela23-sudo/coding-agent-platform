@@ -43,5 +43,6 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm --filter @coding-agent/web build
       - name: Verify LiteLLM hash lock
         run: python -m pip install --dry-run --require-hashes -r evals/litellm/requirements.txt
