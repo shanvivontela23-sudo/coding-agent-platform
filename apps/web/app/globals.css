@@ -106,6 +106,8 @@
   --text-heading--line-height: 2rem;
   --text-body: 1rem;
   --text-body--line-height: 1.5rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.40625rem;
   --text-caption: 0.8125rem;
   --text-caption--line-height: 1.125rem;
   --radius-lg: var(--radius);
