@@ -16,6 +16,8 @@ export type TenantPool = {
   query<Row = Record<string, unknown>>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
 };
 
+export type VerifiedSupabaseUser = Pick<SupabaseIdentity, "supabaseUserId" | "email">;
+
 export type Membership = {
   readonly userId: string;
   readonly organizationId: string;
@@ -28,8 +30,8 @@ export type HomeData = {
 };
 
 export type ProductDatabase = {
-  lookupMemberships(identity: SupabaseIdentity): Promise<Membership[]>;
-  createOrganizationWithOwner(identity: SupabaseIdentity, organizationName: string): Promise<Pick<SessionIdentity, "userId" | "organizationId">>;
+  lookupMemberships(identity: VerifiedSupabaseUser): Promise<Membership[]>;
+  createOrganizationWithOwner(identity: VerifiedSupabaseUser, organizationName: string): Promise<Pick<SessionIdentity, "userId" | "organizationId">>;
   getHome(session: SessionIdentity): Promise<HomeData>;
 };
 
