@@ -10,7 +10,6 @@ import {
   type HarnessRunRequest,
 } from "../src/harness/index.js";
 import type {
-  SandboxCommand,
   SandboxCommandResult,
   SandboxPatch,
   SandboxSession,
@@ -22,7 +21,7 @@ class TimeoutSession implements SandboxSession {
   readonly workspacePath = "/workspace/repo";
   readonly baselineCommitSha = "a".repeat(40);
   exports = 0;
-  async exec(_command: SandboxCommand): Promise<SandboxCommandResult> {
+  async exec(): Promise<SandboxCommandResult> {
     throw new Error("command timed out after 60000ms");
   }
   async readFile(): Promise<string> { return ""; }
@@ -118,5 +117,15 @@ describe("P0-08 local tunnel profile", () => {
       expect(source).toMatch(/Estimated.*spend/i);
       expect(source).toMatch(/Actual.*spend/i);
     }
+    const start = command.indexOf("startLocalHttpRun(");
+    const harness = command.indexOf("orchestrator.run(");
+    const collect = command.indexOf("collector.collect(");
+    const reconcile = command.indexOf("finishAndReconcileLocalRun(");
+    const write = command.indexOf("FileRunResultWriter(resultRoot).write(");
+    expect(start).toBeGreaterThan(-1);
+    expect(harness).toBeGreaterThan(start);
+    expect(collect).toBeGreaterThan(harness);
+    expect(reconcile).toBeGreaterThan(collect);
+    expect(write).toBeGreaterThan(reconcile);
   });
 });
