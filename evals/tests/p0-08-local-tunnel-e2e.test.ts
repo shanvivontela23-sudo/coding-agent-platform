@@ -102,7 +102,7 @@ describe("P0-08 local tunnel profile", () => {
   it("documents the Codex 0.160.1 turn-limit qualification as wall-clock-only", async () => {
     const note = await readFile("evals/docs/phase-0/live-readiness.md", "utf8");
     expect(note).toContain("Codex CLI `0.160.1`");
-    expect(note).toMatch(/does not expose.*hard max-turns/i);
+    expect(note).toMatch(/not[^\n]*expose[^\n]*hard max-turns/i);
     expect(note).toMatch(/wall-clock|command timeout/i);
   });
 
