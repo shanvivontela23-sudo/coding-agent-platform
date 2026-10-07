@@ -9,7 +9,6 @@ import type {
   PinnedRepositoryArchive,
   SandboxCommand,
   SandboxCommandResult,
-  SandboxCreateRequest,
   SandboxNetworkPhase,
   SandboxPatch,
   SandboxProvider,
@@ -43,7 +42,7 @@ class Session implements SandboxSession {
 
 class Provider implements SandboxProvider {
   constructor(private readonly session: Session) {}
-  async create(_request: SandboxCreateRequest): Promise<SandboxSession> { return this.session; }
+  async create(): Promise<SandboxSession> { return this.session; }
 }
 
 const repository: PinnedRepositoryArchive = {
