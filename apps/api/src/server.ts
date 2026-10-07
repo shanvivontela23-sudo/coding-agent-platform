@@ -85,7 +85,7 @@ export function createApiServer(options: ApiServerOptions) {
       };
       const onboarding = createOnboardingToken(onboardingIdentity, options.sessionSecret);
       appendCookie(response, cookie("onboarding_session", onboarding, Math.floor(options.onboardingDurationMs / 1000), secureCookies));
-      if (identity.emailConfirmed === true) {
+      if (identity.emailConfirmed === true && identity.email) {
         const invitations = await options.database.listVerifiedInvitations(onboardingIdentity);
         if (invitations.length > 0) {
           redirect(response, webLocation(options.webOrigin, "/invites"));
@@ -200,7 +200,7 @@ export function createApiServer(options: ApiServerOptions) {
         if (!token) throw new Error("missing tenant session");
         const session = verifySessionToken(token, options.sessionSecret);
         const form = new URLSearchParams(await body(request));
-        const email = form.get("email") ?? "";
+        const email = (form.get("email") ?? "").trim().toLowerCase();
         const roleValue = form.get("role");
         if (roleValue !== "developer" && roleValue !== "rep") throw new Error("invalid invitation role");
         await options.database.createInvitation(session, email, roleValue satisfies InviteRole);
