@@ -4,10 +4,11 @@ import {
   createSessionToken,
   verifyOnboardingToken,
   verifySessionToken,
+  type OnboardingIdentity,
   type SupabaseAuthClient,
   type SupabaseIdentity,
 } from "./auth.js";
-import type { Membership, ProductDatabase } from "./database.js";
+import type { InviteRole, Membership, ProductDatabase } from "./database.js";
 
 export type ApiServerOptions = {
   readonly webOrigin: string;
@@ -54,12 +55,20 @@ function webLocation(origin: string, path: string, error?: string): string {
   if (error) url.searchParams.set("error", error);
   return url.toString().replace(/\/$/, path === "/" ? "" : "/");
 }
-function sessionFromMembership(membership: Membership, durationMs: number) {
+function sessionFromMembership(membership: Pick<Membership, "userId" | "organizationId">, durationMs: number) {
   return {
     userId: membership.userId,
     organizationId: membership.organizationId,
     expiresAtMs: Date.now() + durationMs,
   };
+}
+function logCaughtError(request: IncomingMessage, pathname: string, error: unknown): void {
+  console.error(JSON.stringify({
+    event: "api_error",
+    method: request.method ?? "UNKNOWN",
+    path: pathname,
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  }));
 }
 
 export function createApiServer(options: ApiServerOptions) {
@@ -68,12 +77,21 @@ export function createApiServer(options: ApiServerOptions) {
   const finishIdentity = async (identity: SupabaseIdentity, response: ServerResponse): Promise<void> => {
     const memberships = await options.database.lookupMemberships(identity);
     if (memberships.length === 0) {
-      const onboarding = createOnboardingToken({
+      const onboardingIdentity: OnboardingIdentity = {
         supabaseUserId: identity.supabaseUserId,
         email: identity.email,
+        ...(identity.emailConfirmed !== undefined ? { emailConfirmed: identity.emailConfirmed } : {}),
         expiresAtMs: Date.now() + options.onboardingDurationMs,
-      }, options.sessionSecret);
+      };
+      const onboarding = createOnboardingToken(onboardingIdentity, options.sessionSecret);
       appendCookie(response, cookie("onboarding_session", onboarding, Math.floor(options.onboardingDurationMs / 1000), secureCookies));
+      if (identity.emailConfirmed === true) {
+        const invitations = await options.database.listVerifiedInvitations(onboardingIdentity);
+        if (invitations.length > 0) {
+          redirect(response, webLocation(options.webOrigin, "/invites"));
+          return;
+        }
+      }
       redirect(response, webLocation(options.webOrigin, "/onboarding"));
       return;
     }
@@ -129,6 +147,36 @@ export function createApiServer(options: ApiServerOptions) {
         redirect(response, webLocation(options.webOrigin, "/home"));
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/invitations") {
+        const onboardingCookie = cookies(request).get("onboarding_session");
+        if (!onboardingCookie) throw new Error("missing onboarding session");
+        const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret);
+        const invitations = await options.database.listVerifiedInvitations(identity);
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ invitations }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/invitations/accept") {
+        const onboardingCookie = cookies(request).get("onboarding_session");
+        if (!onboardingCookie) throw new Error("missing onboarding session");
+        const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret);
+        const form = new URLSearchParams(await body(request));
+        const invitationId = form.get("invitationId") ?? "";
+        const accepted = await options.database.acceptVerifiedInvitation(identity, invitationId);
+        const session = { ...accepted, expiresAtMs: Date.now() + options.sessionDurationMs };
+        appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies));
+        appendCookie(response, clearCookie("onboarding_session", secureCookies));
+        redirect(response, webLocation(options.webOrigin, "/home"));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/invitations/decline") {
+        const onboardingCookie = cookies(request).get("onboarding_session");
+        if (!onboardingCookie) throw new Error("missing onboarding session");
+        verifyOnboardingToken(onboardingCookie, options.sessionSecret);
+        appendCookie(response, clearCookie("onboarding_session", secureCookies));
+        redirect(response, options.webOrigin);
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/home") {
         const token = cookies(request).get("tenant_session");
         if (!token) throw new Error("missing tenant session");
@@ -136,6 +184,27 @@ export function createApiServer(options: ApiServerOptions) {
         const home = await options.database.getHome(session);
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify(home));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/members") {
+        const token = cookies(request).get("tenant_session");
+        if (!token) throw new Error("missing tenant session");
+        const session = verifySessionToken(token, options.sessionSecret);
+        const members = await options.database.getMembers(session);
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(members));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/members/invitations") {
+        const token = cookies(request).get("tenant_session");
+        if (!token) throw new Error("missing tenant session");
+        const session = verifySessionToken(token, options.sessionSecret);
+        const form = new URLSearchParams(await body(request));
+        const email = form.get("email") ?? "";
+        const roleValue = form.get("role");
+        if (roleValue !== "developer" && roleValue !== "rep") throw new Error("invalid invitation role");
+        await options.database.createInvitation(session, email, roleValue satisfies InviteRole);
+        redirect(response, webLocation(options.webOrigin, "/members"));
         return;
       }
       if (request.method === "POST" && url.pathname === "/auth/sign-out") {
@@ -146,7 +215,8 @@ export function createApiServer(options: ApiServerOptions) {
       }
       response.statusCode = 404;
       response.end("not found");
-    } catch {
+    } catch (error) {
+      logCaughtError(request, url.pathname, error);
       if (request.method === "POST" && url.pathname === "/auth/email") {
         redirect(response, webLocation(options.webOrigin, "/", "Sign-in failed. Check your email and password."));
         return;
@@ -157,6 +227,14 @@ export function createApiServer(options: ApiServerOptions) {
       }
       if (request.method === "POST" && url.pathname === "/onboarding/organization") {
         redirect(response, webLocation(options.webOrigin, "/onboarding", "Organization name must be 2 to 80 characters, or this account is already configured."));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/members/invitations") {
+        redirect(response, webLocation(options.webOrigin, "/members", "Unable to send that invitation."));
+        return;
+      }
+      if (url.pathname.startsWith("/invitations/")) {
+        redirect(response, webLocation(options.webOrigin, "/invites", "That invitation could not be used."));
         return;
       }
       response.statusCode = 401;
