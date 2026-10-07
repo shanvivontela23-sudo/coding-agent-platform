@@ -8,6 +8,7 @@ const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
 type HomePayload = {
   readonly organization: { readonly id: string; readonly name: string };
+  readonly user: { readonly id: string; readonly email: string | null };
   readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 };
 
@@ -33,11 +34,11 @@ export default async function HomePage() {
   const home = await loadHome();
 
   return (
-    <AppShell organizationName={home.organization.name}>
+    <AppShell organizationName={home.organization.name} userEmail={home.user.email}>
       <div className="space-y-10">
         <section className="space-y-2">
           <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Overview</p>
-          <h1 className="text-display font-semibold tracking-tight">Welcome to Dhara</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Welcome to Dhara</h1>
           <p className="max-w-2xl text-muted-foreground">
             Start with a repository, describe the change you need, and keep developer review at the center.
           </p>
@@ -46,23 +47,17 @@ export default async function HomePage() {
         <section className="space-y-4" aria-labelledby="projects-heading">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 id="projects-heading" className="text-heading font-semibold tracking-tight">Projects</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Repositories and active work will appear here.</p>
+              <h2 id="projects-heading" className="text-lg font-semibold tracking-tight">Projects</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Repositories and active work appear here.</p>
             </div>
-            <Button disabled className="w-full sm:w-auto">
-              Connect a repository
-              <span className="rounded bg-accent-foreground/15 px-1.5 py-0.5 text-caption">Coming soon</span>
-            </Button>
+            <Button disabled className="w-full sm:w-auto">Connect a repository</Button>
           </div>
 
           {home.projects.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
-                <div className="mb-4 flex size-11 items-center justify-center rounded-full bg-accent/10 text-lg font-semibold text-accent">+</div>
-                <h3 className="font-semibold">No projects yet.</h3>
-                <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                  Repository connection arrives in the next product slice. Your workspace is ready for it.
-                </p>
+                <div className="mb-4 flex size-11 items-center justify-center rounded-full bg-accent-tint text-lg font-semibold text-accent" aria-hidden="true">+</div>
+                <h3 className="text-base font-semibold">No projects yet. Connect a repository to get started.</h3>
               </CardContent>
             </Card>
           ) : (
@@ -70,7 +65,7 @@ export default async function HomePage() {
               {home.projects.map((project) => (
                 <Card key={project.id}>
                   <CardHeader>
-                    <CardTitle>{project.name}</CardTitle>
+                    <CardTitle className="text-base">{project.name}</CardTitle>
                     <CardDescription>Connected project</CardDescription>
                   </CardHeader>
                 </Card>
@@ -81,7 +76,7 @@ export default async function HomePage() {
 
         <section className="space-y-4" aria-labelledby="how-it-works-heading">
           <div>
-            <h2 id="how-it-works-heading" className="text-heading font-semibold tracking-tight">How it works</h2>
+            <h2 id="how-it-works-heading" className="text-lg font-semibold tracking-tight">How it works</h2>
             <p className="mt-1 text-sm text-muted-foreground">Three steps from request to reviewed code.</p>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
@@ -89,7 +84,7 @@ export default async function HomePage() {
               <Card key={step.number}>
                 <CardHeader>
                   <p className="text-caption font-semibold tracking-[0.16em] text-accent">{step.number}</p>
-                  <CardTitle>{step.title}</CardTitle>
+                  <CardTitle className="text-base">{step.title}</CardTitle>
                   <CardDescription>{step.description}</CardDescription>
                 </CardHeader>
               </Card>

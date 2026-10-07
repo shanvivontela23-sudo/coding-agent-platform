@@ -1,8 +1,8 @@
 import { createHash, createHmac, randomBytes as nodeRandomBytes, timingSafeEqual } from "node:crypto";
 
 export type SessionIdentity = { readonly userId: string; readonly organizationId: string; readonly expiresAtMs: number };
-export type OnboardingIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly expiresAtMs: number };
-export type SupabaseIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly provider: "email" | "github" };
+export type OnboardingIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly emailConfirmed?: boolean; readonly expiresAtMs: number };
+export type SupabaseIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly emailConfirmed?: boolean; readonly provider: "email" | "github" };
 export type GitHubOAuthFlow = { readonly authorizationUrl: string; readonly flowId: string; readonly flowCookie: string };
 export type SupabaseAuthClient = {
   signInWithPassword(email: string, password: string): Promise<SupabaseIdentity>;
@@ -38,9 +38,17 @@ function normalizeSupabaseUrl(value: string): string {
 }
 async function readIdentity(response: Response, provider: SupabaseIdentity["provider"]): Promise<SupabaseIdentity> {
   if (!response.ok) throw new Error(`Supabase Auth failed with status ${response.status}`);
-  const body = await response.json() as { user?: { id?: unknown; email?: unknown } };
+  const body = await response.json() as { user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown; confirmed_at?: unknown } };
   if (typeof body.user?.id !== "string" || !body.user.id) throw new Error("Supabase Auth response did not include a user id");
-  return { supabaseUserId: body.user.id, email: typeof body.user.email === "string" ? body.user.email : null, provider };
+  const identity: SupabaseIdentity = {
+    supabaseUserId: body.user.id,
+    email: typeof body.user.email === "string" ? body.user.email : null,
+    provider,
+    ...((typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at) || (typeof body.user.confirmed_at === "string" && body.user.confirmed_at)
+      ? { emailConfirmed: true }
+      : {}),
+  };
+  return identity;
 }
 function parseFlowCookie(cookie: string, secret: string, nowMs: number): OAuthFlowPayload {
   const [payload, signature, extra] = cookie.split(".");
@@ -113,8 +121,13 @@ export function createOnboardingToken(identity: OnboardingIdentity, secret: stri
 }
 export function verifyOnboardingToken(token: string, secret: string, nowMs = Date.now()): OnboardingIdentity {
   const parsed = verifiedPayload(token, secret);
-  if (parsed.purpose !== "onboarding" || typeof parsed.supabaseUserId !== "string" || !parsed.supabaseUserId || (parsed.email !== null && typeof parsed.email !== "string") || typeof parsed.expiresAtMs !== "number" || !Number.isFinite(parsed.expiresAtMs) || parsed.expiresAtMs <= nowMs) throw new Error("invalid or expired onboarding session");
-  return { supabaseUserId: parsed.supabaseUserId, email: parsed.email as string | null, expiresAtMs: parsed.expiresAtMs };
+  if (parsed.purpose !== "onboarding" || typeof parsed.supabaseUserId !== "string" || !parsed.supabaseUserId || (parsed.email !== null && typeof parsed.email !== "string") || typeof parsed.expiresAtMs !== "number" || !Number.isFinite(parsed.expiresAtMs) || parsed.expiresAtMs <= nowMs || (parsed.emailConfirmed !== undefined && typeof parsed.emailConfirmed !== "boolean")) throw new Error("invalid or expired onboarding session");
+  return {
+    supabaseUserId: parsed.supabaseUserId,
+    email: parsed.email as string | null,
+    expiresAtMs: parsed.expiresAtMs,
+    ...(typeof parsed.emailConfirmed === "boolean" ? { emailConfirmed: parsed.emailConfirmed } : {}),
+  };
 }
 
 export async function completeTenantLogin(options: {

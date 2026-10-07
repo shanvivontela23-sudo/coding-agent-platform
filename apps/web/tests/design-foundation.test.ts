@@ -64,9 +64,11 @@ describe("Dhara web design foundation", () => {
       expect(shell).toContain(label);
     }
     expect(shell).toContain("organizationName");
-    expect(shell).toContain("/auth/sign-out");
+    expect(shell).toContain("userEmail");
+    expect(shell).toContain("UserMenu");
     expect(shell).toMatch(/md:/);
-    expect(shell).toContain("User menu");
+    expect(shell).not.toContain("Workspace");
+    expect(shell).not.toContain("User menu");
   });
 
   it("uses centered card layouts for login and onboarding with readable errors", async () => {
@@ -85,15 +87,14 @@ describe("Dhara web design foundation", () => {
     expect(onboarding).toContain("Button");
   });
 
-  it("renders the signed-in home foundation without changing its API behavior", async () => {
+  it("renders the signed-in home foundation without changing its API route", async () => {
     const home = await readFile("apps/web/app/home/page.tsx", "utf8");
     expect(home).toContain("AppShell");
     expect(home).toContain("Welcome to Dhara");
     expect(home).toContain("/api/home");
-    expect(home).toContain("No projects yet");
-    expect(home).toContain("Connect a repository");
-    expect(home).toContain("Coming soon");
-    expect(home).toContain("disabled");
+    expect(home).toContain("No projects yet. Connect a repository to get started.");
+    expect(home).not.toContain("Coming soon");
+    expect(home).not.toContain("next product slice");
     expect(home).toContain("How it works");
     for (const step of ["Connect a repo", "Describe a change", "Review the pull request"]) {
       expect(home).toContain(step);

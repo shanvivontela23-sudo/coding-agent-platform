@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
-import { createApiServer } from "../src/server.js";
 import { createSessionToken } from "../src/auth.js";
+import { createApiServer } from "../src/server.js";
 import type { ProductDatabase } from "../src/database.js";
 
 const sessionSecret = "test-session-secret-that-is-long-enough";
@@ -13,7 +13,11 @@ function database(overrides: Partial<ProductDatabase> = {}): ProductDatabase {
   return {
     lookupMemberships: async () => [{ userId, organizationId, role: "rep" }],
     createOrganizationWithOwner: async () => ({ userId, organizationId }),
-    getHome: async () => ({ organization: { id: organizationId, name: "Acme" }, projects: [] }),
+    getHome: async () => ({ organization: { id: organizationId, name: "Acme" }, user: { id: userId, email: "rep@example.com" }, projects: [] }),
+    getMembers: async () => ({ organization: { id: organizationId, name: "Acme" }, currentUser: { id: userId, email: "rep@example.com", role: "rep" }, members: [], invitations: [] }),
+    createInvitation: async (_session, email, role) => ({ id: "70000000-0000-4000-8000-000000000001", organizationId, organizationName: "Acme", email, role, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    listVerifiedInvitations: async () => [],
+    acceptVerifiedInvitation: async () => ({ userId, organizationId }),
     ...overrides,
   };
 }
@@ -122,7 +126,7 @@ describe("product API server", () => {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/home`, { headers: { cookie: tenantCookie() } });
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ organization: { id: organizationId, name: "Acme" }, projects: [] });
+      await expect(response.json()).resolves.toEqual({ organization: { id: organizationId, name: "Acme" }, user: { id: userId, email: "rep@example.com" }, projects: [] });
     });
   });
 

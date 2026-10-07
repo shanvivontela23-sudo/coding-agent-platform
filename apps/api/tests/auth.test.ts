@@ -19,6 +19,24 @@ describe("Supabase Auth", () => {
     expect(calls[0]?.headers.get("apikey")).toBe(anonKey);
   });
 
+  it("preserves Supabase confirmed-email state for invitation matching", async () => {
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+      access_token: "supabase-access-token",
+      user: {
+        id: "33333333-3333-4333-8333-333333333333",
+        email: "invitee@example.com",
+        email_confirmed_at: "2026-10-07T12:00:00Z",
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const client = createSupabaseAuthClient({ supabaseUrl, anonKey, flowSecret, fetchImpl });
+    await expect(client.signInWithPassword("invitee@example.com", "password")).resolves.toEqual({
+      supabaseUserId: "33333333-3333-4333-8333-333333333333",
+      email: "invitee@example.com",
+      emailConfirmed: true,
+      provider: "email",
+    });
+  });
+
   it("starts optional developer GitHub auth through Supabase with PKCE and exchanges only at Supabase", async () => {
     const tokenCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
