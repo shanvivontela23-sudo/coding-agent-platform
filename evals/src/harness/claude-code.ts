@@ -19,9 +19,7 @@ function parseTurns(stdout: string): number {
 
 function finalMessage(stdout: string): string | null {
   let message: string | null = null;
-  for (const event of jsonLines(stdout)) {
-    if (typeof event.result === "string") message = event.result;
-  }
+  for (const event of jsonLines(stdout)) if (typeof event.result === "string") message = event.result;
   return message;
 }
 
@@ -44,17 +42,19 @@ export class ClaudeCodeHarnessRunner implements HarnessRunner {
   }
 
   async run(session: SandboxSession, request: HarnessRunRequest): Promise<HarnessRunOutcome> {
+    const versionGuard = `version_output="$(${this.binary} --version 2>&1)" || exit 86; case "$version_output" in *"$BENCHMARK_HARNESS_VERSION"*) ;; *) printf '%s\n' 'harness_version_mismatch' >&2; exit 86 ;; esac`;
     return await executeHarnessCommand(
       session,
       request,
       {
-        command: `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} -p --output-format stream-json --verbose --dangerously-skip-permissions --model "$BENCHMARK_MODEL" --max-turns "$BENCHMARK_MAX_TURNS"`,
+        command: `${versionGuard}; printf '%s' "$BENCHMARK_TICKET" | ${this.binary} -p --output-format stream-json --verbose --dangerously-skip-permissions --model "$BENCHMARK_MODEL" --max-turns "$BENCHMARK_MAX_TURNS"`,
         env: {
           ANTHROPIC_BASE_URL: request.gatewayUrl,
           ANTHROPIC_AUTH_TOKEN: request.runToken,
           BENCHMARK_TICKET: request.ticketText,
           BENCHMARK_MODEL: request.model,
           BENCHMARK_MAX_TURNS: String(request.maxTurns),
+          BENCHMARK_HARNESS_VERSION: this.version,
         },
         parseTurns,
         finalMessage,
