@@ -4,6 +4,7 @@ import { AppShell } from "../../../components/app-shell";
 import { Alert, AlertDescription } from "../../../components/ui/alert";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent } from "../../../components/ui/card";
+import { PageTitle } from "../../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
@@ -47,8 +48,8 @@ export default async function GitHubRepositoriesPage({ searchParams }: PickerPro
       <div className="space-y-8">
         <section className="space-y-2">
           <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">GitHub</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Select a repository</h1>
-          <p className="text-muted-foreground">Choose one repository for Dhara to analyse deterministically.</p>
+          <PageTitle>Select a repository</PageTitle>
+          <p className="text-muted-foreground">Choose a repository for Dhara to learn.</p>
         </section>
 
         {errorValue ? <Alert variant="destructive"><AlertDescription>{errorValue}</AlertDescription></Alert> : null}
