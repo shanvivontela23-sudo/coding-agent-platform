@@ -173,13 +173,15 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
             ORDER BY m.created_at, u.id`,
           [session.organizationId],
         );
-        const invitations = await database.query<{ id: string; email: string; role: InviteRole; expires_at: Date | string }>(
-          `SELECT id, email, role, expires_at
-             FROM organization_invitations
-            WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()
-            ORDER BY created_at, id`,
-          [session.organizationId],
-        );
+        const invitations = currentUser.role === "owner"
+          ? await database.query<{ id: string; email: string; role: InviteRole; expires_at: Date | string }>(
+            `SELECT id, email, role, expires_at
+               FROM organization_invitations
+              WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()
+              ORDER BY created_at, id`,
+            [session.organizationId],
+          )
+          : { rows: [] };
 
         return {
           organization: { id: organizationRow.id, name: organizationRow.name },
