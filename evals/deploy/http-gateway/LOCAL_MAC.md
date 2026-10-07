@@ -101,9 +101,12 @@ Prepare an operator-local JSON file outside version control and point `SINGLE_TA
   "dependencySetupCommand": "pnpm install --frozen-lockfile",
   "runTimeoutMs": 1200000,
   "maxTurns": 12,
-  "spendCapUsd": 2
+  "spendCapUsd": 2,
+  "sandboxUsdPerSecond": 0.0001
 }
 ```
+
+Set `sandboxUsdPerSecond` to the operator's current effective sandbox price before the run; it is deliberately explicit rather than embedded in code so historical result rows remain auditable when vendor pricing changes.
 
 Then run:
 
@@ -113,7 +116,7 @@ export LIVE_SMOKE=1
 pnpm exec tsx evals/src/operator/single-claude-task-cli.ts
 ```
 
-This command prints the authorized model-spend ceiling before starting, creates the coding sandbox, runs the pinned Claude Code harness, exports the patch, creates a **second fresh evaluator sandbox**, installs dependencies while registries are allowed, switches the evaluator offline, injects hidden evaluation files there only, scores the patch, finishes/reconciles the run, and atomically writes the final result row. It prints authoritative reconciled model spend at the end.
+This command prints the authorized model-spend ceiling before starting, creates the coding sandbox, runs the pinned Claude Code harness, exports the patch, creates a **second fresh evaluator sandbox**, installs dependencies while registries are allowed, switches the evaluator offline, injects hidden evaluation files there only, scores the patch, finishes/reconciles the run, and atomically writes the final result row. It records the summed coding-plus-evaluator sandbox lifetime as `sandboxSeconds`, computes `sandboxCostUsd` using the explicit unit rate, and includes that cost in `totalCostUsd`. It prints authoritative reconciled model spend and sandbox usage at the end.
 
 Neither paid command is referenced by CI.
 
