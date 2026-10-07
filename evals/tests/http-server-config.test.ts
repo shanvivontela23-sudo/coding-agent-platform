@@ -72,7 +72,7 @@ describe("gateway server composition", () => {
     const inputBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
 
     await expect(estimator(dispatchRequest(body))).resolves.toBeCloseTo(
-      (inputBytes * 5 + 200 * 15) / 1_000_000,
+      (Math.ceil(inputBytes / 3) * 5 + 200 * 15) / 1_000_000,
       12,
     );
   });
@@ -126,7 +126,7 @@ describe("committed deployment contract", () => {
       readFile("evals/src/gateway/http/server.ts", "utf8"),
     ]);
     expect(caddyfile).toContain("reverse_proxy gateway:8080");
-    expect(caddyfile).not.toMatch(/buffer|response_buffers|request_buffers/i);
+    expect(caddyfile).toContain("flush_interval -1");
     expect(serverSource).not.toContain('"/health"');
     expect(serverSource).not.toContain("'/health'");
   });
