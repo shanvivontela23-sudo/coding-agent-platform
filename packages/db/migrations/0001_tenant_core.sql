@@ -2,9 +2,14 @@ BEGIN;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coding_agent_app') THEN
-    CREATE ROLE coding_agent_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    CREATE ROLE coding_agent_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coding_agent_api') THEN
+    CREATE ROLE coding_agent_api LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
   END IF;
 END $$;
+ALTER ROLE coding_agent_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
+ALTER ROLE coding_agent_api LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
 
 CREATE TABLE organizations (
   id uuid PRIMARY KEY,
@@ -104,49 +109,103 @@ CREATE TABLE audit_events (
   FOREIGN KEY (organization_id, task_id) REFERENCES tasks (organization_id, id) ON DELETE RESTRICT
 );
 
-CREATE OR REPLACE FUNCTION current_organization_id() RETURNS uuid
-LANGUAGE sql STABLE AS $$ SELECT NULLIF(current_setting('app.organization_id', true), '')::uuid $$;
+CREATE OR REPLACE FUNCTION public.current_organization_id() RETURNS uuid
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, public
+AS $$ SELECT NULLIF(pg_catalog.current_setting('app.organization_id', true), '')::uuid $$;
 
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
-CREATE POLICY organizations_tenant_policy ON organizations USING (id = current_organization_id()) WITH CHECK (id = current_organization_id());
-
+CREATE POLICY organizations_tenant_policy ON organizations USING (id = public.current_organization_id()) WITH CHECK (id = public.current_organization_id());
 ALTER TABLE organization_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organization_memberships FORCE ROW LEVEL SECURITY;
-CREATE POLICY memberships_tenant_policy ON organization_memberships USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
-
+CREATE POLICY memberships_tenant_policy ON organization_memberships USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users FORCE ROW LEVEL SECURITY;
 CREATE POLICY users_shared_membership_policy ON users
   USING (EXISTS (
-    SELECT 1 FROM organization_memberships m
-     WHERE m.user_id = users.id AND m.organization_id = current_organization_id()
+    SELECT 1 FROM public.organization_memberships m
+     WHERE m.user_id = users.id AND m.organization_id = public.current_organization_id()
   ));
-
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects FORCE ROW LEVEL SECURITY;
-CREATE POLICY projects_tenant_policy ON projects USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY projects_tenant_policy ON projects USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE repositories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE repositories FORCE ROW LEVEL SECURITY;
-CREATE POLICY repositories_tenant_policy ON repositories USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY repositories_tenant_policy ON repositories USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
-CREATE POLICY tasks_tenant_policy ON tasks USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY tasks_tenant_policy ON tasks USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE task_steps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_steps FORCE ROW LEVEL SECURITY;
-CREATE POLICY task_steps_tenant_policy ON task_steps USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY task_steps_tenant_policy ON task_steps USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE model_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_calls FORCE ROW LEVEL SECURITY;
-CREATE POLICY model_calls_tenant_policy ON model_calls USING (organization_id = current_organization_id()) WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY model_calls_tenant_policy ON model_calls USING (organization_id = public.current_organization_id()) WITH CHECK (organization_id = public.current_organization_id());
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
-CREATE POLICY audit_events_read_policy ON audit_events USING (organization_id = current_organization_id());
-CREATE POLICY audit_events_insert_policy ON audit_events FOR INSERT WITH CHECK (organization_id = current_organization_id());
+CREATE POLICY audit_events_read_policy ON audit_events USING (organization_id = public.current_organization_id());
+CREATE POLICY audit_events_insert_policy ON audit_events FOR INSERT WITH CHECK (organization_id = public.current_organization_id());
 
 GRANT USAGE ON SCHEMA public TO coding_agent_app;
 GRANT SELECT ON organizations, users, organization_memberships, projects, repositories, tasks, task_steps, model_calls, audit_events TO coding_agent_app;
 GRANT INSERT, UPDATE, DELETE ON users, organization_memberships, projects, repositories, tasks, task_steps, model_calls TO coding_agent_app;
 GRANT INSERT ON audit_events TO coding_agent_app;
 REVOKE UPDATE, DELETE ON audit_events FROM coding_agent_app;
+
+CREATE OR REPLACE FUNCTION public.lookup_memberships_for_supabase_user(uuid)
+RETURNS TABLE(user_id uuid, organization_id uuid, role text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+  SELECT u.id, m.organization_id, m.role
+    FROM public.users AS u
+    JOIN public.organization_memberships AS m ON m.user_id = u.id
+   WHERE u.supabase_user_id = $1
+   ORDER BY m.organization_id
+$$;
+
+CREATE OR REPLACE FUNCTION public.create_organization_with_owner(uuid, text, text)
+RETURNS TABLE(user_id uuid, organization_id uuid)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_user_id uuid;
+  v_organization_id uuid;
+  v_name text := pg_catalog.btrim($3);
+  v_email text := NULLIF(pg_catalog.btrim($2), '');
+BEGIN
+  IF v_name IS NULL OR pg_catalog.char_length(v_name) < 2 OR pg_catalog.char_length(v_name) > 80 THEN
+    RAISE EXCEPTION 'organization name must be 2 to 80 characters after trimming';
+  END IF;
+
+  INSERT INTO public.users (id, supabase_user_id, email)
+  VALUES (pg_catalog.gen_random_uuid(), $1, v_email)
+  ON CONFLICT (supabase_user_id) DO UPDATE SET email = EXCLUDED.email
+  RETURNING id INTO v_user_id;
+
+  IF EXISTS (SELECT 1 FROM public.organization_memberships AS m WHERE m.user_id = v_user_id) THEN
+    RAISE EXCEPTION 'user already has an organization membership';
+  END IF;
+
+  v_organization_id := pg_catalog.gen_random_uuid();
+  INSERT INTO public.organizations (id, name) VALUES (v_organization_id, v_name);
+  INSERT INTO public.organization_memberships (organization_id, user_id, role)
+  VALUES (v_organization_id, v_user_id, 'owner');
+
+  RETURN QUERY SELECT v_user_id, v_organization_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.lookup_memberships_for_supabase_user(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.lookup_memberships_for_supabase_user(uuid) TO coding_agent_api;
+REVOKE ALL ON FUNCTION public.create_organization_with_owner(uuid, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_organization_with_owner(uuid, text, text) TO coding_agent_api;
+GRANT USAGE ON SCHEMA public TO coding_agent_api;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM coding_agent_api;
+GRANT coding_agent_app TO coding_agent_api;
 
 COMMIT;
