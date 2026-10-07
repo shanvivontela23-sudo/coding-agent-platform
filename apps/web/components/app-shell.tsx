@@ -7,39 +7,37 @@ const navigation = [
   { label: "Projects", href: "/home" },
   { label: "Members", href: "/members" },
 ] as const;
-const futureNavigation = ["Tasks", "Settings"] as const;
 
 type AppShellProps = {
   readonly organizationName: string;
   readonly userEmail: string | null;
+  readonly activePath: "/home" | "/members";
   readonly children: ReactNode;
 };
 
-function Navigation({ compact = false }: { readonly compact?: boolean }) {
+function Navigation({ activePath, compact = false }: { readonly activePath: AppShellProps["activePath"]; readonly compact?: boolean }) {
   return (
-    <nav
-      aria-label="Primary navigation"
-      className={compact ? "flex gap-1 overflow-x-auto border-b border-border bg-sidebar px-4 py-2 md:hidden" : "space-y-1"}
-    >
-      {navigation.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className="block rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent-tint hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {item.label}
-        </Link>
-      ))}
-      {futureNavigation.map((item) => (
-        <span key={item} className="block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground" aria-disabled="true">
-          {item}
-        </span>
-      ))}
+    <nav aria-label="Primary navigation" className={compact ? "flex gap-1 overflow-x-auto border-b border-border bg-sidebar px-4 py-2 md:hidden" : "space-y-1"}>
+      {navigation.map((item) => {
+        const active = item.href === activePath;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={active
+              ? "block rounded-md bg-accent-tint px-3 py-2 text-sm font-medium text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              : "block rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent-tint hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
 
-export function AppShell({ organizationName, userEmail, children }: AppShellProps) {
+export function AppShell({ organizationName, userEmail, activePath, children }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-border bg-sidebar px-4 py-6 md:flex">
@@ -47,7 +45,7 @@ export function AppShell({ organizationName, userEmail, children }: AppShellProp
           <p className="text-xl font-semibold tracking-tight">{PRODUCT_NAME}</p>
           <p className="mt-1 truncate text-sm text-muted-foreground">{organizationName}</p>
         </div>
-        <Navigation />
+        <Navigation activePath={activePath} />
       </aside>
 
       <div className="md:pl-64">
@@ -59,7 +57,7 @@ export function AppShell({ organizationName, userEmail, children }: AppShellProp
           <div className="hidden md:block" />
           <UserMenu userEmail={userEmail} />
         </header>
-        <Navigation compact />
+        <Navigation activePath={activePath} compact />
         <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
       </div>
     </div>
