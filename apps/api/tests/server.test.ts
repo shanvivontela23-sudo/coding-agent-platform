@@ -35,7 +35,7 @@ describe("product API server", () => {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/auth/email`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ email: "rep@example.com", password: "password" }), redirect: "manual" });
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toBe("http://localhost:3000/");
+      expect(response.headers.get("location")).toBe("http://localhost:3000");
       expect(response.headers.get("set-cookie")).toContain("tenant_session=");
     });
   });
