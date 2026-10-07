@@ -27,7 +27,7 @@ function required(name: string): string {
 }
 
 class NoopWriter implements RunResultWriter {
-  async write(_result: RunResult): Promise<void> {}
+  async write(): Promise<void> {}
 }
 
 async function main(): Promise<void> {
