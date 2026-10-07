@@ -93,7 +93,7 @@ describe.skipIf(!baseDatabaseUrl)("GitHub project tenant security", () => {
       INSERT INTO repositories (id, organization_id, project_id, provider, external_id, display_name, github_full_name, default_branch, last_analyzed_commit_sha, analysis_report)
       VALUES ('${repository}', '${org1}', '${project}', 'github', '9981', 'repo', 'acme/repo', 'main', '${sha}', '{"stackSkill":"typescript-node"}'::jsonb);
     `);
-    expect(await psql(databaseUrl, `SELECT default_branch || ',' || last_analyzed_commit_sha || ',' || analysis_report->>'stackSkill' FROM repositories WHERE id='${repository}';`)).toBe(`main,${sha},typescript-node`);
+    expect(await psql(databaseUrl, `SELECT default_branch || ',' || last_analyzed_commit_sha || ',' || (analysis_report->>'stackSkill') FROM repositories WHERE id='${repository}';`)).toBe(`main,${sha},typescript-node`);
     expect(await fails(databaseUrl, `UPDATE repositories SET last_analyzed_commit_sha='short' WHERE id='${repository}';`)).toBe(true);
   });
 });
