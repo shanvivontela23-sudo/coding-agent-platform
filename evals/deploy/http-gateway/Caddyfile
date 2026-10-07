@@ -4,5 +4,7 @@
     X-Content-Type-Options "nosniff"
   }
 
-  reverse_proxy gateway:8080
+  reverse_proxy gateway:8080 {
+    flush_interval -1
+  }
 }
