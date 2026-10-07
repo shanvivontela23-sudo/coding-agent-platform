@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "../../../components/app-shell";
 import { Button } from "../../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
