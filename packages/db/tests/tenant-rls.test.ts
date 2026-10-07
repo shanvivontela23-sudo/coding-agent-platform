@@ -23,7 +23,19 @@ describe("tenant data model", () => {
     expect(sql).toContain("FOREIGN KEY (organization_id, task_id) REFERENCES tasks (organization_id, id)");
   });
 
-  it("enforces every cross-tenant reference, append-only audit events, and membership-scoped user visibility", async () => {
+  it("defines the non-superuser API login and only the two narrow SECURITY DEFINER entry points", async () => {
+    const sql = await readFile(migrationPath, "utf8");
+    expect(sql).toMatch(/CREATE ROLE coding_agent_api LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT/i);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.lookup_memberships_for_supabase_user\(uuid\)[\s\S]*SECURITY DEFINER[\s\S]*SET search_path = pg_catalog, public/i);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.create_organization_with_owner\(uuid, text, text\)[\s\S]*SECURITY DEFINER[\s\S]*SET search_path = pg_catalog, public/i);
+    expect(sql).toContain("REVOKE ALL ON FUNCTION public.lookup_memberships_for_supabase_user(uuid) FROM PUBLIC");
+    expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.lookup_memberships_for_supabase_user(uuid) TO coding_agent_api");
+    expect(sql).toContain("REVOKE ALL ON FUNCTION public.create_organization_with_owner(uuid, text, text) FROM PUBLIC");
+    expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.create_organization_with_owner(uuid, text, text) TO coding_agent_api");
+    expect(sql).not.toMatch(/supabase_user_id[^\n]*current_setting|current_setting[^\n]*supabase_user_id/i);
+  });
+
+  it("enforces cross-tenant integrity, privileged function scope, onboarding refusal, audit immutability, and user visibility", async () => {
     const databaseUrl = process.env.TEST_DATABASE_URL;
     if (!databaseUrl) return;
     await expect(runTenantIsolationProbe(databaseUrl)).resolves.toEqual({
@@ -36,6 +48,14 @@ describe("tenant data model", () => {
       auditDeleteDenied: true,
       tenantAVisibleUsers: 1,
       tenantBVisibleUsers: 0,
+      apiRoleIsRestricted: true,
+      apiDirectTenantReadDenied: true,
+      membershipLookupOwnRowsOnly: true,
+      onboardingCreatesOwnerMembership: true,
+      onboardingRejectsExistingMembership: true,
+      onboardingRejectsShortName: true,
+      onboardingRejectsLongName: true,
+      onboardingCannotAttachExistingOrganization: true,
     });
   });
 });

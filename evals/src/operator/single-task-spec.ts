@@ -37,6 +37,7 @@ export const singleClaudeTaskSpecSchema = z.object({
   evaluatorCommandTimeoutMs: z.number().int().positive().default(600_000),
   maxTurns: z.number().int().positive(),
   spendCapUsd: z.number().positive().max(10),
+  sandboxUsdPerSecond: z.number().nonnegative(),
   runNumber: z.number().int().min(1).max(3).default(1),
 }).strict();
 

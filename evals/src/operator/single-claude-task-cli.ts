@@ -18,6 +18,7 @@ import { CLAUDE_CODE_VERSION } from "../../sandbox-templates/typescript-node/tem
 import { requireLiveSmoke } from "../../smoke/contracts.js";
 import { gatewayUrlFromHostname } from "../../smoke/local-tunnel.js";
 import { finishAndReconcileLocalRun, startLocalHttpRun } from "./http-run-control.js";
+import { MeteredSandboxProvider } from "./metered-sandbox-provider.js";
 import { singleClaudeTaskSpecSchema } from "./single-task-spec.js";
 
 function required(name: string): string {
@@ -68,10 +69,13 @@ async function main(): Promise<void> {
     runId: `task-${spec.taskId}-${Date.now()}`,
   });
 
-  const sandboxProvider = new E2BSandboxProvider({
+  const e2bProvider = new E2BSandboxProvider({
     apiKey: required("E2B_API_KEY"),
     defaultTemplate: templateId,
     defaultTimeoutMs: Math.max(codingLifetimeMs, evaluatorLifetimeMs),
+  });
+  const sandboxProvider = new MeteredSandboxProvider(e2bProvider, {
+    sandboxUsdPerSecond: spec.sandboxUsdPerSecond,
   });
   const harness = new ClaudeCodeHarnessRunner({ version: CLAUDE_CODE_VERSION });
   const orchestrator = new Phase0RunOrchestrator({
@@ -150,17 +154,21 @@ async function main(): Promise<void> {
     outputTokens: sum.outputTokens + call.usage.outputTokens,
     reasoningTokens: sum.reasoningTokens + call.usage.reasoningTokens,
   }), { inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningTokens: 0 });
+  const sandboxCost = sandboxProvider.cost();
   const finalResult: RunResult = {
     ...collected,
     cost: {
       ...collected.cost,
       ...usage,
       modelCostUsd: actualModelSpendUsd,
-      totalCostUsd: actualModelSpendUsd + collected.cost.sandboxCostUsd,
+      sandboxSeconds: sandboxCost.sandboxSeconds,
+      sandboxCostUsd: sandboxCost.sandboxCostUsd,
+      totalCostUsd: actualModelSpendUsd + sandboxCost.sandboxCostUsd,
     },
   };
   await new FileRunResultWriter(resultRoot).write(finalResult);
   process.stdout.write(`Actual reconciled model spend: $${actualModelSpendUsd.toFixed(6)}\n`);
+  process.stdout.write(`Sandbox usage: ${sandboxCost.sandboxSeconds.toFixed(3)} seconds / $${sandboxCost.sandboxCostUsd.toFixed(6)}\n`);
   process.stdout.write(`Result row written for run ${finalResult.runId}.\n`);
 }
 

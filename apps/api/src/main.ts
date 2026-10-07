@@ -1,6 +1,10 @@
 import { Pool } from "pg";
 import { createSupabaseAuthClient } from "./auth.js";
-import { createMembershipResolver } from "./membership.js";
+import {
+  assertRestrictedDatabaseUrl,
+  createProductDatabase,
+  type TenantPool,
+} from "./database.js";
 import { createApiServer } from "./server.js";
 
 function required(name: string): string {
@@ -12,7 +16,9 @@ function required(name: string): string {
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("PORT must be a valid TCP port");
 
-const pool = new Pool({ connectionString: required("DATABASE_URL") });
+const databaseUrl = assertRestrictedDatabaseUrl(required("DATABASE_URL"));
+const pool = new Pool({ connectionString: databaseUrl });
+const database = createProductDatabase(pool as unknown as TenantPool);
 const auth = createSupabaseAuthClient({
   supabaseUrl: required("SUPABASE_URL"),
   anonKey: required("SUPABASE_ANON_KEY"),
@@ -23,8 +29,9 @@ const server = createApiServer({
   apiOrigin: process.env.API_ORIGIN ?? `http://localhost:${port}`,
   sessionSecret: required("SESSION_SIGNING_SECRET"),
   sessionDurationMs: 8 * 60 * 60_000,
+  onboardingDurationMs: 15 * 60_000,
   auth,
-  resolveMembership: createMembershipResolver(pool),
+  database,
 });
 
 server.listen(port, "127.0.0.1", () => {

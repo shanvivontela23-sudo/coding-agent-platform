@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes as nodeRandomBytes, timingSafeEqual } from "node:crypto";
 
 export type SessionIdentity = { readonly userId: string; readonly organizationId: string; readonly expiresAtMs: number };
+export type OnboardingIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly expiresAtMs: number };
 export type SupabaseIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly provider: "email" | "github" };
 export type GitHubOAuthFlow = { readonly authorizationUrl: string; readonly flowId: string; readonly flowCookie: string };
 export type SupabaseAuthClient = {
@@ -19,6 +20,7 @@ export type SupabaseAuthClientOptions = {
 };
 
 type OAuthFlowPayload = { readonly flowId: string; readonly codeVerifier: string; readonly expiresAtMs: number };
+type OnboardingPayload = OnboardingIdentity & { readonly purpose: "onboarding" };
 
 function b64(value: string | Uint8Array): string { return Buffer.from(value).toString("base64url"); }
 function hmac(payload: string, secret: string): string {
@@ -83,18 +85,36 @@ export function createSupabaseAuthClient(options: SupabaseAuthClientOptions): Su
   };
 }
 
-function sessionSignature(payload: string, secret: string): string { return hmac(payload, secret); }
+function signedToken(payload: object, secret: string): string {
+  const encoded = b64(JSON.stringify(payload));
+  return `${encoded}.${hmac(encoded, secret)}`;
+}
+function verifiedPayload(token: string, secret: string): Record<string, unknown> {
+  const [payload, signature, extra] = token.split(".");
+  if (!payload || !signature || extra !== undefined || !safeEqual(signature, hmac(payload, secret))) throw new Error("invalid signed token");
+  const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("invalid signed token payload");
+  return parsed as Record<string, unknown>;
+}
+
 export function createSessionToken(identity: SessionIdentity, secret: string): string {
   if (!identity.userId || !identity.organizationId) throw new Error("session identity is incomplete");
-  const payload = b64(JSON.stringify(identity));
-  return `${payload}.${sessionSignature(payload, secret)}`;
+  return signedToken(identity, secret);
 }
 export function verifySessionToken(token: string, secret: string, nowMs = Date.now()): SessionIdentity {
-  const [payload, signature, extra] = token.split(".");
-  if (!payload || !signature || extra !== undefined || !safeEqual(signature, sessionSignature(payload, secret))) throw new Error("invalid session token");
-  const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionIdentity;
-  if (!parsed.userId || !parsed.organizationId || !Number.isFinite(parsed.expiresAtMs) || parsed.expiresAtMs <= nowMs) throw new Error("invalid or expired session");
-  return parsed;
+  const parsed = verifiedPayload(token, secret);
+  if (typeof parsed.userId !== "string" || !parsed.userId || typeof parsed.organizationId !== "string" || !parsed.organizationId || typeof parsed.expiresAtMs !== "number" || !Number.isFinite(parsed.expiresAtMs) || parsed.expiresAtMs <= nowMs) throw new Error("invalid or expired session");
+  return { userId: parsed.userId, organizationId: parsed.organizationId, expiresAtMs: parsed.expiresAtMs };
+}
+
+export function createOnboardingToken(identity: OnboardingIdentity, secret: string): string {
+  if (!identity.supabaseUserId) throw new Error("onboarding identity is incomplete");
+  return signedToken({ ...identity, purpose: "onboarding" satisfies OnboardingPayload["purpose"] }, secret);
+}
+export function verifyOnboardingToken(token: string, secret: string, nowMs = Date.now()): OnboardingIdentity {
+  const parsed = verifiedPayload(token, secret);
+  if (parsed.purpose !== "onboarding" || typeof parsed.supabaseUserId !== "string" || !parsed.supabaseUserId || (parsed.email !== null && typeof parsed.email !== "string") || typeof parsed.expiresAtMs !== "number" || !Number.isFinite(parsed.expiresAtMs) || parsed.expiresAtMs <= nowMs) throw new Error("invalid or expired onboarding session");
+  return { supabaseUserId: parsed.supabaseUserId, email: parsed.email as string | null, expiresAtMs: parsed.expiresAtMs };
 }
 
 export async function completeTenantLogin(options: {
