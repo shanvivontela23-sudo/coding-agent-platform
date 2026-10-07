@@ -251,4 +251,27 @@ describe("TypeScript/Node collector", () => {
     );
     expect(regressionRuns).toHaveLength(3);
   });
+
+  it("rejects hidden evaluation files outside the dedicated hidden namespace", async () => {
+    const provider = new FakeProvider();
+    const writer = new MemoryWriter();
+    const collector = new TypeScriptNodeCollector({
+      sandboxProvider: provider,
+      baselineCache: new InMemoryBaselineSuiteCache(),
+      resultWriter: writer,
+    });
+    const input = baseInput(patchFile("src/fix.ts", "-old\n+new"));
+
+    const result = await collector.collect({
+      ...input,
+      evaluation: {
+        ...input.evaluation,
+        hiddenFiles: [{ path: "src/fix.ts", contents: "must-not-overwrite-source" }],
+      },
+    });
+
+    expect(result.outcome.status).toBe("error");
+    expect(provider.sessions[0]?.writes.some(({ path }) => path === "src/fix.ts")).toBe(false);
+    expect(writer.rows).toHaveLength(1);
+  });
 });
