@@ -47,7 +47,7 @@ export class CodexHarnessRunner implements HarnessRunner {
     const command = [
       'mkdir -p "$CODEX_HOME"',
       versionGuard,
-      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --full-auto --model "$BENCHMARK_MODEL" --config "openai_base_url=\"$OPENAI_BASE_URL\"" -`,
+      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --full-auto --model "$BENCHMARK_MODEL" --config 'openai_base_url="'"$OPENAI_BASE_URL"'"' -`,
     ].join("; ");
     return await executeHarnessCommand(
       session,
