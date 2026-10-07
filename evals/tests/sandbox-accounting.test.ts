@@ -26,8 +26,10 @@ class FakeSession implements SandboxSession {
 
 class FakeProvider implements SandboxProvider {
   created = 0;
+  constructor(private readonly onCreate: () => void = () => undefined) {}
   async create(): Promise<SandboxSession> {
     this.created += 1;
+    this.onCreate();
     return new FakeSession(`sandbox-${this.created}`);
   }
 }
@@ -63,6 +65,18 @@ describe("sandbox accounting", () => {
       sandboxSeconds: 4.75,
       sandboxCostUsd: 0.095,
     });
+  });
+
+  it("includes provider creation/bootstrap time in sandbox lifetime", async () => {
+    let nowMs = 0;
+    const metered = new MeteredSandboxProvider(new FakeProvider(() => { nowMs = 500; }), {
+      clock: () => nowMs,
+      sandboxUsdPerSecond: 0.01,
+    });
+    const session = await metered.create(request);
+    nowMs = 1_500;
+    await session.destroy();
+    expect(metered.cost()).toEqual({ sandboxSeconds: 1.5, sandboxCostUsd: 0.015 });
   });
 
   it("rejects an invalid sandbox price", () => {
