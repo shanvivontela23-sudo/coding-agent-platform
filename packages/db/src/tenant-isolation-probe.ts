@@ -14,6 +14,14 @@ export type TenantIsolationProbeResult = {
   readonly auditDeleteDenied: boolean;
   readonly tenantAVisibleUsers: number;
   readonly tenantBVisibleUsers: number;
+  readonly apiRoleIsRestricted: boolean;
+  readonly apiDirectTenantReadDenied: boolean;
+  readonly membershipLookupOwnRowsOnly: boolean;
+  readonly onboardingCreatesOwnerMembership: boolean;
+  readonly onboardingRejectsExistingMembership: boolean;
+  readonly onboardingRejectsShortName: boolean;
+  readonly onboardingRejectsLongName: boolean;
+  readonly onboardingCannotAttachExistingOrganization: boolean;
 };
 
 async function psql(databaseUrl: string, sql: string): Promise<string> {
@@ -32,6 +40,8 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   const orgB = "00000000-0000-4000-8000-000000000002";
   const userA = "10000000-0000-4000-8000-000000000001";
   const userB = "10000000-0000-4000-8000-000000000002";
+  const supabaseA = "60000000-0000-4000-8000-000000000001";
+  const supabaseB = "60000000-0000-4000-8000-000000000002";
   const projectA = "20000000-0000-4000-8000-000000000001";
   const projectB = "20000000-0000-4000-8000-000000000002";
   const repositoryA = "30000000-0000-4000-8000-000000000001";
@@ -42,8 +52,8 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   await psql(databaseUrl, `
     INSERT INTO organizations (id,name) VALUES ('${orgA}','A'),('${orgB}','B');
     INSERT INTO users (id,supabase_user_id,email) VALUES
-      ('${userA}','60000000-0000-4000-8000-000000000001','a@example.com'),
-      ('${userB}','60000000-0000-4000-8000-000000000002','b@example.com');
+      ('${userA}','${supabaseA}','a@example.com'),
+      ('${userB}','${supabaseB}','b@example.com');
     INSERT INTO organization_memberships (organization_id,user_id,role) VALUES ('${orgA}','${userA}','rep'),('${orgB}','${userB}','rep');
     INSERT INTO projects (id,organization_id,name) VALUES ('${projectA}','${orgA}','A project'),('${projectB}','${orgB}','B project');
     INSERT INTO repositories (id,organization_id,project_id,provider,external_id,display_name) VALUES
@@ -72,6 +82,30 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
   const auditUpdateDenied = await fails(databaseUrl, `SET ROLE coding_agent_app; SET app.organization_id='${orgA}'; UPDATE audit_events SET event_type='changed' WHERE id='${audit}';`);
   const auditDeleteDenied = await fails(databaseUrl, `SET ROLE coding_agent_app; SET app.organization_id='${orgA}'; DELETE FROM audit_events WHERE id='${audit}';`);
 
+  const apiRoleFlags = await psql(databaseUrl, "SELECT rolsuper::int || ',' || rolbypassrls::int || ',' || rolinherit::int || ',' || rolcanlogin::int FROM pg_roles WHERE rolname='coding_agent_api';");
+  const apiRoleIsRestricted = apiRoleFlags === "0,0,0,1";
+  const apiDirectTenantReadDenied = await fails(databaseUrl, "SET ROLE coding_agent_api; SELECT count(*) FROM public.projects;");
+  const membershipLookup = await psql(databaseUrl, `SET ROLE coding_agent_api; SELECT user_id || ',' || organization_id FROM public.lookup_memberships_for_supabase_user('${supabaseA}');`);
+  const membershipLookupOwnRowsOnly = membershipLookup === `${userA},${orgA}`;
+
+  const onboardingSupabase = "60000000-0000-4000-8000-000000000003";
+  const onboarding = (await psql(databaseUrl, `SET ROLE coding_agent_api; SELECT user_id || ',' || organization_id FROM public.create_organization_with_owner('${onboardingSupabase}',' new@example.com ','  New Org  ');`)).split(",");
+  const onboardingUserId = onboarding[0] ?? "";
+  const onboardingOrgId = onboarding[1] ?? "";
+  const onboardingCheck = await psql(databaseUrl, `SELECT count(*) FROM public.organization_memberships m JOIN public.organizations o ON o.id=m.organization_id JOIN public.users u ON u.id=m.user_id WHERE m.user_id='${onboardingUserId}' AND m.organization_id='${onboardingOrgId}' AND m.role='owner' AND o.name='New Org' AND u.supabase_user_id='${onboardingSupabase}';`);
+  const onboardingCreatesOwnerMembership = onboardingCheck === "1";
+
+  const onboardingRejectsExistingMembership = await fails(databaseUrl, `SET ROLE coding_agent_api; SELECT * FROM public.create_organization_with_owner('${supabaseA}','a@example.com','Another Org');`);
+  const onboardingRejectsShortName = await fails(databaseUrl, "SET ROLE coding_agent_api; SELECT * FROM public.create_organization_with_owner('60000000-0000-4000-8000-000000000004','short@example.com',' x ');");
+  const onboardingRejectsLongName = await fails(databaseUrl, `SET ROLE coding_agent_api; SELECT * FROM public.create_organization_with_owner('60000000-0000-4000-8000-000000000005','long@example.com','${"x".repeat(81)}');`);
+
+  const attachSupabase = "60000000-0000-4000-8000-000000000006";
+  const attach = (await psql(databaseUrl, `SET ROLE coding_agent_api; SELECT user_id || ',' || organization_id FROM public.create_organization_with_owner('${attachSupabase}','attach@example.com','A');`)).split(",");
+  const attachUserId = attach[0] ?? "";
+  const generatedOrgId = attach[1] ?? "";
+  const existingAttachCount = await psql(databaseUrl, `SELECT count(*) FROM public.organization_memberships WHERE user_id='${attachUserId}' AND organization_id='${orgA}';`);
+  const onboardingCannotAttachExistingOrganization = generatedOrgId !== orgA && existingAttachCount === "0";
+
   return {
     tenantAVisibleProjects: counts[0] ?? -1,
     tenantBVisibleProjects: counts[1] ?? -1,
@@ -82,5 +116,13 @@ export async function runTenantIsolationProbe(databaseUrl: string): Promise<Tena
     auditDeleteDenied,
     tenantAVisibleUsers: counts[2] ?? -1,
     tenantBVisibleUsers: counts[3] ?? -1,
+    apiRoleIsRestricted,
+    apiDirectTenantReadDenied,
+    membershipLookupOwnRowsOnly,
+    onboardingCreatesOwnerMembership,
+    onboardingRejectsExistingMembership,
+    onboardingRejectsShortName,
+    onboardingRejectsLongName,
+    onboardingCannotAttachExistingOrganization,
   };
 }
