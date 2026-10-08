@@ -53,7 +53,6 @@ const recognizedManifestNames = new Set([
   "build.gradle.kts", "gradlew", "go.mod", "Cargo.toml", "Gemfile",
 ]);
 const generatedSegments = new Set([".git", ".next", ".venv", "build", "coverage", "dist", "node_modules", "obj", "target", "vendor", "venv"]);
-const toolingSegments = new Set([".github", "evals", "tools", "tooling"]);
 
 type SeenManifest = { readonly name: string; readonly path: string; readonly directory: string; readonly depth: number; readonly contents: string };
 type TarHeader = { readonly name: string; readonly size: number; readonly type: string };
@@ -128,22 +127,14 @@ function extension(path: string): string {
   return dot >= 0 ? name.slice(dot) : "";
 }
 function pathSegments(path: string): string[] { return path.split("/").filter(Boolean).map((segment) => segment.toLowerCase()); }
-function countableLanguagePath(path: string): boolean {
-  return !pathSegments(path).some((segment) => generatedSegments.has(segment));
-}
-function frameworkManifestPathAllowed(path: string): boolean {
-  return !pathSegments(dirname(path)).some((segment) => generatedSegments.has(segment) || toolingSegments.has(segment));
-}
+function countableLanguagePath(path: string): boolean { return !pathSegments(path).some((segment) => generatedSegments.has(segment)); }
+function frameworkManifestPathAllowed(path: string): boolean { return !pathSegments(dirname(path)).some((segment) => generatedSegments.has(segment)); }
 function isRecognizedManifest(name: string): boolean {
   const lower = name.toLowerCase();
   return recognizedManifestNames.has(name) || lower.endsWith(".csproj") || lower.endsWith(".sln");
 }
 function sourceInSubtree(sourcePaths: ReadonlyMap<string, readonly string[]>, languages: readonly string[], directory: string): boolean {
-  for (const language of languages) {
-    for (const path of sourcePaths.get(language) ?? []) {
-      if (!directory || path.startsWith(`${directory}/`)) return true;
-    }
-  }
+  for (const language of languages) for (const path of sourcePaths.get(language) ?? []) if (!directory || path.startsWith(`${directory}/`)) return true;
   return false;
 }
 function commandForScript(manager: string | null, script: "build" | "test"): string {
@@ -165,38 +156,23 @@ function detectPackageManager(names: ReadonlySet<string>): string | null {
   return names.has("package.json") ? "npm" : null;
 }
 function workspacePatterns(value: unknown): string[] {
-  const raw = Array.isArray(value)
-    ? value
-    : typeof value === "object" && value !== null && !Array.isArray(value) && Array.isArray((value as Record<string, unknown>).packages)
-      ? (value as Record<string, unknown>).packages as unknown[]
-      : [];
+  const raw = Array.isArray(value) ? value : typeof value === "object" && value !== null && !Array.isArray(value) && Array.isArray((value as Record<string, unknown>).packages) ? (value as Record<string, unknown>).packages as unknown[] : [];
   return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
 }
 function packageInfo(manifest: SeenManifest): PackageInfo | null {
   try {
-    const parsed = JSON.parse(manifest.contents) as Record<string, unknown>;
-    const dependencies = new Set<string>();
+    const parsed = JSON.parse(manifest.contents) as Record<string, unknown>; const dependencies = new Set<string>();
     for (const key of ["dependencies", "devDependencies", "peerDependencies"] as const) {
-      const section = parsed[key];
-      if (typeof section !== "object" || section === null || Array.isArray(section)) continue;
+      const section = parsed[key]; if (typeof section !== "object" || section === null || Array.isArray(section)) continue;
       for (const dependency of Object.keys(section as Record<string, unknown>)) dependencies.add(dependency);
     }
-    const scripts = new Set<string>();
-    if (typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) {
-      for (const script of Object.keys(parsed.scripts as Record<string, unknown>)) scripts.add(script);
-    }
+    const scripts = new Set<string>(); if (typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) for (const script of Object.keys(parsed.scripts as Record<string, unknown>)) scripts.add(script);
     const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : manifest.directory || "package";
     return { manifest, name, dependencies, scripts, hasTypescript: dependencies.has("typescript"), workspacePatterns: workspacePatterns(parsed.workspaces) };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 function parsePackageJson(manifests: readonly SeenManifest[]) {
-  const packages = manifests
-    .filter((manifest) => manifest.name === "package.json")
-    .sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))
-    .map(packageInfo)
-    .filter((item): item is PackageInfo => item !== null);
+  const packages = manifests.filter((manifest) => manifest.name === "package.json").sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path)).map(packageInfo).filter((item): item is PackageInfo => item !== null);
   return { packages, root: packages.find((item) => item.manifest.path === "package.json") ?? packages[0] ?? null, hasTypescript: packages.some((item) => item.hasTypescript) };
 }
 function detectFrameworks(manifests: readonly SeenManifest[], packages: readonly PackageInfo[], sourcePaths: ReadonlyMap<string, readonly string[]>): string[] {
@@ -208,9 +184,7 @@ function detectFrameworks(manifests: readonly SeenManifest[], packages: readonly
   ];
   for (const pkg of packages) {
     if (!frameworkManifestPathAllowed(pkg.manifest.path)) continue;
-    for (const [dependency, framework, languages] of dependencyMap) {
-      if (pkg.dependencies.has(dependency) && sourceInSubtree(sourcePaths, languages, pkg.manifest.directory)) found.add(framework);
-    }
+    for (const [dependency, framework, languages] of dependencyMap) if (pkg.dependencies.has(dependency) && sourceInSubtree(sourcePaths, languages, pkg.manifest.directory)) found.add(framework);
   }
   for (const manifest of manifests) {
     if (!frameworkManifestPathAllowed(manifest.path)) continue;
@@ -227,8 +201,7 @@ function detectFrameworks(manifests: readonly SeenManifest[], packages: readonly
 }
 function detectCommands(manifests: readonly SeenManifest[], manager: string | null, rootPackage: PackageInfo | null) {
   if (rootPackage) {
-    const buildCommand = rootPackage.scripts.has("build") ? commandForScript(manager, "build") : null;
-    const testCommand = rootPackage.scripts.has("test") ? commandForScript(manager, "test") : null;
+    const buildCommand = rootPackage.scripts.has("build") ? commandForScript(manager, "build") : null; const testCommand = rootPackage.scripts.has("test") ? commandForScript(manager, "test") : null;
     if (buildCommand || testCommand) return { buildCommand, testCommand };
   }
   const solution = manifests.filter((manifest) => manifest.name.toLowerCase().endsWith(".sln")).sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))[0];
@@ -241,25 +214,19 @@ function detectCommands(manifests: readonly SeenManifest[], manager: string | nu
   if (names.has("go.mod")) return { buildCommand: "go build ./...", testCommand: "go test ./..." };
   if (names.has("Cargo.toml")) return { buildCommand: "cargo build", testCommand: "cargo test" };
   const python = manifests.find((manifest) => manifest.name === "pyproject.toml" || manifest.name === "requirements.txt");
-  if (python) {
-    const lower = python.contents.toLowerCase();
-    return { buildCommand: names.has("pyproject.toml") && lower.includes("[build-system]") ? "python -m build" : null, testCommand: lower.includes("pytest") ? "pytest" : null };
-  }
+  if (python) { const lower = python.contents.toLowerCase(); return { buildCommand: names.has("pyproject.toml") && lower.includes("[build-system]") ? "python -m build" : null, testCommand: lower.includes("pytest") ? "pytest" : null }; }
   return { buildCommand: null, testCommand: null };
 }
 function parsePnpmWorkspacePatterns(manifests: readonly SeenManifest[]): string[] {
-  const root = manifests.find((manifest) => manifest.path === "pnpm-workspace.yaml");
-  if (!root) return [];
+  const root = manifests.find((manifest) => manifest.path === "pnpm-workspace.yaml"); if (!root) return [];
   const patterns: string[] = [];
   for (const line of root.contents.split(/\r?\n/)) {
-    const match = line.match(/^\s*-\s*["']?([^"']+?)["']?\s*$/);
-    if (match?.[1] && !match[1].startsWith("!")) patterns.push(match[1].trim());
+    const match = line.match(/^\s*-\s*["']?([^"']+?)["']?\s*$/); if (match?.[1] && !match[1].startsWith("!")) patterns.push(match[1].trim());
   }
   return patterns;
 }
 function globRegex(pattern: string): RegExp {
-  const normalized = pattern.replace(/^\.\//, "").replace(/\/$/, "");
-  let regex = "^";
+  const normalized = pattern.replace(/^\.\//, "").replace(/\/$/, ""); let regex = "^";
   for (let index = 0; index < normalized.length; index += 1) {
     const char = normalized[index] ?? "";
     if (char === "*" && normalized[index + 1] === "*") { regex += ".*"; index += 1; continue; }
@@ -270,142 +237,52 @@ function globRegex(pattern: string): RegExp {
   return new RegExp(`${regex}$`);
 }
 function detectWorkspaceCommands(packageData: ReturnType<typeof parsePackageJson>, manifests: readonly SeenManifest[], manager: string | null): WorkspaceCommand[] {
-  const root = packageData.packages.find((item) => item.manifest.path === "package.json");
-  if (!root) return [];
-  const patterns = [...root.workspacePatterns, ...parsePnpmWorkspacePatterns(manifests)];
-  if (patterns.length === 0) return [];
+  const root = packageData.packages.find((item) => item.manifest.path === "package.json"); if (!root) return [];
+  const patterns = [...root.workspacePatterns, ...parsePnpmWorkspacePatterns(manifests)]; if (patterns.length === 0) return [];
   const matchers = patterns.map(globRegex);
-  return packageData.packages
-    .filter((pkg) => pkg !== root && matchers.some((matcher) => matcher.test(pkg.manifest.directory)))
-    .map((pkg) => ({
-      name: pkg.name,
-      path: pkg.manifest.directory,
-      buildCommand: pkg.scripts.has("build") ? commandForScript(manager, "build") : null,
-      testCommand: pkg.scripts.has("test") ? commandForScript(manager, "test") : null,
-    }))
-    .filter((workspace) => workspace.buildCommand !== null || workspace.testCommand !== null)
-    .sort((a, b) => a.path.localeCompare(b.path));
+  return packageData.packages.filter((pkg) => pkg !== root && matchers.some((matcher) => matcher.test(pkg.manifest.directory))).map((pkg) => ({ name: pkg.name, path: pkg.manifest.directory, buildCommand: pkg.scripts.has("build") ? commandForScript(manager, "build") : null, testCommand: pkg.scripts.has("test") ? commandForScript(manager, "test") : null })).filter((workspace) => workspace.buildCommand !== null || workspace.testCommand !== null).sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export async function analyseRepositoryArchive(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<ProjectReport> {
   if (input.byteLength > limits.maxCompressedBytes) throw tooLarge();
-  const source = Readable.from([Buffer.from(input)]);
-  const gunzip = createGunzip();
-  source.pipe(gunzip);
-
-  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-  let uncompressedBytes = 0;
-  let current: TarHeader | null = null;
-  let currentPath: string | null = null;
-  let dataRemaining = 0;
-  let paddingRemaining = 0;
-  let capture: Array<Buffer<ArrayBufferLike>> | null = null;
-  let captureKind: "manifest" | "pax" | null = null;
-  let nextPaxPath: string | null = null;
-  let entryCount = 0;
-  let ended = false;
-  const languageCounts = new Map<string, number>();
-  const sourcePaths = new Map<string, string[]>();
-  const manifests: SeenManifest[] = [];
-  const manifestNames = new Set<string>();
-
+  const source = Readable.from([Buffer.from(input)]); const gunzip = createGunzip(); source.pipe(gunzip);
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0); let uncompressedBytes = 0; let current: TarHeader | null = null; let currentPath: string | null = null; let dataRemaining = 0; let paddingRemaining = 0; let capture: Array<Buffer<ArrayBufferLike>> | null = null; let captureKind: "manifest" | "pax" | null = null; let nextPaxPath: string | null = null; let entryCount = 0; let ended = false;
+  const languageCounts = new Map<string, number>(); const sourcePaths = new Map<string, string[]>(); const manifests: SeenManifest[] = []; const manifestNames = new Set<string>();
   const finishEntry = () => {
     if (!current) return;
-    if (capture && captureKind === "pax") {
-      nextPaxPath = parsePaxPath(Buffer.concat(capture));
-    } else if (capture && captureKind === "manifest" && currentPath) {
-      const path = withoutArchiveRoot(currentPath);
-      const name = basename(path);
-      manifests.push({ name, path, directory: dirname(path), depth: pathDepth(path), contents: Buffer.concat(capture).toString("utf8") });
-      manifestNames.add(name);
-    }
-    current = null;
-    currentPath = null;
-    capture = null;
-    captureKind = null;
+    if (capture && captureKind === "pax") nextPaxPath = parsePaxPath(Buffer.concat(capture));
+    else if (capture && captureKind === "manifest" && currentPath) { const path = withoutArchiveRoot(currentPath); const name = basename(path); manifests.push({ name, path, directory: dirname(path), depth: pathDepth(path), contents: Buffer.concat(capture).toString("utf8") }); manifestNames.add(name); }
+    current = null; currentPath = null; capture = null; captureKind = null;
   };
-
   try {
     for await (const raw of gunzip) {
-      const chunk: Buffer<ArrayBufferLike> = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as Uint8Array);
-      uncompressedBytes += chunk.length;
-      if (uncompressedBytes > limits.maxUncompressedBytes) throw tooLarge();
-      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
-
+      const chunk: Buffer<ArrayBufferLike> = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as Uint8Array); uncompressedBytes += chunk.length; if (uncompressedBytes > limits.maxUncompressedBytes) throw tooLarge(); pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
       while (pending.length > 0 && !ended) {
         if (!current) {
-          if (paddingRemaining > 0) {
-            const consumePadding = Math.min(paddingRemaining, pending.length);
-            pending = pending.subarray(consumePadding);
-            paddingRemaining -= consumePadding;
-            if (paddingRemaining > 0) break;
-          }
+          if (paddingRemaining > 0) { const consumePadding = Math.min(paddingRemaining, pending.length); pending = pending.subarray(consumePadding); paddingRemaining -= consumePadding; if (paddingRemaining > 0) break; }
           if (pending.length < 512) break;
-          const header = parseHeader(pending.subarray(0, 512));
-          pending = pending.subarray(512);
-          if (!header) { ended = true; break; }
-          entryCount += 1;
-          if (entryCount > limits.maxFiles || header.size > limits.maxFileBytes) throw tooLarge();
-          current = header;
-          dataRemaining = header.size;
-          paddingRemaining = (512 - (header.size % 512)) % 512;
-          if (header.type === "x") {
-            capture = [];
-            captureKind = "pax";
-          } else {
-            const resolvedPath = nextPaxPath ?? header.name;
-            nextPaxPath = null;
-            currentPath = resolvedPath;
-            const regular = header.type === "0" || header.type === "\0";
+          const header = parseHeader(pending.subarray(0, 512)); pending = pending.subarray(512); if (!header) { ended = true; break; }
+          entryCount += 1; if (entryCount > limits.maxFiles || header.size > limits.maxFileBytes) throw tooLarge(); current = header; dataRemaining = header.size; paddingRemaining = (512 - (header.size % 512)) % 512;
+          if (header.type === "x") { capture = []; captureKind = "pax"; }
+          else {
+            const resolvedPath = nextPaxPath ?? header.name; nextPaxPath = null; currentPath = resolvedPath; const regular = header.type === "0" || header.type === "\0";
             if (regular && safeArchivePath(resolvedPath)) {
-              const relative = withoutArchiveRoot(resolvedPath);
-              const name = basename(relative);
-              if (isRecognizedManifest(name)) { capture = []; captureKind = "manifest"; }
-              if (countableLanguagePath(relative)) {
-                const language = languageByExtension[extension(relative)];
-                if (language) {
-                  languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1);
-                  const paths = sourcePaths.get(language) ?? [];
-                  paths.push(relative);
-                  sourcePaths.set(language, paths);
-                }
-              }
+              const relative = withoutArchiveRoot(resolvedPath); const name = basename(relative); if (isRecognizedManifest(name)) { capture = []; captureKind = "manifest"; }
+              if (countableLanguagePath(relative)) { const language = languageByExtension[extension(relative)]; if (language) { languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1); const paths = sourcePaths.get(language) ?? []; paths.push(relative); sourcePaths.set(language, paths); } }
             }
           }
-          if (dataRemaining === 0) finishEntry();
-          continue;
+          if (dataRemaining === 0) finishEntry(); continue;
         }
-
-        if (dataRemaining > 0) {
-          const consumed = Math.min(dataRemaining, pending.length);
-          if (capture && consumed > 0) capture.push(Buffer.from(pending.subarray(0, consumed)));
-          pending = pending.subarray(consumed);
-          dataRemaining -= consumed;
-          if (dataRemaining > 0) break;
-          finishEntry();
-          continue;
-        }
+        if (dataRemaining > 0) { const consumed = Math.min(dataRemaining, pending.length); if (capture && consumed > 0) capture.push(Buffer.from(pending.subarray(0, consumed))); pending = pending.subarray(consumed); dataRemaining -= consumed; if (dataRemaining > 0) break; finishEntry(); continue; }
         finishEntry();
       }
     }
   } catch (error) {
-    source.destroy(); gunzip.destroy();
-    if (error instanceof RepositoryAnalysisError) throw error;
-    throw invalidArchive();
-  } finally {
-    source.destroy(); gunzip.destroy(); pending = Buffer.alloc(0); capture = null; currentPath = null; nextPaxPath = null;
-  }
-
+    source.destroy(); gunzip.destroy(); if (error instanceof RepositoryAnalysisError) throw error; throw invalidArchive();
+  } finally { source.destroy(); gunzip.destroy(); pending = Buffer.alloc(0); capture = null; currentPath = null; nextPaxPath = null; }
   if (!ended && (current !== null || pending.length > 0 || paddingRemaining > 0)) throw invalidArchive();
   const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
-  const languages = [...languageCounts.entries()]
-    .map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 }))
-    .sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-  const packageData = parsePackageJson(manifests);
-  const packageManager = detectPackageManager(manifestNames);
-  const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths);
-  const commands = detectCommands(manifests, packageManager, packageData.root);
-  const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager);
-  const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
+  const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
+  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
   return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
 }
