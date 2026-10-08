@@ -38,8 +38,9 @@ beforeAll(async () => {
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
 
   adminPool = new Pool({ connectionString: databaseUrlFor(integrationDb) });
-  const migration = await readFile("packages/db/migrations/0001_tenant_core.sql", "utf8");
-  await adminPool.query(migration);
+  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql"]) {
+    await adminPool.query(await readFile(`packages/db/migrations/${name}`, "utf8"));
+  }
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
   await adminPool.query(`
     INSERT INTO organizations (id,name) VALUES ('${orgA}','Tenant A'),('${orgB}','Tenant B');
@@ -113,7 +114,8 @@ describe.skipIf(!baseDatabaseUrl)("restricted tenant API integration", () => {
       await expect(response.json()).resolves.toEqual({
         organization: { id: orgA, name: "Tenant A" },
         user: { id: userA, email: "a@example.com" },
-        projects: [{ id: projectA, name: "A project" }],
+        projects: [{ id: projectA, name: "A project", source: null }],
+        github: null,
       });
     } finally {
       server.close();
