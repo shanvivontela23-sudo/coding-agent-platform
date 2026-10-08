@@ -77,10 +77,13 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/home">
       <div className="space-y-8">
-        <section className="space-y-2">
-          <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Project report</p>
-          <PageTitle>{project.project.name}</PageTitle>
-          <p className="text-muted-foreground">{project.repository.fullName}</p>
+        <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Project report</p>
+            <PageTitle>{project.project.name}</PageTitle>
+            <p className="text-muted-foreground">{project.repository.fullName}</p>
+          </div>
+          <form action={`/projects/${projectId}/tasks/new`} method="get"><Button type="submit" variant="outline">New task</Button></form>
         </section>
 
         {project.installation.status === "disconnected" ? (

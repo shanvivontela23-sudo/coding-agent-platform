@@ -5,8 +5,8 @@ describe("Product 04 signed-in web flow", () => {
   it("keeps signed-in navigation limited to existing pages and styles the active page", async () => {
     const shell = await readFile("apps/web/components/app-shell.tsx", "utf8");
     expect(shell).toContain("Projects");
+    expect(shell).toContain("Tasks");
     expect(shell).toContain("Members");
-    expect(shell).not.toContain("Tasks");
     expect(shell).not.toContain("Settings");
     expect(shell).toContain("activePath");
     expect(shell).toContain("bg-accent-tint");
