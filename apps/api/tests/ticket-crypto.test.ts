@@ -14,7 +14,10 @@ describe("task ticket encryption", () => {
   it("rejects tampering", () => {
     const cipher = createTicketCipher("test-task-ticket-secret-that-is-long-enough-12345");
     const encrypted = cipher.encrypt("private ticket");
-    const tampered = `${encrypted.slice(0, -1)}${encrypted.endsWith("A") ? "B" : "A"}`;
+    const [version, iv, tag, body] = encrypted.split(".");
+    const bytes = Buffer.from(body!, "base64url");
+    bytes[0] = (bytes[0] ?? 0) ^ 0x01;
+    const tampered = `${version}.${iv}.${tag}.${bytes.toString("base64url")}`;
     expect(() => cipher.decrypt(tampered)).toThrow();
   });
 });
