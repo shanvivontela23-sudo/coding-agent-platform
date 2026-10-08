@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "../../components/app-shell";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { PageTitle, SectionTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
@@ -35,14 +36,14 @@ export default async function HomePage() {
       <div className="space-y-10">
         <section className="space-y-2">
           <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Overview</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Welcome to Dhara</h1>
+          <PageTitle>Welcome to Dhara</PageTitle>
           <p className="max-w-2xl text-muted-foreground">Start with a repository, describe the change you need, and keep developer review at the center.</p>
         </section>
 
         <section className="space-y-4" aria-labelledby="projects-heading">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 id="projects-heading" className="text-lg font-semibold tracking-tight">Projects</h2>
+              <SectionTitle id="projects-heading">Projects</SectionTitle>
               <p className="mt-1 text-sm text-muted-foreground">Repositories and active work appear here.</p>
             </div>
             <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
@@ -75,7 +76,7 @@ export default async function HomePage() {
 
         <section className="space-y-4" aria-labelledby="how-it-works-heading">
           <div>
-            <h2 id="how-it-works-heading" className="text-lg font-semibold tracking-tight">How it works</h2>
+            <SectionTitle id="how-it-works-heading">How it works</SectionTitle>
             <p className="mt-1 text-sm text-muted-foreground">Three steps from request to reviewed code.</p>
           </div>
           <div className="grid gap-4 md:grid-cols-3">

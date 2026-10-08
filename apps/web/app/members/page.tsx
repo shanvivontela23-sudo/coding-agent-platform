@@ -4,6 +4,7 @@ import { AppShell } from "../../components/app-shell";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { PageTitle, SectionTitle } from "../../components/ui/heading";
 import { Input } from "../../components/ui/input";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
@@ -36,13 +37,13 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
       <div className="space-y-8">
         <section className="space-y-2">
           <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">Team</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Members</h1>
+          <PageTitle>Members</PageTitle>
           <p className="text-muted-foreground">Manage who can work in {members.organization.name}.</p>
         </section>
         {errorValue ? <Alert variant="destructive"><AlertDescription>{errorValue}</AlertDescription></Alert> : null}
 
         <section className="space-y-4" aria-labelledby="invite-heading">
-          <h2 id="invite-heading" className="text-lg font-semibold tracking-tight">Invite member</h2>
+          <SectionTitle id="invite-heading">Invite member</SectionTitle>
           <Card>
             <CardHeader><CardTitle className="text-base font-medium">Send an invitation</CardTitle><CardDescription>Invitations expire after seven days.</CardDescription></CardHeader>
             <CardContent>
@@ -63,7 +64,7 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
         </section>
 
         <section className="space-y-4" aria-labelledby="current-members-heading">
-          <h2 id="current-members-heading" className="text-lg font-semibold tracking-tight">Current members</h2>
+          <SectionTitle id="current-members-heading">Current members</SectionTitle>
           <div className="grid gap-3">
             {members.members.map((member) => (
               <Card key={member.id}><CardContent className="flex items-center justify-between gap-4 py-4">
@@ -76,7 +77,7 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
 
         {canInvite ? (
           <section className="space-y-4" aria-labelledby="pending-heading">
-            <h2 id="pending-heading" className="text-lg font-semibold tracking-tight">Pending invitations</h2>
+            <SectionTitle id="pending-heading">Pending invitations</SectionTitle>
             {members.invitations.length === 0 ? <p className="text-sm text-muted-foreground">No pending invitations.</p> : (
               <div className="grid gap-3">{members.invitations.map((invite) => (
                 <Card key={invite.id}><CardContent className="flex items-center justify-between gap-4 py-4">
