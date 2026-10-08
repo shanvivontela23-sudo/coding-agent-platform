@@ -1,4 +1,5 @@
 import type { CostRecord, ModelGateway } from "../../../evals/src/gateway/types.js";
+import type { RunTokenService } from "../../../evals/src/gateway/run-token.js";
 
 export type PromptMessage = { readonly role: "system" | "user"; readonly content: string };
 export type TaskQuestion = { readonly question: string; readonly suggestedAnswer: string };
@@ -140,14 +141,16 @@ function responseText(body: Readonly<Record<string, unknown>>): string {
 
 export class ExistingGatewayTaskModelGateway implements TaskModelGateway {
   private readonly gateway: ModelGateway;
+  private readonly tokenService: RunTokenService;
   private readonly provider: string;
   private readonly model: string;
   private readonly runDurationMs: number;
   private readonly tokens = new Map<string, string>();
   private readonly costs = new Map<string, CostRecord[]>();
 
-  constructor(options: { readonly gateway: ModelGateway; readonly provider: string; readonly model: string; readonly runDurationMs?: number }) {
+  constructor(options: { readonly gateway: ModelGateway; readonly tokenService: RunTokenService; readonly provider: string; readonly model: string; readonly runDurationMs?: number }) {
     this.gateway = options.gateway;
+    this.tokenService = options.tokenService;
     this.provider = options.provider;
     this.model = options.model;
     this.runDurationMs = options.runDurationMs ?? 30 * 60_000;
@@ -160,10 +163,10 @@ export class ExistingGatewayTaskModelGateway implements TaskModelGateway {
   }
 
   async call(taskId: string, purpose: string, messages: readonly PromptMessage[]): Promise<unknown> {
-    const token = this.tokens.get(taskId);
-    if (!token) throw new Error("task model run has not been started");
+    const runId = `task:${taskId}`;
+    const token = this.tokens.get(taskId) ?? this.tokenService.issue(runId, Date.now() + this.runDurationMs);
     const result = await this.gateway.call(token, {
-      runId: `task:${taskId}`,
+      runId,
       idempotencyKey: `${taskId}:${purpose}`,
       provider: this.provider,
       model: this.model,
