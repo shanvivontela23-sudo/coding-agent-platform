@@ -6,9 +6,9 @@ export function attachTaskRoutes(server: Server, options: {
   readonly apiOrigin: string;
   readonly webOrigin: string;
   readonly sessionSecret: string;
-  readonly service?: TaskService;
-  readonly readService?: TaskReadService;
-  readonly planningService?: TaskPlanningService;
+  readonly service?: TaskService | undefined;
+  readonly readService?: TaskReadService | undefined;
+  readonly planningService?: TaskPlanningService | undefined;
 }): Server {
   const existing = server.listeners("request") as Array<(request: IncomingMessage, response: ServerResponse) => void | Promise<void>>;
   if (existing.length !== 1) throw new Error("product server must have exactly one request listener before task routes are attached");
