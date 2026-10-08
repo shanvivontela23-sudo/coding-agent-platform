@@ -19,7 +19,6 @@ const recordedPlan = {
   whatIUnderstand: "When saving fails, keep the previous value visible and allow the customer to retry.",
   proposedApproach: "Preserve the previous value, show a clear failure state, and let the customer try again without losing their input.",
   size: "small",
-  estimate: { costUsd: 0.18, timeMinutes: 20 },
 };
 
 class RecordedGateway implements TaskModelGateway {
@@ -68,6 +67,8 @@ describe("task intake privacy and prompt boundaries", () => {
 
     const plan = buildPlanPrompt({ maskedTicket: "ticket-secret", repositoryContext: "repo-secret", answers: [{ question: "q", answer: "model-or-user-output" }] });
     expect(plan[0]?.content).not.toContain("model-or-user-output");
+    expect(plan[0]?.content).not.toContain("costUsd");
+    expect(plan[0]?.content).not.toContain("timeMinutes");
     expect(plan[1]?.content).toContain("<UNTRUSTED_ANSWERS>");
   });
 });
@@ -80,19 +81,19 @@ describe("task planning pipeline", () => {
       { question: "Should the user see that the request is still being processed?", suggestedAnswer: "Yes." },
       { question: "Should a failed attempt be safe to try again?", suggestedAnswer: "Yes." },
       { question: "Sixth question must be discarded", suggestedAnswer: "Discard me" },
-      { question: "Which file and React function should change?", suggestedAnswer: "Technical detail" },
     ] }]);
     const planner = new TaskPlanner({ gateway, spendCapUsd: 0.5 });
     const result = await planner.clarify({ taskId: "task-1", maskedTicket: "Fix retry behavior", repositoryContext: "src/app.ts: retry text" });
 
     expect(gateway.starts).toEqual([{ taskId: "task-1", spendCapUsd: 0.5 }]);
     expect(result.questions).toHaveLength(5);
-    expect(result.questions.join(" ")).not.toMatch(/\b(file|function|framework|react|typescript|python)\b/i);
+    expect(result.questions.map((question) => question.question).join(" ")).not.toMatch(/\b(function|framework|react|typescript|javascript|python|repository|endpoint|commit|sql)\b/i);
+    expect(result.questionFilterStats).toEqual({ filteredCount: 0, rephrasedCount: 0 });
     expect(gateway.calls).toHaveLength(1);
     expect(gateway.calls[0]?.messages[0]?.content).not.toContain("Fix retry behavior");
   });
 
-  it("produces the approved plain-language plan shape after answers", async () => {
+  it("produces a plain-language plan plus server-derived estimate range after answers", async () => {
     const gateway = new RecordedGateway([recordedPlan]);
     const planner = new TaskPlanner({ gateway, spendCapUsd: 0.5 });
     const result = await planner.plan({
@@ -102,10 +103,8 @@ describe("task planning pipeline", () => {
       answers: recordedClarification.questions.map((item) => ({ question: item.question, answer: item.suggestedAnswer })),
     });
 
-    expect(result).toEqual(recordedPlan);
+    expect(result).toEqual({ ...recordedPlan, estimate: { label: "estimate", costUsdMin: 0.05, costUsdMax: 0.3, timeMinutesMin: 10, timeMinutesMax: 30 } });
     expect(result.size).toBe("small");
-    expect(result.estimate.costUsd).toBeGreaterThanOrEqual(0);
-    expect(result.estimate.timeMinutes).toBeGreaterThan(0);
     expect(gateway.calls[0]?.purpose).toBe("plan");
   });
 });
