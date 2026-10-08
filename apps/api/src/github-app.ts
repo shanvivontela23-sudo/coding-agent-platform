@@ -16,9 +16,15 @@ export type GitHubRepositoryAnalysis = {
   readonly report: ProjectReport;
 };
 
+export type GitHubInstallationDetails = {
+  readonly accountLogin: string;
+  readonly managementUrl: string;
+};
+
 export type GitHubAppClient = {
   installationUrl(state: string): string;
   verifyUserInstallation(code: string, installationId: number): Promise<void>;
+  getInstallationDetails(installationId: number): Promise<GitHubInstallationDetails>;
   listRepositories(installationId: number): Promise<readonly GitHubRepository[]>;
   analyseRepository(installationId: number, repositoryId: number, limits: RepositoryAnalysisLimits): Promise<GitHubRepositoryAnalysis>;
   checkInstallation(installationId: number): Promise<void>;
@@ -178,6 +184,18 @@ export function createGitHubAppClient(options: GitHubAppClientOptions): GitHubAp
         // userToken intentionally falls out of scope here and is never persisted or returned.
       }
       throw new AppError("GITHUB_INSTALLATION_FORBIDDEN", "GitHub installation could not be verified.", 403);
+    },
+
+    async getInstallationDetails(installationId) {
+      validInstallationId(installationId);
+      const response = await fetchImpl(`${githubApi}/app/installations/${installationId}`, { headers: headers(`Bearer ${appJwt()}`, apiVersion) });
+      if ([401, 403, 404, 410].includes(response.status)) throw new AppError("GITHUB_INSTALLATION_DISCONNECTED", "GitHub installation is disconnected.", 409);
+      const payload = await jsonBody<{ readonly account?: unknown; readonly html_url?: unknown }>(response);
+      const account = typeof payload.account === "object" && payload.account !== null && !Array.isArray(payload.account) ? payload.account as Record<string, unknown> : null;
+      if (!account || typeof account.login !== "string" || !account.login || typeof payload.html_url !== "string") throw new AppError("GITHUB_FORBIDDEN", "GitHub installation metadata is invalid.", 502);
+      const managementUrl = new URL(payload.html_url);
+      if (managementUrl.protocol !== "https:" || managementUrl.hostname !== "github.com") throw new AppError("GITHUB_FORBIDDEN", "GitHub installation metadata is invalid.", 502);
+      return { accountLogin: account.login, managementUrl: managementUrl.toString() };
     },
 
     async listRepositories(installationId) {
