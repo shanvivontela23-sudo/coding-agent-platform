@@ -8,13 +8,20 @@ import { RunTokenService } from "../../../evals/src/gateway/run-token.js";
 import { createSupabaseAuthClient } from "./auth.js";
 import { assertRestrictedDatabaseUrl, createProductDatabase, type TenantPool } from "./database.js";
 import { createGitHubAppClient } from "./github-app.js";
+import { HybridProjectCodeReader } from "./hybrid-project-code-reader.js";
+import { ProjectDownloadTokenService } from "./project-download-token.js";
 import { GitHubProjectCodeReader } from "./project-code-reader.js";
+import { LocalProjectStorage } from "./project-storage.js";
+import { attachProduct07Routes } from "./product-07-server.js";
+import { createProduct07Service } from "./product-07-service.js";
 import { createApiServer } from "./server.js";
 import { createTaskDatabase } from "./task-database.js";
 import { ExistingGatewayTaskModelGateway } from "./task-intake.js";
 import { attachTaskRoutes } from "./task-server.js";
 import { createTaskService, type TaskService } from "./task-service.js";
 import { createTicketCipher } from "./ticket-crypto.js";
+import { createUploadProjectDatabase } from "./upload-project-database.js";
+import type { UploadArchiveLimits } from "./upload-archive.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -24,6 +31,11 @@ function required(name: string): string {
 function positiveNumber(name: string, fallback: number): number {
   const value = Number(process.env[name] ?? fallback);
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be greater than zero`);
+  return value;
+}
+function positiveInteger(name: string, fallback: number): number {
+  const value = positiveNumber(name, fallback);
+  if (!Number.isSafeInteger(value)) throw new Error(`${name} must be a positive integer`);
   return value;
 }
 
@@ -52,6 +64,24 @@ const githubApp = createGitHubAppClient({
   privateKey: githubPrivateKey,
 });
 
+const uploadLimits: UploadArchiveLimits = {
+  maxCompressedBytes: positiveInteger("PROJECT_UPLOAD_MAX_COMPRESSED_BYTES", 100 * 1024 * 1024),
+  maxUncompressedBytes: positiveInteger("PROJECT_UPLOAD_MAX_UNCOMPRESSED_BYTES", 500 * 1024 * 1024),
+  maxFiles: positiveInteger("PROJECT_UPLOAD_MAX_FILES", 50_000),
+  maxFileBytes: positiveInteger("PROJECT_UPLOAD_MAX_FILE_BYTES", 5 * 1024 * 1024),
+  maxNestedArchiveDepth: 1,
+};
+const uploadDatabase = createUploadProjectDatabase(tenantPool);
+const projectStorage = new LocalProjectStorage({ rootDir: process.env.PROJECT_STORAGE_ROOT?.trim() || join(homedir(), ".dhara", "storage") });
+const product07Service = createProduct07Service({
+  database: uploadDatabase,
+  productDatabase: database,
+  storage: projectStorage,
+  githubApp,
+  downloadTokens: new ProjectDownloadTokenService({ secret: process.env.PROJECT_DOWNLOAD_TOKEN_SECRET?.trim() || sessionSecret }),
+  limits: uploadLimits,
+});
+
 let taskService: TaskService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
 if (taskGatewayAdminToken) {
@@ -65,13 +95,14 @@ if (taskGatewayAdminToken) {
   const taskModelGateway = new ExistingGatewayTaskModelGateway({
     gateway,
     tokenService: taskRunTokenService,
-    provider: process.env.TASK_MODEL_PROVIDER?.trim() || "openai",
+    provider: process.env.TASK_MODEL_PROVIDER?.trim() || "anthropic",
     model: required("TASK_MODEL_NAME"),
     runDurationMs: 7 * 24 * 60 * 60_000,
   });
+  const githubReader = new GitHubProjectCodeReader({ database: taskDatabase, appId: githubAppId, privateKey: githubPrivateKey });
   taskService = createTaskService({
     database: taskDatabase,
-    codeReader: new GitHubProjectCodeReader({ database: taskDatabase, appId: githubAppId, privateKey: githubPrivateKey }),
+    codeReader: new HybridProjectCodeReader({ uploadDatabase, storage: projectStorage, githubReader, limits: uploadLimits }),
     gateway: taskModelGateway,
     cipher: createTicketCipher(process.env.TASK_TICKET_ENCRYPTION_SECRET?.trim() || sessionSecret),
     modelBudgetUsd: positiveNumber("TASK_MODEL_BUDGET_USD", 0.5),
@@ -88,7 +119,8 @@ const productServer = createApiServer({
   database,
   githubApp,
 });
-const server = attachTaskRoutes(productServer, { apiOrigin, webOrigin, sessionSecret, service: taskService });
+const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
+const server = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, service: taskService });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };
