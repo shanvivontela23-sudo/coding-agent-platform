@@ -54,7 +54,7 @@ export function createTaskService(options: {
       try {
         const clarification = await planner.clarify({ taskId: created.taskId, maskedTicket, repositoryContext: context.text });
         await persistCosts(session, created.taskId);
-        await options.database.saveClarification(session, created.taskId, clarification.jobType, clarification.questions);
+        await options.database.saveClarification(session, created.taskId, clarification.jobType, clarification.questions, clarification.questionFilterStats);
         if (clarification.questions.length === 0) await makePlanIfReady(session, created.taskId);
       } catch (error) {
         await persistCosts(session, created.taskId);
