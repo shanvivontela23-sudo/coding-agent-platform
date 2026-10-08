@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "../../components/app-shell";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { Input } from "../../components/ui/input";
 import { PageTitle, SectionTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
@@ -44,18 +45,32 @@ export default async function HomePage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <SectionTitle id="projects-heading">Projects</SectionTitle>
-              <p className="mt-1 text-sm text-muted-foreground">Repositories and active work appear here.</p>
+              <p className="mt-1 text-sm text-muted-foreground">GitHub repositories and ZIP projects appear here.</p>
             </div>
             <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
               <Button type="submit" className="w-full sm:w-auto">Connect a repository</Button>
             </form>
           </div>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-medium">Upload ZIP</CardTitle>
+              <CardDescription>Create a project from a ZIP archive when GitHub is not the source.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form action={`${apiOrigin}/projects/upload`} method="post" encType="multipart/form-data" className="grid gap-3 md:grid-cols-[1fr_1.4fr_auto] md:items-end">
+                <label className="grid gap-1 text-sm font-medium">Project name<Input name="name" required maxLength={120} /></label>
+                <label className="grid gap-1 text-sm font-medium">ZIP archive<Input name="zip" type="file" accept=".zip,application/zip" required /></label>
+                <Button type="submit" variant="outline">Upload ZIP</Button>
+              </form>
+            </CardContent>
+          </Card>
+
           {home.projects.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
                 <div className="mb-4 flex size-11 items-center justify-center rounded-full bg-accent-tint text-lg font-semibold text-accent" aria-hidden="true">+</div>
-                <h3 className="text-base font-semibold">No projects yet. Connect a repository to get started.</h3>
+                <h3 className="text-base font-semibold">No projects yet. Connect a repository or upload a ZIP to get started.</h3>
               </CardContent>
             </Card>
           ) : (
@@ -65,7 +80,7 @@ export default async function HomePage() {
                   <Card className="h-full transition-colors hover:bg-muted/50">
                     <CardHeader>
                       <CardTitle className="text-base font-medium">{project.name}</CardTitle>
-                      <CardDescription>Connected project</CardDescription>
+                      <CardDescription>Project</CardDescription>
                     </CardHeader>
                   </Card>
                 </Link>
