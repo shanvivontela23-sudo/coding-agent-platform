@@ -55,7 +55,8 @@ export async function handleProduct07HttpRequest(options: {
       const contentType = request.headers["content-type"] ?? "";
       if (!contentType.toLowerCase().startsWith("multipart/form-data")) throw new AppError("INVALID_UPLOAD_ARCHIVE", "ZIP upload form is invalid.", 400);
       const body = await readBytes(request, options.maxUploadRequestBytes);
-      const form = await new Response(body, { headers: { "content-type": contentType } }).formData();
+      const copied = Uint8Array.from(body);
+      const form = await new Response(copied.buffer, { headers: { "content-type": contentType } }).formData();
       const name = String(form.get("name") ?? "").trim(); const file = form.get("zip");
       if (!(file instanceof Blob)) throw new AppError("INVALID_UPLOAD_ARCHIVE", "Select a ZIP archive to upload.", 400);
       const created = await options.service.createUploadProject(identity, { name, zip: new Uint8Array(await file.arrayBuffer()) });
