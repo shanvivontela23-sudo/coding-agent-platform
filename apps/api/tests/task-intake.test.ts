@@ -51,7 +51,10 @@ describe("task intake privacy and prompt boundaries", () => {
     expect(masked).not.toContain("408");
     expect(masked).not.toContain("998877665544");
     expect(masked).toContain("cannot save the cart");
-    expect(masked).toMatch(/\[MASKED_(?:NAME|EMAIL|PHONE|ACCOUNT)\]/);
+    expect(masked).toContain("[MASKED_NAME]");
+    expect(masked).toContain("[MASKED_EMAIL]");
+    expect(masked).toContain("[MASKED_PHONE]");
+    expect(masked).toContain("account [MASKED_ACCOUNT]");
   });
 
   it("keeps ticket, repository context and prior model output out of the system role", () => {
