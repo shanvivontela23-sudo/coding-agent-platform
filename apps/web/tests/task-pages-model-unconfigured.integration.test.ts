@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createSessionToken, type SupabaseAuthClient } from "../../api/src/auth.js";
 import type { ProductDatabase } from "../../api/src/database.js";
@@ -133,8 +134,9 @@ describe("signed-in task pages with task planning unconfigured", () => {
     const apiPort = await listen(server);
     const webPort = await freePort();
     let output = "";
-    const child = spawn("pnpm", ["--filter", "@coding-agent/web", "dev", "--hostname", "127.0.0.1", "--port", String(webPort)], {
-      cwd: process.cwd(),
+    const webDirectory = join(process.cwd(), "apps/web");
+    const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", String(webPort)], {
+      cwd: webDirectory,
       env: { ...process.env, NEXT_PUBLIC_API_ORIGIN: `http://127.0.0.1:${apiPort}`, NEXT_TELEMETRY_DISABLED: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
