@@ -14,10 +14,13 @@ export type VerifiedSupabaseUser = Pick<SupabaseIdentity, "supabaseUserId" | "em
 export type MemberRole = "owner" | "developer" | "rep";
 export type InviteRole = Exclude<MemberRole, "owner">;
 export type Membership = { readonly userId: string; readonly organizationId: string; readonly role: MemberRole };
+export type HomeProjectSource =
+  | { readonly type: "github"; readonly fullName: string }
+  | { readonly type: "upload"; readonly versionNumber: number };
 export type HomeData = {
   readonly organization: { readonly id: string; readonly name: string };
   readonly user: { readonly id: string; readonly email: string | null };
-  readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string; readonly source: HomeProjectSource | null }>;
 };
 export type Invitation = {
   readonly id: string;
@@ -129,8 +132,19 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
         const user = await database.query<{ id: string; email: string | null }>("SELECT id, email FROM users WHERE id = $1 LIMIT 1", [session.userId]);
         const currentUser = user.rows[0];
         if (!currentUser) throw new Error("tenant user is not visible");
-        const projects = await database.query<{ id: string; name: string }>("SELECT id, name FROM projects ORDER BY created_at, id");
-        return { organization: { id: row.id, name: row.name }, user: { id: currentUser.id, email: currentUser.email }, projects: projects.rows.map((project) => ({ id: project.id, name: project.name })) };
+        const projects = await database.query<{ id: string; name: string; provider: string | null; full_name: string | null; version_number: number | null }>(`SELECT p.id,p.name,r.provider,r.full_name,pv.version_number FROM projects p LEFT JOIN LATERAL (SELECT provider,full_name FROM repositories WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY created_at,id LIMIT 1) r ON true LEFT JOIN LATERAL (SELECT version_number FROM project_versions WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY version_number DESC LIMIT 1) pv ON r.provider='upload' ORDER BY p.created_at,p.id`);
+        return {
+          organization: { id: row.id, name: row.name },
+          user: { id: currentUser.id, email: currentUser.email },
+          projects: projects.rows.map((project) => {
+            const source: HomeProjectSource | null = project.provider === "github" && project.full_name
+              ? { type: "github", fullName: project.full_name }
+              : project.provider === "upload" && project.version_number !== null
+                ? { type: "upload", versionNumber: project.version_number }
+                : null;
+            return { id: project.id, name: project.name, source };
+          }),
+        };
       });
     },
     async getMembers(session) {
