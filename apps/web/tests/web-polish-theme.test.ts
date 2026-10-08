@@ -79,7 +79,7 @@ describe("Dhara signed-in polish and theme", () => {
   it("uses product copy and the shared compact signed-in heading scale", async () => {
     const home = await readFile("apps/web/app/home/page.tsx", "utf8");
     const heading = await readFile("apps/web/components/ui/heading.tsx", "utf8");
-    expect(home).toContain("No projects yet. Connect a repository to get started.");
+    expect(home).toContain("No projects yet. Connect a repository or upload a ZIP to get started.");
     expect(home).not.toContain("Coming soon");
     expect(home).not.toContain("next product slice");
     expect(home).toContain("PageTitle");
