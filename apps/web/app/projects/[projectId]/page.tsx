@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "../../../components/app-shell";
+import { Alert, AlertDescription } from "../../../components/ui/alert";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { PageTitle, SectionTitle } from "../../../components/ui/heading";
@@ -27,7 +28,7 @@ type ProjectPayload = {
   readonly report: Report;
   readonly currentUserRole?: "owner" | "developer" | "rep";
 };
-type ProjectPageProps = { readonly params: Promise<{ readonly projectId: string }> };
+type ProjectPageProps = { readonly params: Promise<{ readonly projectId: string }>; readonly searchParams?: Promise<Record<string, string | string[] | undefined>> };
 
 async function requestHeaders(): Promise<{ cookie?: string }> {
   const store = await cookies();
@@ -67,8 +68,10 @@ function WorkspaceCommands({ workspaces, kind }: { readonly workspaces: readonly
   return <ul className="space-y-3 text-sm">{rows.map((workspace) => { const command = kind === "build" ? workspace.buildCommand : workspace.testCommand; return <li key={`${kind}:${workspace.path}`} className="space-y-1"><p className="font-medium">{workspace.name}</p><p className="text-xs text-muted-foreground">{workspace.path}</p><code>{command}</code></li>; })}</ul>;
 }
 
-export default async function ProjectPage({ params }: ProjectPageProps) {
+export default async function ProjectPage({ params, searchParams }: ProjectPageProps) {
   const { projectId } = await params;
+  const query = searchParams ? await searchParams : {};
+  const errorValue = Array.isArray(query.error) ? query.error[0] : query.error;
   const headers = await requestHeaders();
   const [home, project] = await Promise.all([loadHome(headers), loadProject(projectId, headers)]);
   const workspaceCommands = project.report.workspaceCommands ?? [];
@@ -87,6 +90,8 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
             <form action={`/projects/${projectId}/tasks/new`} method="get"><Button type="submit" variant="outline">New task</Button></form>
           </div>
         </section>
+
+        {errorValue ? <Alert variant="destructive"><AlertDescription>{errorValue}</AlertDescription></Alert> : null}
 
         {project.source.type === "github" && project.source.status === "disconnected" ? (
           <Card><CardContent className="space-y-4 py-6"><div><p className="text-base font-medium">GitHub is disconnected.</p><p className="mt-1 text-sm text-muted-foreground">Reconnect the GitHub App to refresh or work with this project.</p></div><form action={`${apiOrigin}/github/connect/start`} method="get"><Button type="submit" variant="outline">Reconnect GitHub</Button></form></CardContent></Card>
