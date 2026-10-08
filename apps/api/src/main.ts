@@ -56,13 +56,15 @@ let taskService: TaskService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
 if (taskGatewayAdminToken) {
   const taskDatabase = createTaskDatabase(tenantPool);
+  const taskRunTokenService = new RunTokenService({ secret: process.env.TASK_GATEWAY_RUN_TOKEN_SECRET?.trim() || sessionSecret });
   const gateway = new PersistentModelGateway({
     store: new FileGatewayStore({ rootDir: process.env.TASK_GATEWAY_STORE_DIR?.trim() || join(homedir(), ".dhara", "gateway") }),
     adapter: new LiteLLMAdapter({ baseUrl: required("TASK_MODEL_GATEWAY_BASE_URL"), adminToken: taskGatewayAdminToken }),
-    tokenService: new RunTokenService({ secret: process.env.TASK_GATEWAY_RUN_TOKEN_SECRET?.trim() || sessionSecret }),
+    tokenService: taskRunTokenService,
   });
   const taskModelGateway = new ExistingGatewayTaskModelGateway({
     gateway,
+    tokenService: taskRunTokenService,
     provider: process.env.TASK_MODEL_PROVIDER?.trim() || "openai",
     model: required("TASK_MODEL_NAME"),
     runDurationMs: 7 * 24 * 60 * 60_000,
