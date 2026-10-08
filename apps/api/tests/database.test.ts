@@ -62,7 +62,7 @@ describe("database boundary", () => {
     expect(client.released).toBe(true);
   });
 
-  it("returns GitHub repo names and current ZIP version numbers with home projects", async () => {
+  it("returns GitHub repo names, default branches and current ZIP version numbers with home projects", async () => {
     class HomeClient {
       release() {}
       async query<Row = Record<string, unknown>>(text: string): Promise<{ rows: Row[] }> {
@@ -70,8 +70,8 @@ describe("database boundary", () => {
         if (text.includes("FROM organizations")) rows = [{ id: session.organizationId, name: "Acme" }];
         else if (text.includes("FROM users")) rows = [{ id: session.userId, email: "owner@example.com" }];
         else if (text.includes("FROM projects")) rows = [
-          { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", provider: "github", full_name: "acme/backend", version_number: null },
-          { id: "20000000-0000-4000-8000-000000000002", name: "ZIP demo", provider: "upload", full_name: null, version_number: 3 },
+          { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", provider: "github", full_name: "acme/backend", default_branch: "main", version_number: null },
+          { id: "20000000-0000-4000-8000-000000000002", name: "ZIP demo", provider: "upload", full_name: null, default_branch: null, version_number: 3 },
         ];
         return { rows: rows as Row[] };
       }
@@ -82,7 +82,7 @@ describe("database boundary", () => {
     const home = await database.getHome(session);
 
     expect(home.projects).toEqual([
-      { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", source: { type: "github", fullName: "acme/backend" } },
+      { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", source: { type: "github", fullName: "acme/backend", defaultBranch: "main" } },
       { id: "20000000-0000-4000-8000-000000000002", name: "ZIP demo", source: { type: "upload", versionNumber: 3 } },
     ]);
   });
