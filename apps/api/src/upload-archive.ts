@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { gzipSync, inflateRawSync } from "node:zlib";
+import { inflateRawSync } from "node:zlib";
 import { AppError } from "./errors.js";
-import { analyseRepositoryArchive, type ProjectReport, type RepositoryAnalysisLimits } from "./repository-analysis.js";
+import { analyseRepositoryEntries, type ProjectReport, type RepositoryAnalysisLimits } from "./repository-analysis.js";
 
 export type UploadArchiveLimits = RepositoryAnalysisLimits & { readonly maxNestedArchiveDepth: number };
 export type ValidatedUploadArchive = {
@@ -98,16 +98,6 @@ function inspectNestedArchives(entries: readonly Entry[], limits: UploadArchiveL
     if (nested.some((item) => archivePattern.test(item.path))) throw invalid("Archive nesting exceeds the configured depth.");
   }
 }
-function tarOctal(value: number, width: number): Buffer { return Buffer.from(value.toString(8).padStart(width - 1, "0") + "\0", "ascii"); }
-function toAnalysisArchive(entries: readonly Entry[]): Uint8Array {
-  const parts: Buffer[] = [];
-  for (const entry of entries) {
-    if (Buffer.byteLength(entry.path) > 99) continue;
-    const header = Buffer.alloc(512); Buffer.from(entry.path).copy(header, 0); tarOctal(0o600, 8).copy(header, 100); tarOctal(0, 8).copy(header, 108); tarOctal(0, 8).copy(header, 116); tarOctal(entry.bytes.length, 12).copy(header, 124); tarOctal(0, 12).copy(header, 136); Buffer.from("        ").copy(header, 148); Buffer.from("0").copy(header, 156); Buffer.from("ustar\0").copy(header, 257); Buffer.from("00").copy(header, 263);
-    const checksum = header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0"); Buffer.from(`${checksum}\0 `).copy(header, 148); parts.push(header, entry.bytes); const padding = (512 - (entry.bytes.length % 512)) % 512; if (padding) parts.push(Buffer.alloc(padding));
-  }
-  parts.push(Buffer.alloc(1024)); return gzipSync(Buffer.concat(parts));
-}
 function writeZip(entries: readonly Entry[]): Uint8Array {
   const locals: Buffer[] = []; const central: Buffer[] = []; let offset = 0;
   for (const entry of entries) {
@@ -124,6 +114,6 @@ export function readNormalizedZipFiles(input: Uint8Array, limits: UploadArchiveL
 export async function validateAndNormalizeZip(input: Uint8Array, limits: UploadArchiveLimits): Promise<ValidatedUploadArchive> {
   const entries = stripOneRoot(decodeZipEntries(input, limits)); inspectNestedArchives(entries, limits);
   const normalizedZip = writeZip(entries); const sha256 = createHash("sha256").update(normalizedZip).digest("hex");
-  const report = await analyseRepositoryArchive(toAnalysisArchive(entries), limits);
+  const report = analyseRepositoryEntries(entries);
   return { normalizedZip, report, fileCount: entries.length, paths: entries.map((entry) => entry.path), sha256, sizeBytes: normalizedZip.length };
 }

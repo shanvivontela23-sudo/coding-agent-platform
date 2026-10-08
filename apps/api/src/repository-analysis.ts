@@ -26,6 +26,8 @@ export type ProjectReport = {
   readonly manifests: readonly string[];
 };
 
+export type RepositoryAnalysisEntry = { readonly path: string; readonly bytes: Uint8Array };
+
 export class RepositoryAnalysisError extends Error {
   readonly code: "REPOSITORY_TOO_LARGE" | "REPOSITORY_INVALID_ARCHIVE";
   readonly publicMessage: string;
@@ -132,6 +134,10 @@ function frameworkManifestPathAllowed(path: string): boolean { return !pathSegme
 function isRecognizedManifest(name: string): boolean {
   const lower = name.toLowerCase();
   return recognizedManifestNames.has(name) || lower.endsWith(".csproj") || lower.endsWith(".sln");
+}
+function analysisRelevantPath(path: string): boolean {
+  const name = basename(path);
+  return isRecognizedManifest(name) || (countableLanguagePath(path) && Boolean(languageByExtension[extension(path)]));
 }
 function sourceInSubtree(sourcePaths: ReadonlyMap<string, readonly string[]>, languages: readonly string[], directory: string): boolean {
   for (const language of languages) for (const path of sourcePaths.get(language) ?? []) if (!directory || path.startsWith(`${directory}/`)) return true;
@@ -243,15 +249,33 @@ function detectWorkspaceCommands(packageData: ReturnType<typeof parsePackageJson
   return packageData.packages.filter((pkg) => pkg !== root && matchers.some((matcher) => matcher.test(pkg.manifest.directory))).map((pkg) => ({ name: pkg.name, path: pkg.manifest.directory, buildCommand: pkg.scripts.has("build") ? commandForScript(manager, "build") : null, testCommand: pkg.scripts.has("test") ? commandForScript(manager, "test") : null })).filter((workspace) => workspace.buildCommand !== null || workspace.testCommand !== null).sort((a, b) => a.path.localeCompare(b.path));
 }
 
+export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEntry[]): ProjectReport {
+  const languageCounts = new Map<string, number>(); const sourcePaths = new Map<string, string[]>(); const manifests: SeenManifest[] = []; const manifestNames = new Set<string>();
+  for (const entry of entries) {
+    const path = entry.path.replaceAll("\\", "/").replace(/^\.\//, "");
+    if (!safeArchivePath(path)) continue;
+    const name = basename(path);
+    if (isRecognizedManifest(name)) { manifests.push({ name, path, directory: dirname(path), depth: pathDepth(path), contents: Buffer.from(entry.bytes).toString("utf8") }); manifestNames.add(name); }
+    if (countableLanguagePath(path)) {
+      const language = languageByExtension[extension(path)];
+      if (language) { languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1); const paths = sourcePaths.get(language) ?? []; paths.push(path); sourcePaths.set(language, paths); }
+    }
+  }
+  const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
+  const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
+  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
+  return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
+}
+
 export async function analyseRepositoryArchive(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<ProjectReport> {
   if (input.byteLength > limits.maxCompressedBytes) throw tooLarge();
   const source = Readable.from([Buffer.from(input)]); const gunzip = createGunzip(); source.pipe(gunzip);
-  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0); let uncompressedBytes = 0; let current: TarHeader | null = null; let currentPath: string | null = null; let dataRemaining = 0; let paddingRemaining = 0; let capture: Array<Buffer<ArrayBufferLike>> | null = null; let captureKind: "manifest" | "pax" | null = null; let nextPaxPath: string | null = null; let entryCount = 0; let ended = false;
-  const languageCounts = new Map<string, number>(); const sourcePaths = new Map<string, string[]>(); const manifests: SeenManifest[] = []; const manifestNames = new Set<string>();
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0); let uncompressedBytes = 0; let current: TarHeader | null = null; let currentPath: string | null = null; let dataRemaining = 0; let paddingRemaining = 0; let capture: Array<Buffer<ArrayBufferLike>> | null = null; let captureKind: "entry" | "pax" | null = null; let nextPaxPath: string | null = null; let entryCount = 0; let ended = false;
+  const entries: RepositoryAnalysisEntry[] = [];
   const finishEntry = () => {
     if (!current) return;
     if (capture && captureKind === "pax") nextPaxPath = parsePaxPath(Buffer.concat(capture));
-    else if (capture && captureKind === "manifest" && currentPath) { const path = withoutArchiveRoot(currentPath); const name = basename(path); manifests.push({ name, path, directory: dirname(path), depth: pathDepth(path), contents: Buffer.concat(capture).toString("utf8") }); manifestNames.add(name); }
+    else if (capture && captureKind === "entry" && currentPath) entries.push({ path: currentPath, bytes: Buffer.concat(capture) });
     current = null; currentPath = null; capture = null; captureKind = null;
   };
   try {
@@ -265,10 +289,10 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
           entryCount += 1; if (entryCount > limits.maxFiles || header.size > limits.maxFileBytes) throw tooLarge(); current = header; dataRemaining = header.size; paddingRemaining = (512 - (header.size % 512)) % 512;
           if (header.type === "x") { capture = []; captureKind = "pax"; }
           else {
-            const resolvedPath = nextPaxPath ?? header.name; nextPaxPath = null; currentPath = resolvedPath; const regular = header.type === "0" || header.type === "\0";
+            const resolvedPath = nextPaxPath ?? header.name; nextPaxPath = null; const regular = header.type === "0" || header.type === "\0";
             if (regular && safeArchivePath(resolvedPath)) {
-              const relative = withoutArchiveRoot(resolvedPath); const name = basename(relative); if (isRecognizedManifest(name)) { capture = []; captureKind = "manifest"; }
-              if (countableLanguagePath(relative)) { const language = languageByExtension[extension(relative)]; if (language) { languageCounts.set(language, (languageCounts.get(language) ?? 0) + 1); const paths = sourcePaths.get(language) ?? []; paths.push(relative); sourcePaths.set(language, paths); } }
+              const relative = withoutArchiveRoot(resolvedPath);
+              if (analysisRelevantPath(relative)) { currentPath = relative; capture = []; captureKind = "entry"; }
             }
           }
           if (dataRemaining === 0) finishEntry(); continue;
@@ -281,8 +305,5 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
     source.destroy(); gunzip.destroy(); if (error instanceof RepositoryAnalysisError) throw error; throw invalidArchive();
   } finally { source.destroy(); gunzip.destroy(); pending = Buffer.alloc(0); capture = null; currentPath = null; nextPaxPath = null; }
   if (!ended && (current !== null || pending.length > 0 || paddingRemaining > 0)) throw invalidArchive();
-  const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
-  const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
-  return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
+  return analyseRepositoryEntries(entries);
 }
