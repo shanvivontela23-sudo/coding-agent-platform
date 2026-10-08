@@ -1,5 +1,5 @@
 import { gzipSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { analyseRepositoryArchive } from "../src/repository-analysis.js";
 
 function octal(value: number, width: number): Buffer { return Buffer.from(value.toString(8).padStart(width - 1, "0") + "\0", "ascii"); }
