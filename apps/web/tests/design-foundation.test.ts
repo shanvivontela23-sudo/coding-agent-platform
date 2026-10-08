@@ -60,8 +60,8 @@ describe("Dhara web design foundation", () => {
   it("provides the signed-in app shell and only navigates to implemented pages", async () => {
     const shell = await readFile("apps/web/components/app-shell.tsx", "utf8");
     expect(shell).toContain("PRODUCT_NAME");
-    for (const label of ["Projects", "Members"]) expect(shell).toContain(label);
-    for (const label of ["Tasks", "Settings"]) expect(shell).not.toContain(label);
+    for (const label of ["Projects", "Tasks", "Members"]) expect(shell).toContain(label);
+    expect(shell).not.toContain("Settings");
     expect(shell).toContain("organizationName");
     expect(shell).toContain("userEmail");
     expect(shell).toContain("UserMenu");
