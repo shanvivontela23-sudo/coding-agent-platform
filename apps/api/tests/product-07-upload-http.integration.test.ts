@@ -142,9 +142,10 @@ describe.skipIf(!baseDatabaseUrl)("ZIP upload HTTP persistence integration", () 
         { name: "customer-app/package.json", contents: JSON.stringify({ scripts: { test: "vitest run" }, devDependencies: { typescript: "5", vitest: "3" } }) },
         { name: "customer-app/src/index.ts", contents: "export const ready = true;" },
       ]);
+      const archiveBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       const form = new FormData();
       form.set("name", "Customer app");
-      form.set("zip", new Blob([bytes], { type: "application/zip" }), "customer-app.zip");
+      form.set("zip", new Blob([archiveBytes], { type: "application/zip" }), "customer-app.zip");
       const token = createSessionToken({ userId, organizationId, expiresAtMs: Date.now() + 60_000 }, sessionSecret);
       const response = await fetch(`http://127.0.0.1:${address.port}/projects/upload`, {
         method: "POST",
