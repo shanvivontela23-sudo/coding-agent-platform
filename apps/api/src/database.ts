@@ -15,7 +15,7 @@ export type MemberRole = "owner" | "developer" | "rep";
 export type InviteRole = Exclude<MemberRole, "owner">;
 export type Membership = { readonly userId: string; readonly organizationId: string; readonly role: MemberRole };
 export type HomeProjectSource =
-  | { readonly type: "github"; readonly fullName: string }
+  | { readonly type: "github"; readonly fullName: string; readonly defaultBranch: string }
   | { readonly type: "upload"; readonly versionNumber: number };
 export type HomeData = {
   readonly organization: { readonly id: string; readonly name: string };
@@ -37,6 +37,7 @@ export type MembersData = {
   readonly invitations: ReadonlyArray<{ readonly id: string; readonly email: string; readonly role: InviteRole; readonly expiresAt: string }>;
 };
 export type GitHubInstallation = { readonly installationId: number; readonly status: "connected" | "disconnected" };
+export type GitHubProjectBinding = { readonly githubRepositoryId: number; readonly projectId: string };
 export type CreateGitHubProjectInput = {
   readonly repositoryId: number;
   readonly name: string;
@@ -73,6 +74,7 @@ export type ProductDatabase = {
   bindGitHubInstallation?(session: SessionIdentity, installationId: number): Promise<void>;
   getGitHubInstallation?(session: SessionIdentity): Promise<GitHubInstallation | null>;
   markGitHubInstallationDisconnected?(session: SessionIdentity): Promise<void>;
+  getGitHubProjectBindings?(session: SessionIdentity): Promise<readonly GitHubProjectBinding[]>;
   createGitHubProject?(session: SessionIdentity, input: CreateGitHubProjectInput): Promise<{ readonly projectId: string }>;
   getProjectReport?(session: SessionIdentity, projectId: string): Promise<ProjectReportData | null>;
 };
@@ -132,13 +134,13 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
         const user = await database.query<{ id: string; email: string | null }>("SELECT id, email FROM users WHERE id = $1 LIMIT 1", [session.userId]);
         const currentUser = user.rows[0];
         if (!currentUser) throw new Error("tenant user is not visible");
-        const projects = await database.query<{ id: string; name: string; provider: string | null; full_name: string | null; version_number: number | null }>(`SELECT p.id,p.name,r.provider,r.full_name,pv.version_number FROM projects p LEFT JOIN LATERAL (SELECT provider,full_name FROM repositories WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY created_at,id LIMIT 1) r ON true LEFT JOIN LATERAL (SELECT version_number FROM project_versions WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY version_number DESC LIMIT 1) pv ON r.provider='upload' ORDER BY p.created_at,p.id`);
+        const projects = await database.query<{ id: string; name: string; provider: string | null; full_name: string | null; default_branch: string | null; version_number: number | null }>(`SELECT p.id,p.name,r.provider,r.full_name,r.default_branch,pv.version_number FROM projects p LEFT JOIN LATERAL (SELECT provider,full_name,default_branch FROM repositories WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY created_at,id LIMIT 1) r ON true LEFT JOIN LATERAL (SELECT version_number FROM project_versions WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY version_number DESC LIMIT 1) pv ON r.provider='upload' ORDER BY p.created_at,p.id`);
         return {
           organization: { id: row.id, name: row.name },
           user: { id: currentUser.id, email: currentUser.email },
           projects: projects.rows.map((project) => {
-            const source: HomeProjectSource | null = project.provider === "github" && project.full_name
-              ? { type: "github", fullName: project.full_name }
+            const source: HomeProjectSource | null = project.provider === "github" && project.full_name && project.default_branch
+              ? { type: "github", fullName: project.full_name, defaultBranch: project.default_branch }
               : project.provider === "upload" && project.version_number !== null
                 ? { type: "upload", versionNumber: project.version_number }
                 : null;
@@ -227,6 +229,12 @@ export function createProductDatabase(pool: TenantPool): ProductDatabase {
     },
     async markGitHubInstallationDisconnected(session) {
       await withTenant(pool, session, async (database) => { await database.query("UPDATE github_installations SET status='disconnected', updated_at=now() WHERE organization_id=$1", [session.organizationId]); });
+    },
+    async getGitHubProjectBindings(session) {
+      return await withTenant(pool, session, async (database) => {
+        const result = await database.query<{ github_repository_id: string | number; project_id: string }>("SELECT github_repository_id, project_id FROM repositories WHERE organization_id=$1 AND provider='github' AND github_repository_id IS NOT NULL ORDER BY created_at,id", [session.organizationId]);
+        return result.rows.map((row) => ({ githubRepositoryId: Number(row.github_repository_id), projectId: row.project_id }));
+      });
     },
     async createGitHubProject(session, input) {
       if (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0 || !/^[0-9a-f]{40}$/.test(input.commitSha)) throw new AppError("GITHUB_REPOSITORY_FORBIDDEN", "Repository metadata is invalid.", 400);
