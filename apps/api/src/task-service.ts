@@ -6,21 +6,47 @@ import type { TicketCipher } from "./ticket-crypto.js";
 
 export type TaskView = Omit<TaskDetail, "originalTicketEncrypted"> & { readonly originalTicket?: string };
 
-export interface TaskService {
-  create(session: SessionIdentity, projectId: string, ticket: string): Promise<{ readonly taskId: string }>;
+export interface TaskReadService {
   list(session: SessionIdentity): Promise<readonly TaskListItem[]>;
   get(session: SessionIdentity, taskId: string): Promise<TaskView | null>;
-  answer(session: SessionIdentity, taskId: string, questionId: string, answer: string): Promise<void>;
   approve(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
 }
 
-export function createTaskService(options: {
+export interface TaskPlanningService {
+  create(session: SessionIdentity, projectId: string, ticket: string): Promise<{ readonly taskId: string }>;
+  answer(session: SessionIdentity, taskId: string, questionId: string, answer: string): Promise<void>;
+}
+
+export interface TaskService extends TaskReadService, TaskPlanningService {}
+
+export function createTaskReadService(options: {
+  readonly database: TaskDatabase;
+  readonly cipher: TicketCipher;
+}): TaskReadService {
+  return {
+    async list(session) { return await options.database.listTasks(session); },
+
+    async get(session, taskId) {
+      const task = await options.database.getTask(session, taskId);
+      if (!task) return null;
+      const { originalTicketEncrypted, ...view } = task;
+      if (originalTicketEncrypted && task.requestedByUserId === session.userId && task.currentUserRole === "rep") {
+        return { ...view, originalTicket: options.cipher.decrypt(originalTicketEncrypted) };
+      }
+      return view;
+    },
+
+    async approve(session, taskId, input) { await options.database.approveTask(session, taskId, input); },
+  };
+}
+
+export function createTaskPlanningService(options: {
   readonly database: TaskDatabase;
   readonly codeReader: ProjectCodeReader;
   readonly gateway: TaskModelGateway;
   readonly cipher: TicketCipher;
   readonly modelBudgetUsd: number;
-}): TaskService {
+}): TaskPlanningService {
   if (!Number.isFinite(options.modelBudgetUsd) || options.modelBudgetUsd <= 0) throw new Error("task model budget must be greater than zero");
   const planner = new TaskPlanner({ gateway: options.gateway, spendCapUsd: options.modelBudgetUsd });
 
@@ -63,25 +89,24 @@ export function createTaskService(options: {
       return created;
     },
 
-    async list(session) { return await options.database.listTasks(session); },
-
-    async get(session, taskId) {
-      const task = await options.database.getTask(session, taskId);
-      if (!task) return null;
-      const { originalTicketEncrypted, ...view } = task;
-      if (originalTicketEncrypted && task.requestedByUserId === session.userId && task.currentUserRole === "rep") {
-        return { ...view, originalTicket: options.cipher.decrypt(originalTicketEncrypted) };
-      }
-      return view;
-    },
-
     async answer(session, taskId, questionId, answerValue) {
       const answer = answerValue.trim();
       const developerNeeded = /^i\s+don['’]?t\s+know$/i.test(answer);
       await options.database.answerQuestion(session, taskId, questionId, answer, developerNeeded);
       if (!developerNeeded) await makePlanIfReady(session, taskId);
     },
+  };
+}
 
-    async approve(session, taskId, input) { await options.database.approveTask(session, taskId, input); },
+export function createTaskService(options: {
+  readonly database: TaskDatabase;
+  readonly codeReader: ProjectCodeReader;
+  readonly gateway: TaskModelGateway;
+  readonly cipher: TicketCipher;
+  readonly modelBudgetUsd: number;
+}): TaskService {
+  return {
+    ...createTaskReadService({ database: options.database, cipher: options.cipher }),
+    ...createTaskPlanningService(options),
   };
 }
