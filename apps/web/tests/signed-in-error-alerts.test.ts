@@ -14,7 +14,7 @@ describe("signed-in error query visibility", () => {
   it.each(pages)("renders ?error= as a visible destructive alert on %s", async (path) => {
     const source = await readFile(path, "utf8");
     expect(source).toContain("searchParams");
-    expect(source).toMatch(/params\.error|\{ error \}/);
+    expect(source).toMatch(/(?:params|query)\.error|\{ error \}/);
     expect(source).toContain("Alert");
     expect(source).toContain('variant="destructive"');
     expect(source).toContain("AlertDescription");
