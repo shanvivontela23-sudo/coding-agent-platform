@@ -167,7 +167,7 @@ describe("signed-in task pages with task planning unconfigured", () => {
       expect(homeResponse.status, homeHtml).toBe(200);
       expect(homeHtml).toContain("GitHub");
       expect(homeHtml).toContain("acme/backend");
-      expect(homeHtml).toContain("Default branch: main");
+      expect(homeHtml).toMatch(/Default branch: (?:<!-- -->)?main/);
       expect(homeHtml).toContain("ZIP upload");
       expect(homeHtml).toMatch(/Version (?:<!-- -->)?3/);
     } finally {
