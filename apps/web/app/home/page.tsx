@@ -2,18 +2,28 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppShell } from "../../components/app-shell";
-import { Button } from "../../components/ui/button";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button, buttonVariants } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { PageTitle, SectionTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
+type HomeProjectSource =
+  | { readonly type: "github"; readonly fullName: string; readonly defaultBranch: string }
+  | { readonly type: "upload"; readonly versionNumber: number };
+type HomeGitHubState =
+  | { readonly status: "connected"; readonly accountLogin: string; readonly managementUrl: string }
+  | { readonly status: "disconnected"; readonly accountLogin: null; readonly managementUrl: null }
+  | null;
 type HomePayload = {
   readonly organization: { readonly id: string; readonly name: string };
   readonly user: { readonly id: string; readonly email: string | null };
-  readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string; readonly source: HomeProjectSource | null }>;
+  readonly github: HomeGitHubState;
 };
+type HomePageProps = { readonly searchParams?: Promise<Record<string, string | string[] | undefined>> };
 
 const howItWorks = [
   { number: "01", title: "Connect a repo", description: "Choose the codebase Dhara should understand and work in." },
@@ -30,8 +40,19 @@ async function loadHome(): Promise<HomePayload> {
   return await response.json() as HomePayload;
 }
 
-export default async function HomePage() {
+function GitHubMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4 shrink-0 fill-current">
+      <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.2c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.39.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.08-.12-.29-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.75 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.08 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+    </svg>
+  );
+}
+
+export default async function HomePage({ searchParams }: HomePageProps) {
   const home = await loadHome();
+  const params = searchParams ? await searchParams : {};
+  const errorValue = Array.isArray(params.error) ? params.error[0] : params.error;
+  const githubConnected = home.github?.status === "connected";
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/home">
       <div className="space-y-10">
@@ -41,15 +62,27 @@ export default async function HomePage() {
           <p className="max-w-2xl text-muted-foreground">Start with a repository, describe the change you need, and keep developer review at the center.</p>
         </section>
 
+        {errorValue ? <Alert variant="destructive"><AlertDescription>{errorValue}</AlertDescription></Alert> : null}
+
         <section className="space-y-4" aria-labelledby="projects-heading">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <SectionTitle id="projects-heading">Projects</SectionTitle>
               <p className="mt-1 text-sm text-muted-foreground">GitHub repositories and ZIP projects appear here.</p>
             </div>
-            <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
-              <Button type="submit" className="w-full sm:w-auto">Connect a repository</Button>
-            </form>
+            {githubConnected ? (
+              <div className="flex flex-col gap-2 sm:items-end">
+                <Link href="/github/repositories" className={buttonVariants()}>Add a repository</Link>
+                <p className="text-sm text-muted-foreground">
+                  Connected to GitHub as <span className="font-medium text-foreground">{home.github.accountLogin}</span>{" "}
+                  <a href={home.github.managementUrl} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">Manage access</a>
+                </p>
+              </div>
+            ) : (
+              <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
+                <Button type="submit" className="w-full sm:w-auto">Connect a repository</Button>
+              </form>
+            )}
           </div>
 
           <Card>
@@ -80,7 +113,16 @@ export default async function HomePage() {
                   <Card className="h-full transition-colors hover:bg-muted/50">
                     <CardHeader>
                       <CardTitle className="text-base font-medium">{project.name}</CardTitle>
-                      <CardDescription>Project</CardDescription>
+                      {project.source?.type === "github" ? (
+                        <CardDescription className="space-y-1">
+                          <span className="flex items-center gap-1.5 text-foreground"><GitHubMark />{project.source.fullName}</span>
+                          <span className="block">Default branch: {project.source.defaultBranch}</span>
+                        </CardDescription>
+                      ) : project.source?.type === "upload" ? (
+                        <CardDescription>ZIP upload · Version {project.source.versionNumber}</CardDescription>
+                      ) : (
+                        <CardDescription>Source unavailable</CardDescription>
+                      )}
                     </CardHeader>
                   </Card>
                 </Link>

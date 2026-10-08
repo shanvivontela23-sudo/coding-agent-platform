@@ -1,8 +1,9 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppShell } from "../../../components/app-shell";
 import { Alert, AlertDescription } from "../../../components/ui/alert";
-import { Button } from "../../../components/ui/button";
+import { Button, buttonVariants } from "../../../components/ui/button";
 import { Card, CardContent } from "../../../components/ui/card";
 import { PageTitle } from "../../../components/ui/heading";
 
@@ -12,7 +13,7 @@ type HomePayload = {
   readonly organization: { readonly id: string; readonly name: string };
   readonly user: { readonly id: string; readonly email: string | null };
 };
-type Repository = { readonly id: number; readonly name: string; readonly fullName: string; readonly defaultBranch: string; readonly private: boolean };
+type Repository = { readonly id: number; readonly name: string; readonly fullName: string; readonly defaultBranch: string; readonly private: boolean; readonly projectId: string | null };
 type PickerProps = { readonly searchParams?: Promise<Record<string, string | string[] | undefined>> };
 
 async function cookieHeader(): Promise<string> {
@@ -46,10 +47,13 @@ export default async function GitHubRepositoriesPage({ searchParams }: PickerPro
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/home">
       <div className="space-y-8">
-        <section className="space-y-2">
-          <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">GitHub</p>
-          <PageTitle>Select a repository</PageTitle>
-          <p className="text-muted-foreground">Choose a repository for Dhara to learn.</p>
+        <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">GitHub</p>
+            <PageTitle>Select a repository</PageTitle>
+            <p className="text-muted-foreground">Choose a repository for Dhara to learn.</p>
+          </div>
+          {!pending && !result.disconnected ? <form action="/github/repositories" method="get"><Button type="submit" variant="outline">Refresh</Button></form> : null}
         </section>
 
         {errorValue ? <Alert variant="destructive"><AlertDescription>{errorValue}</AlertDescription></Alert> : null}
@@ -65,11 +69,15 @@ export default async function GitHubRepositoriesPage({ searchParams }: PickerPro
             {result.repositories.map((repository) => (
               <Card key={repository.id}>
                 <CardContent className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0"><p className="truncate text-base font-medium">{repository.fullName}</p><p className="text-sm text-muted-foreground">Default branch: {repository.defaultBranch}{repository.private ? " · Private" : ""}</p></div>
-                  <form action={`${apiOrigin}/github/projects`} method="post">
-                    <input type="hidden" name="repositoryId" value={repository.id} />
-                    <Button type="submit" variant="outline">Select</Button>
-                  </form>
+                  <div className="min-w-0"><p className="truncate text-base font-medium">{repository.fullName}</p><p className="text-sm text-muted-foreground">Default branch: {repository.defaultBranch}{repository.private ? " · Private" : ""}</p>{repository.projectId ? <p className="mt-1 text-sm font-medium text-success">Already a project</p> : null}</div>
+                  {repository.projectId ? (
+                    <Link href={`/projects/${repository.projectId}`} className={buttonVariants({ variant: "outline" })}>Open project</Link>
+                  ) : (
+                    <form action={`${apiOrigin}/github/projects`} method="post">
+                      <input type="hidden" name="repositoryId" value={repository.id} />
+                      <Button type="submit" variant="outline">Select</Button>
+                    </form>
+                  )}
                 </CardContent>
               </Card>
             ))}

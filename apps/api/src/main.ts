@@ -18,7 +18,7 @@ import { createApiServer } from "./server.js";
 import { createTaskDatabase } from "./task-database.js";
 import { ExistingGatewayTaskModelGateway } from "./task-intake.js";
 import { attachTaskRoutes } from "./task-server.js";
-import { createTaskService, type TaskService } from "./task-service.js";
+import { createTaskPlanningService, createTaskReadService, type TaskPlanningService } from "./task-service.js";
 import { createTicketCipher } from "./ticket-crypto.js";
 import { createUploadProjectDatabase } from "./upload-project-database.js";
 import type { UploadArchiveLimits } from "./upload-archive.js";
@@ -82,10 +82,12 @@ const product07Service = createProduct07Service({
   limits: uploadLimits,
 });
 
-let taskService: TaskService | undefined;
+const taskDatabase = createTaskDatabase(tenantPool);
+const taskCipher = createTicketCipher(process.env.TASK_TICKET_ENCRYPTION_SECRET?.trim() || sessionSecret);
+const taskReadService = createTaskReadService({ database: taskDatabase, cipher: taskCipher });
+let taskPlanningService: TaskPlanningService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
 if (taskGatewayAdminToken) {
-  const taskDatabase = createTaskDatabase(tenantPool);
   const taskRunTokenService = new RunTokenService({ secret: process.env.TASK_GATEWAY_RUN_TOKEN_SECRET?.trim() || sessionSecret });
   const gateway = new PersistentModelGateway({
     store: new FileGatewayStore({ rootDir: process.env.TASK_GATEWAY_STORE_DIR?.trim() || join(homedir(), ".dhara", "gateway") }),
@@ -100,11 +102,11 @@ if (taskGatewayAdminToken) {
     runDurationMs: 7 * 24 * 60 * 60_000,
   });
   const githubReader = new GitHubProjectCodeReader({ database: taskDatabase, appId: githubAppId, privateKey: githubPrivateKey });
-  taskService = createTaskService({
+  taskPlanningService = createTaskPlanningService({
     database: taskDatabase,
     codeReader: new HybridProjectCodeReader({ uploadDatabase, storage: projectStorage, githubReader, limits: uploadLimits }),
     gateway: taskModelGateway,
-    cipher: createTicketCipher(process.env.TASK_TICKET_ENCRYPTION_SECRET?.trim() || sessionSecret),
+    cipher: taskCipher,
     modelBudgetUsd: positiveNumber("TASK_MODEL_BUDGET_USD", 0.5),
   });
 }
@@ -120,7 +122,7 @@ const productServer = createApiServer({
   githubApp,
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
-const server = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, service: taskService });
+const server = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };

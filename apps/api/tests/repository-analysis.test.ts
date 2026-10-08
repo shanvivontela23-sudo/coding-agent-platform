@@ -122,6 +122,26 @@ describe("deterministic repository archive analysis", () => {
     await expect(analyseRepositoryArchive(archive([{ name: "repo/a.ts", contents: "a" }, { name: "repo/b.ts", contents: "b" }]), { ...generousLimits, maxFiles: 1 })).rejects.toMatchObject({ code: "REPOSITORY_TOO_LARGE" });
   });
 
+  it("does not retain the contents of large countable source files", async () => {
+    const bytes = archive([
+      { name: "repo/package.json", contents: JSON.stringify({ devDependencies: { typescript: "5" } }) },
+      { name: "repo/src/large-a.ts", contents: Buffer.alloc(256 * 1024, 65) },
+      { name: "repo/src/large-b.ts", contents: Buffer.alloc(256 * 1024, 66) },
+    ]);
+    const module = await import("../src/repository-analysis.js");
+    const readEntries = (module as unknown as {
+      readRepositoryAnalysisEntries?: (input: Uint8Array, limits: typeof generousLimits) => Promise<readonly { readonly path: string; readonly bytes: Uint8Array }[]>;
+    }).readRepositoryAnalysisEntries;
+
+    expect(readEntries).toBeTypeOf("function");
+    const entries = await readEntries!(bytes, generousLimits);
+    expect(entries.find((entry) => entry.path === "package.json")?.bytes.byteLength).toBeGreaterThan(0);
+    expect(entries.filter((entry) => entry.path.endsWith(".ts")).map((entry) => entry.bytes.byteLength)).toEqual([0, 0]);
+
+    const report = await analyseRepositoryArchive(bytes, generousLimits);
+    expect(report.languages).toEqual([{ name: "TypeScript", fileCount: 2, percentage: 100 }]);
+  });
+
   it("has no model, gateway, sandbox execution, child-process, or disk-extraction dependency", async () => {
     const source = await readFile("apps/api/src/repository-analysis.ts", "utf8");
     expect(source).not.toMatch(/gateway|model[_-]?call|child_process|exec\(|spawn\(|writeFile|mkdtemp|extract/i);

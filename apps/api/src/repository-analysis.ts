@@ -267,15 +267,16 @@ export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEnt
   return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
 }
 
-export async function analyseRepositoryArchive(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<ProjectReport> {
+export async function readRepositoryAnalysisEntries(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<readonly RepositoryAnalysisEntry[]> {
   if (input.byteLength > limits.maxCompressedBytes) throw tooLarge();
   const source = Readable.from([Buffer.from(input)]); const gunzip = createGunzip(); source.pipe(gunzip);
-  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0); let uncompressedBytes = 0; let current: TarHeader | null = null; let currentPath: string | null = null; let dataRemaining = 0; let paddingRemaining = 0; let capture: Array<Buffer<ArrayBufferLike>> | null = null; let captureKind: "entry" | "pax" | null = null; let nextPaxPath: string | null = null; let entryCount = 0; let ended = false;
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0); let uncompressedBytes = 0; let current: TarHeader | null = null; let currentPath: string | null = null; let dataRemaining = 0; let paddingRemaining = 0; let capture: Array<Buffer<ArrayBufferLike>> | null = null; let captureKind: "manifest" | "source" | "pax" | null = null; let nextPaxPath: string | null = null; let entryCount = 0; let ended = false;
   const entries: RepositoryAnalysisEntry[] = [];
   const finishEntry = () => {
     if (!current) return;
     if (capture && captureKind === "pax") nextPaxPath = parsePaxPath(Buffer.concat(capture));
-    else if (capture && captureKind === "entry" && currentPath) entries.push({ path: currentPath, bytes: Buffer.concat(capture) });
+    else if (capture && captureKind === "manifest" && currentPath) entries.push({ path: currentPath, bytes: Buffer.concat(capture) });
+    else if (captureKind === "source" && currentPath) entries.push({ path: currentPath, bytes: new Uint8Array(0) });
     current = null; currentPath = null; capture = null; captureKind = null;
   };
   try {
@@ -292,7 +293,11 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
             const resolvedPath = nextPaxPath ?? header.name; nextPaxPath = null; const regular = header.type === "0" || header.type === "\0";
             if (regular && safeArchivePath(resolvedPath)) {
               const relative = withoutArchiveRoot(resolvedPath);
-              if (analysisRelevantPath(relative)) { currentPath = relative; capture = []; captureKind = "entry"; }
+              if (analysisRelevantPath(relative)) {
+                currentPath = relative;
+                if (isRecognizedManifest(basename(relative))) { capture = []; captureKind = "manifest"; }
+                else captureKind = "source";
+              }
             }
           }
           if (dataRemaining === 0) finishEntry(); continue;
@@ -305,5 +310,9 @@ export async function analyseRepositoryArchive(input: Uint8Array, limits: Reposi
     source.destroy(); gunzip.destroy(); if (error instanceof RepositoryAnalysisError) throw error; throw invalidArchive();
   } finally { source.destroy(); gunzip.destroy(); pending = Buffer.alloc(0); capture = null; currentPath = null; nextPaxPath = null; }
   if (!ended && (current !== null || pending.length > 0 || paddingRemaining > 0)) throw invalidArchive();
-  return analyseRepositoryEntries(entries);
+  return entries;
+}
+
+export async function analyseRepositoryArchive(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<ProjectReport> {
+  return analyseRepositoryEntries(await readRepositoryAnalysisEntries(input, limits));
 }

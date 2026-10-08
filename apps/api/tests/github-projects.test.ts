@@ -24,6 +24,7 @@ type ExtendedDatabase = ProductDatabase & {
   getMembershipRole(session: SessionIdentity): Promise<"owner" | "developer" | "rep">;
   getGitHubInstallation(session: SessionIdentity): Promise<{ installationId: number; status: "connected" | "disconnected" } | null>;
   markGitHubInstallationDisconnected(session: SessionIdentity): Promise<void>;
+  getGitHubProjectBindings(session: SessionIdentity): Promise<ReadonlyArray<{ githubRepositoryId: number; projectId: string }>>;
   createGitHubProject(session: SessionIdentity, input: {
     repositoryId: number;
     name: string;
@@ -66,6 +67,7 @@ function makeDatabase(status: "connected" | "disconnected" = "connected") {
     getMembershipRole: async () => "owner" as const,
     getGitHubInstallation: async () => ({ installationId: 42, status: disconnected ? "disconnected" as const : status }),
     markGitHubInstallationDisconnected: async () => { disconnected = true; },
+    getGitHubProjectBindings: async () => [{ githubRepositoryId: 101, projectId }],
     createGitHubProject: async (_session: SessionIdentity, input: Parameters<ExtendedDatabase["createGitHubProject"]>[1]) => { created = input; return { projectId }; },
     getProjectReport: async () => ({
       project: { id: projectId, name: "widget" },
@@ -84,7 +86,10 @@ function makeGitHub(options: { disconnectedOnList?: boolean; disconnectedOnCheck
     verifyUserInstallation: async () => undefined,
     listRepositories: async () => {
       if (options.disconnectedOnList) throw Object.assign(new Error("must not surface"), { code: "GITHUB_INSTALLATION_DISCONNECTED" });
-      return [{ id: 101, name: "widget", fullName: "acme/widget", defaultBranch: "main", private: true }];
+      return [
+        { id: 101, name: "widget", fullName: "acme/widget", defaultBranch: "main", private: true },
+        { id: 102, name: "new-repo", fullName: "acme/new-repo", defaultBranch: "trunk", private: false },
+      ];
     },
     analyseRepository: async (_installationId, repositoryId) => {
       analysed.push(repositoryId);
@@ -129,13 +134,16 @@ async function withServer(database: ExtendedDatabase, github: FakeGitHub, run: (
 }
 
 describe("GitHub repository selection and project report API", () => {
-  it("returns only safe repository metadata from the bound installation", async () => {
+  it("returns safe repository metadata and marks repositories that already have projects", async () => {
     const { database } = makeDatabase();
     const { github } = makeGitHub();
     await withServer(database, github, async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/github/repositories`, { headers: { cookie: tenantCookie() } });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ repositories: [{ id: 101, name: "widget", fullName: "acme/widget", defaultBranch: "main", private: true }] });
+      expect(await response.json()).toEqual({ repositories: [
+        { id: 101, name: "widget", fullName: "acme/widget", defaultBranch: "main", private: true, projectId },
+        { id: 102, name: "new-repo", fullName: "acme/new-repo", defaultBranch: "trunk", private: false, projectId: null },
+      ] });
     });
   });
 

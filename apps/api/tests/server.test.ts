@@ -126,7 +126,7 @@ describe("product API server", () => {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/home`, { headers: { cookie: tenantCookie() } });
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ organization: { id: organizationId, name: "Acme" }, user: { id: userId, email: "rep@example.com" }, projects: [] });
+      await expect(response.json()).resolves.toEqual({ organization: { id: organizationId, name: "Acme" }, user: { id: userId, email: "rep@example.com" }, projects: [], github: null });
     });
   });
 

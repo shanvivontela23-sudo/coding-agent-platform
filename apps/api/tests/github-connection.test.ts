@@ -10,22 +10,27 @@ const userId = "10000000-0000-4000-8000-000000000071";
 const organizationId = "00000000-0000-4000-8000-000000000071";
 const session: SessionIdentity = { userId, organizationId, expiresAtMs: Date.now() + 60_000 };
 
+type InstallationStatus = "connected" | "disconnected";
 type ExtendedDatabase = ProductDatabase & {
   getMembershipRole(session: SessionIdentity): Promise<MemberRole>;
   createGitHubConnectionState(session: SessionIdentity, nonceHash: string, expiresAt: Date): Promise<void>;
   consumeGitHubConnectionState(session: SessionIdentity, nonceHash: string, now: Date): Promise<boolean>;
   bindGitHubInstallation(session: SessionIdentity, installationId: number): Promise<void>;
+  getGitHubInstallation(session: SessionIdentity): Promise<{ installationId: number; status: InstallationStatus } | null>;
+  markGitHubInstallationDisconnected(session: SessionIdentity): Promise<void>;
 };
 
 type FakeGitHub = {
   installationUrl(state: string): string;
   verifyUserInstallation(code: string, installationId: number): Promise<void>;
+  getInstallationDetails(installationId: number): Promise<{ accountLogin: string; managementUrl: string }>;
 };
 
-function makeDatabase(options: { role?: MemberRole; boundElsewhere?: boolean } = {}) {
+function makeDatabase(options: { role?: MemberRole; boundElsewhere?: boolean; installationStatus?: InstallationStatus | null } = {}) {
   const states = new Set<string>();
   const bindings: number[] = [];
   const role = options.role ?? "owner";
+  let installationStatus = options.installationStatus ?? null;
   const database = {
     lookupMemberships: async () => [],
     createOrganizationWithOwner: async () => ({ userId, organizationId }),
@@ -44,21 +49,34 @@ function makeDatabase(options: { role?: MemberRole; boundElsewhere?: boolean } =
     bindGitHubInstallation: async (_session: SessionIdentity, installationId: number) => {
       if (options.boundElsewhere) throw Object.assign(new Error("must never be logged"), { code: "GITHUB_INSTALLATION_BOUND" });
       bindings.push(installationId);
+      installationStatus = "connected";
     },
+    getGitHubInstallation: async () => installationStatus ? { installationId: 42, status: installationStatus } : null,
+    markGitHubInstallationDisconnected: async () => { installationStatus = "disconnected"; },
   } as unknown as ExtendedDatabase;
-  return { database, bindings };
+  return { database, bindings, installationStatus: () => installationStatus };
 }
 
 function makeGitHub() {
   const verified: number[] = [];
+  let installationUrlCalls = 0;
+  let installationDetailCalls = 0;
   const github: FakeGitHub = {
-    installationUrl: (state) => `https://github.com/apps/dhara-test/installations/new?state=${encodeURIComponent(state)}`,
+    installationUrl: (state) => {
+      installationUrlCalls += 1;
+      return `https://github.com/apps/dhara-test/installations/new?state=${encodeURIComponent(state)}`;
+    },
     verifyUserInstallation: async (_code, installationId) => {
       verified.push(installationId);
       if (installationId !== 42) throw Object.assign(new Error("forged installation"), { code: "GITHUB_INSTALLATION_FORBIDDEN" });
     },
+    getInstallationDetails: async (installationId) => {
+      installationDetailCalls += 1;
+      if (installationId !== 42) throw new Error("unexpected installation");
+      return { accountLogin: "acme", managementUrl: "https://github.com/organizations/acme/settings/installations/42" };
+    },
   };
-  return { github, verified };
+  return { github, verified, installationUrlCalls: () => installationUrlCalls, installationDetailCalls: () => installationDetailCalls };
 }
 
 async function withServer(database: ExtendedDatabase, github: FakeGitHub, run: (baseUrl: string) => Promise<void>): Promise<void> {
@@ -119,6 +137,43 @@ describe("GitHub App installation binding", () => {
       const response = await fetch(`${baseUrl}/github/connect/start`, { headers: { cookie: tenantCookie() }, redirect: "manual" });
       expect(response.status).toBe(303);
       expect(new URL(response.headers.get("location")!).pathname).toBe("/home");
+    });
+  });
+
+  it("opens the repository picker without a github.com round trip when the installation is already active", async () => {
+    const { database } = makeDatabase({ installationStatus: "connected" });
+    const { github, installationUrlCalls, installationDetailCalls } = makeGitHub();
+    await withServer(database, github, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/github/connect/start`, { headers: { cookie: tenantCookie() }, redirect: "manual" });
+      expect(response.status).toBe(303);
+      const location = new URL(response.headers.get("location")!);
+      expect(location.origin).toBe("http://localhost:3000");
+      expect(location.pathname).toBe("/github/repositories");
+      expect(installationUrlCalls()).toBe(0);
+      expect(installationDetailCalls()).toBe(1);
+    });
+  });
+
+  it("restarts the GitHub install flow when the stored installation is disconnected", async () => {
+    const { database } = makeDatabase({ installationStatus: "disconnected" });
+    const { github, installationUrlCalls, installationDetailCalls } = makeGitHub();
+    await withServer(database, github, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/github/connect/start`, { headers: { cookie: tenantCookie() }, redirect: "manual" });
+      const location = new URL(response.headers.get("location")!);
+      expect(location.hostname).toBe("github.com");
+      expect(location.pathname).toBe("/apps/dhara-test/installations/new");
+      expect(installationUrlCalls()).toBe(1);
+      expect(installationDetailCalls()).toBe(0);
+    });
+  });
+
+  it("returns the active installation account and GitHub management URL with home data", async () => {
+    const { database } = makeDatabase({ installationStatus: "connected" });
+    const { github } = makeGitHub();
+    await withServer(database, github, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/home`, { headers: { cookie: tenantCookie() } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ github: { status: "connected", accountLogin: "acme", managementUrl: "https://github.com/organizations/acme/settings/installations/42" } });
     });
   });
 
