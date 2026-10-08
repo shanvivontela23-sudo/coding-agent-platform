@@ -94,7 +94,7 @@ describe("Dhara web design foundation", () => {
     expect(home).toContain("AppShell");
     expect(home).toContain("Welcome to Dhara");
     expect(home).toContain("/api/home");
-    expect(home).toContain("No projects yet. Connect a repository to get started.");
+    expect(home).toContain("No projects yet. Connect a repository or upload a ZIP to get started.");
     expect(home).not.toContain("Coming soon");
     expect(home).not.toContain("next product slice");
     expect(home).toContain("How it works");
