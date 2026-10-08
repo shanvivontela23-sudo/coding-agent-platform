@@ -5,13 +5,14 @@ import { UserMenu } from "./user-menu";
 
 const navigation = [
   { label: "Projects", href: "/home" },
+  { label: "Tasks", href: "/tasks" },
   { label: "Members", href: "/members" },
 ] as const;
 
 type AppShellProps = {
   readonly organizationName: string;
   readonly userEmail: string | null;
-  readonly activePath: "/home" | "/members";
+  readonly activePath: "/home" | "/tasks" | "/members";
   readonly children: ReactNode;
 };
 
