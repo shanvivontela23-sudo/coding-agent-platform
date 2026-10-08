@@ -20,10 +20,10 @@ describe("Product 07 ZIP project experience", () => {
     const page = await readFile("apps/web/app/tasks/[taskId]/page.tsx", "utf8");
     expect(page).toContain("Estimated cost");
     expect(page).toContain("Estimated time");
-    expect(page).toContain("costUsdMin");
-    expect(page).toContain("costUsdMax");
-    expect(page).toContain("timeMinutesMin");
-    expect(page).toContain("timeMinutesMax");
-    expect(page).toContain("Estimate");
+    expect(page).toContain("estimatedCostUsdMin");
+    expect(page).toContain("estimatedCostUsdMax");
+    expect(page).toContain("estimatedTimeMinutesMin");
+    expect(page).toContain("estimatedTimeMinutesMax");
+    expect(page).toContain("Estimate ·");
   });
 });
