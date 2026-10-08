@@ -27,14 +27,14 @@ function replacePreservingPrefix(value: string, pattern: RegExp, replacement: st
 
 export function maskPersonalData(value: string): string {
   let masked = value;
+  masked = replacePreservingPrefix(masked, /\b((?:Customer|customer|User|user|Name|name|Contact|contact)\s*[:=-]?\s*)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b/g, "[MASKED_NAME]");
   masked = masked.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[MASKED_EMAIL]");
+  masked = replacePreservingPrefix(masked, /\b(account(?:\s+(?:number|no\.?|id))?\s*[:#-]?\s*)([A-Z0-9-]{6,})\b/gi, "[MASKED_ACCOUNT]");
   masked = masked.replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, (candidate) => {
     const digits = candidate.replace(/\D/g, "");
     return digits.length >= 9 ? "[MASKED_PHONE]" : candidate;
   });
-  masked = replacePreservingPrefix(masked, /\b(account(?:\s+(?:number|no\.?|id))?\s*[:#-]?\s*)([A-Z0-9-]{6,})\b/gi, "[MASKED_ACCOUNT]");
   masked = masked.replace(/\b\d{8,}\b/g, "[MASKED_ACCOUNT]");
-  masked = replacePreservingPrefix(masked, /\b((?:customer|user|name|contact)\s*[:=-]?\s*)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b/g, "[MASKED_NAME]");
   return masked;
 }
 
