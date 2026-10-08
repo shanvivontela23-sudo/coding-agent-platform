@@ -136,7 +136,7 @@ describe("signed-in task pages with task planning unconfigured", () => {
     const child = spawn("pnpm", ["--filter", "@coding-agent/web", "dev", "--hostname", "127.0.0.1", "--port", String(webPort)], {
       cwd: process.cwd(),
       env: { ...process.env, NEXT_PUBLIC_API_ORIGIN: `http://127.0.0.1:${apiPort}`, NEXT_TELEMETRY_DISABLED: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     const append = (chunk: Buffer) => { output = `${output}${chunk.toString("utf8")}`.slice(-20_000); };
     child.stdout.on("data", append);
