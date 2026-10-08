@@ -108,6 +108,104 @@ The private key may be provided with literal `\n` escapes; the API converts them
 
 `coding_agent_api` is a `NOSUPERUSER NOBYPASSRLS NOINHERIT` login and has no direct tenant-table access. Authenticated tenant routes start a transaction, `SET LOCAL ROLE coding_agent_app`, then set the verified tenant UUID with a bound `set_config('app.organization_id', ..., true)`. Login membership lookup, first-run organization creation, and the two verified invitation operations are the only SECURITY DEFINER database entry points available to the API login. GitHub installation and project-report persistence stays behind normal tenant RLS.
 
+## Try task intake for real with Anthropic
+
+The automated tests and CI use recorded/fake responses and do not contact a model provider. The steps in this section intentionally exercise a real Anthropic account.
+
+**Warning:** this path makes **paid model calls**. The per-task gateway budget limits spend for each task, but Anthropic usage can still incur charges. Never commit provider keys, LiteLLM master keys, GitHub App secrets, Supabase secrets, or local `.env` files.
+
+### 1. Start the checked-in local LiteLLM stack
+
+Create `.env.local-gateway` at the repository root with the local model-stack values. For the Anthropic path, these are the relevant entries:
+
+```dotenv
+GATEWAY_HOSTNAME=127.0.0.1
+MODEL_GATEWAY_RUN_TOKEN_SECRET=<at-least-32-random-characters>
+LITELLM_MASTER_KEY=<local-litellm-master-key>
+POSTGRES_PASSWORD=<local-postgres-password>
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
+OPENAI_API_KEY=
+HARNESS_MODEL_PRICES_JSON={}
+SMOKE_ANTHROPIC_MODEL=<your-anthropic-model-id>
+```
+
+The Phase 0 smoke tooling can require additional evaluation-only entries documented in `evals/deploy/http-gateway/LOCAL_MAC.md`; task intake itself does not need E2B credentials.
+
+Start the stack exactly from the repository root:
+
+```bash
+mkdir -p .local/gateway-state
+docker compose --env-file .env.local-gateway \
+  -f evals/deploy/http-gateway/compose.local.yaml build
+docker compose --env-file .env.local-gateway \
+  -f evals/deploy/http-gateway/compose.local.yaml up -d
+```
+
+LiteLLM is exposed at `http://127.0.0.1:4000`. The separate HTTP gateway in the same Compose stack is exposed at `127.0.0.1:8080`; product task intake uses its in-process `PersistentModelGateway` with `LiteLLMAdapter`, so the product's LiteLLM base URL is port `4000`.
+
+### 2. Start the API with the task-model settings
+
+First export the normal product variables from the local setup above. To use the established owner-local API port `3101`, set the API origin consistently, then add the task settings:
+
+```bash
+export PORT=3101
+export API_ORIGIN=http://localhost:3101
+export WEB_ORIGIN=http://localhost:3000
+
+export DATABASE_URL="postgresql://coding_agent_api:coding-agent-local-api@127.0.0.1:5432/coding_agent"
+export SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
+export SUPABASE_ANON_KEY="YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY"
+export SUPABASE_FLOW_SECRET="replace-with-at-least-32-random-characters"
+export SESSION_SIGNING_SECRET="replace-with-another-at-least-32-random-characters"
+export GITHUB_APP_ID="YOUR_APP_ID"
+export GITHUB_APP_SLUG="YOUR_APP_SLUG"
+export GITHUB_APP_CLIENT_ID="YOUR_APP_CLIENT_ID"
+export GITHUB_APP_CLIENT_SECRET="YOUR_APP_CLIENT_SECRET"
+export GITHUB_APP_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'
+
+export TASK_MODEL_GATEWAY_BASE_URL=http://127.0.0.1:4000
+export TASK_MODEL_GATEWAY_ADMIN_TOKEN='<same value as LITELLM_MASTER_KEY in .env.local-gateway>'
+export TASK_MODEL_PROVIDER=anthropic
+export TASK_MODEL_NAME=anthropic/<your-anthropic-model-id>
+export TASK_MODEL_BUDGET_USD=0.50
+export TASK_GATEWAY_RUN_TOKEN_SECRET='<at-least-32-random-characters>'
+export TASK_TICKET_ENCRYPTION_SECRET='<at-least-32-random-characters>'
+
+pnpm --filter @coding-agent/api dev
+```
+
+`TASK_MODEL_PROVIDER` defaults to `anthropic`; it is shown explicitly so the local provider choice is obvious. `TASK_MODEL_NAME` must be the Anthropic model enabled for your account, prefixed with `anthropic/` for LiteLLM routing. A practical setup is to use the same underlying Anthropic model ID you put in `SMOKE_ANTHROPIC_MODEL`.
+
+`TASK_MODEL_GATEWAY_ADMIN_TOKEN` is the switch that enables real task planning. When it is absent, the API does not construct the real LiteLLM adapter.
+
+For ZIP projects, local archive storage defaults to `~/.dhara/storage`. The upload limits can be overridden without changing code:
+
+```bash
+export PROJECT_STORAGE_ROOT="$HOME/.dhara/storage"
+export PROJECT_UPLOAD_MAX_COMPRESSED_BYTES=$((100 * 1024 * 1024))
+export PROJECT_UPLOAD_MAX_UNCOMPRESSED_BYTES=$((500 * 1024 * 1024))
+export PROJECT_UPLOAD_MAX_FILES=50000
+export PROJECT_UPLOAD_MAX_FILE_BYTES=$((5 * 1024 * 1024))
+```
+
+### 3. Start the web app and submit a task
+
+In a second terminal:
+
+```bash
+export NEXT_PUBLIC_API_ORIGIN=http://localhost:3101
+pnpm --filter @coding-agent/web dev
+```
+
+Open `http://localhost:3000`, sign in, open or create a project, choose **New task**, submit a support-style request, answer any clarification questions, and review the proposed plan and its server-side cost/time estimate ranges.
+
+Stop the local model stack when finished:
+
+```bash
+docker compose --env-file .env.local-gateway \
+  -f evals/deploy/http-gateway/compose.local.yaml down
+```
+
 ## Development checks
 
 ```bash
