@@ -40,9 +40,9 @@ export async function handleTaskHttpRequest(options: {
   readonly url: URL;
   readonly webOrigin: string;
   readonly sessionSecret: string;
-  readonly service?: TaskService;
-  readonly readService?: TaskReadService;
-  readonly planningService?: TaskPlanningService;
+  readonly service?: TaskService | undefined;
+  readonly readService?: TaskReadService | undefined;
+  readonly planningService?: TaskPlanningService | undefined;
 }): Promise<boolean> {
   const { request, response, url } = options;
   const createMatch = request.method === "POST" ? url.pathname.match(/^\/projects\/([0-9a-f-]+)\/tasks$/i) : null;
