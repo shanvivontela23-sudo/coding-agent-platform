@@ -42,6 +42,11 @@ type GitHubStatePayload = {
   readonly expiresAtMs: number;
 };
 
+type HomeGitHubState =
+  | { readonly status: "connected"; readonly accountLogin: string; readonly managementUrl: string }
+  | { readonly status: "disconnected"; readonly accountLogin: null; readonly managementUrl: null }
+  | null;
+
 function redirect(response: ServerResponse, location: string): void { response.statusCode = 303; response.setHeader("location", location); response.end(); }
 function cookie(name: string, value: string, maxAgeSeconds: number, secure: boolean): string { return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`; }
 function clearCookie(name: string, secure: boolean): string { return `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`; }
@@ -125,6 +130,22 @@ export function createApiServer(options: ApiServerOptions) {
   const secureCookies = new URL(apiOrigin).protocol === "https:";
   const now = options.nowMs ?? Date.now;
   const random = options.randomBytes ?? (() => nodeRandomBytes(32));
+
+  const homeGitHubState = async (session: SessionIdentity): Promise<HomeGitHubState> => {
+    if (typeof options.database.getGitHubInstallation !== "function") return null;
+    const installation = await options.database.getGitHubInstallation(session);
+    if (!installation) return null;
+    if (installation.status === "disconnected") return { status: "disconnected", accountLogin: null, managementUrl: null };
+    try {
+      const details = await github(options).getInstallationDetails(installation.installationId);
+      return { status: "connected", ...details };
+    } catch (error) {
+      if (!isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) throw error;
+      if (typeof options.database.markGitHubInstallationDisconnected === "function") await options.database.markGitHubInstallationDisconnected(session);
+      return { status: "disconnected", accountLogin: null, managementUrl: null };
+    }
+  };
+
   const finishIdentity = async (identity: SupabaseIdentity, response: ServerResponse): Promise<void> => {
     const memberships = await options.database.lookupMemberships(identity);
     if (memberships.length === 0) {
@@ -181,7 +202,11 @@ export function createApiServer(options: ApiServerOptions) {
       if (request.method === "POST" && url.pathname === "/invitations/decline") {
         const onboardingCookie = cookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session"); verifyOnboardingToken(onboardingCookie, options.sessionSecret); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return;
       }
-      if (request.method === "GET" && url.pathname === "/api/home") { const session = tenantSession(request, options.sessionSecret); json(response, 200, await options.database.getHome(session)); return; }
+      if (request.method === "GET" && url.pathname === "/api/home") {
+        const session = tenantSession(request, options.sessionSecret);
+        const [home, githubState] = await Promise.all([options.database.getHome(session), homeGitHubState(session)]);
+        json(response, 200, { ...home, github: githubState }); return;
+      }
       if (request.method === "GET" && url.pathname === "/api/members") {
         const session = tenantSession(request, options.sessionSecret); const members = await options.database.getMembers(session);
         json(response, 200, members.currentUser.role === "owner" ? members : { ...members, invitations: [] }); return;
@@ -193,6 +218,16 @@ export function createApiServer(options: ApiServerOptions) {
       if (request.method === "GET" && url.pathname === "/github/connect/start") {
         const session = tenantSession(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
         if (role !== "owner" && role !== "developer") { redirect(response, webLocation(options.webOrigin, "/home", "Only owners and developers can connect repositories.")); return; }
+        const existing = typeof options.database.getGitHubInstallation === "function" ? await options.database.getGitHubInstallation(session) : null;
+        if (existing?.status === "connected") {
+          try {
+            await github(options).getInstallationDetails(existing.installationId);
+            redirect(response, webLocation(options.webOrigin, "/github/repositories")); return;
+          } catch (error) {
+            if (!isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) throw error;
+            if (typeof options.database.markGitHubInstallationDisconnected === "function") await options.database.markGitHubInstallationDisconnected(session);
+          }
+        }
         const nonce = Buffer.from(random()).toString("base64url"); const expiresAtMs = now() + 10 * 60_000;
         await requireDatabaseMethod(options.database, "createGitHubConnectionState")(session, hashNonce(nonce), new Date(expiresAtMs));
         const state = createGitHubState({ purpose: "github_install", organizationId: session.organizationId, userId: session.userId, nonce, expiresAtMs }, options.sessionSecret);
@@ -215,8 +250,17 @@ export function createApiServer(options: ApiServerOptions) {
         if (role !== "owner" && role !== "developer") throw new AppError("GITHUB_FORBIDDEN", "Repository access is not allowed for this role.", 403);
         const installation = await requireDatabaseMethod(options.database, "getGitHubInstallation")(session);
         if (!installation || installation.status !== "connected") throw new AppError("GITHUB_NOT_CONNECTED", "GitHub is not connected.", 409);
-        try { json(response, 200, { repositories: await github(options).listRepositories(installation.installationId) }); }
-        catch (error) { if (isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) await requireDatabaseMethod(options.database, "markGitHubInstallationDisconnected")(session); throw error; }
+        try {
+          const [repositories, bindings] = await Promise.all([
+            github(options).listRepositories(installation.installationId),
+            requireDatabaseMethod(options.database, "getGitHubProjectBindings")(session),
+          ]);
+          const projectByRepository = new Map(bindings.map((binding) => [binding.githubRepositoryId, binding.projectId]));
+          json(response, 200, { repositories: repositories.map((repository) => ({ ...repository, projectId: projectByRepository.get(repository.id) ?? null })) });
+        } catch (error) {
+          if (isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) await requireDatabaseMethod(options.database, "markGitHubInstallationDisconnected")(session);
+          throw error;
+        }
         return;
       }
       if (request.method === "POST" && url.pathname === "/github/projects") {
