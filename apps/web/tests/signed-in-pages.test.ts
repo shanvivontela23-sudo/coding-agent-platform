@@ -19,7 +19,7 @@ describe("Dhara signed-in web flow", () => {
     expect(page).toContain("/api/home");
     expect(page).toContain("organization.name");
     expect(page).toContain("user.email");
-    expect(page).toContain("No projects yet. Connect a repository to get started.");
+    expect(page).toContain("No projects yet. Connect a repository or upload a ZIP to get started.");
     expect(shell).toContain("PRODUCT_NAME");
     expect(shell).toContain("userEmail");
   });
