@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertRestrictedDatabaseUrl, withTenant } from "../src/database.js";
+import { assertRestrictedDatabaseUrl, createProductDatabase, withTenant, type TenantPool } from "../src/database.js";
 import type { SessionIdentity } from "../src/auth.js";
 
 type QueryRecord = { readonly text: string; readonly values?: readonly unknown[] };
@@ -60,5 +60,30 @@ describe("database boundary", () => {
     })).rejects.toThrow("boom");
     expect(client.queries.at(-1)).toEqual({ text: "ROLLBACK" });
     expect(client.released).toBe(true);
+  });
+
+  it("returns GitHub repo names and current ZIP version numbers with home projects", async () => {
+    class HomeClient {
+      release() {}
+      async query<Row = Record<string, unknown>>(text: string): Promise<{ rows: Row[] }> {
+        let rows: unknown[] = [];
+        if (text.includes("FROM organizations")) rows = [{ id: session.organizationId, name: "Acme" }];
+        else if (text.includes("FROM users")) rows = [{ id: session.userId, email: "owner@example.com" }];
+        else if (text.includes("FROM projects")) rows = [
+          { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", provider: "github", full_name: "acme/backend", version_number: null },
+          { id: "20000000-0000-4000-8000-000000000002", name: "ZIP demo", provider: "upload", full_name: null, version_number: 3 },
+        ];
+        return { rows: rows as Row[] };
+      }
+    }
+    const client = new HomeClient();
+    const database = createProductDatabase({ connect: async () => client, query: client.query.bind(client) } as unknown as TenantPool);
+
+    const home = await database.getHome(session);
+
+    expect(home.projects).toEqual([
+      { id: "20000000-0000-4000-8000-000000000001", name: "GitHub demo", source: { type: "github", fullName: "acme/backend" } },
+      { id: "20000000-0000-4000-8000-000000000002", name: "ZIP demo", source: { type: "upload", versionNumber: 3 } },
+    ]);
   });
 });
