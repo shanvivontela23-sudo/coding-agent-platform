@@ -78,7 +78,7 @@ const database = {
       organization: { id: organizationId, name: "Acme" },
       user: { id: userId, email: "owner@example.com" },
       projects: [
-        { id: githubProjectId, name: "GitHub demo", source: { type: "github", fullName: "acme/backend" } },
+        { id: githubProjectId, name: "GitHub demo", source: { type: "github", fullName: "acme/backend", defaultBranch: "main" } },
         { id: uploadProjectId, name: "ZIP demo", source: { type: "upload", versionNumber: 3 } },
       ],
     };
@@ -167,8 +167,9 @@ describe("signed-in task pages with task planning unconfigured", () => {
       expect(homeResponse.status, homeHtml).toBe(200);
       expect(homeHtml).toContain("GitHub");
       expect(homeHtml).toContain("acme/backend");
+      expect(homeHtml).toContain("Default branch: main");
       expect(homeHtml).toContain("ZIP upload");
-      expect(homeHtml).toContain("Version 3");
+      expect(homeHtml).toMatch(/Version (?:<!-- -->)?3/);
     } finally {
       await stopChild(child);
       server.close();
