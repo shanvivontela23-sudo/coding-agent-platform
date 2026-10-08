@@ -1,4 +1,4 @@
-import type { ModelGateway } from "../../../evals/src/gateway/types.js";
+import type { CostRecord, ModelGateway } from "../../../evals/src/gateway/types.js";
 
 export type PromptMessage = { readonly role: "system" | "user"; readonly content: string };
 export type TaskQuestion = { readonly question: string; readonly suggestedAnswer: string };
@@ -13,6 +13,7 @@ export interface TaskModelGateway {
   startTaskRun(taskId: string, spendCapUsd: number): Promise<void>;
   call(taskId: string, purpose: string, messages: readonly PromptMessage[]): Promise<unknown>;
   finishTaskRun(taskId: string): Promise<void>;
+  takeCostRecords?(taskId: string): readonly CostRecord[];
 }
 
 const technicalQuestion = /\b(file|files|function|functions|class|method|framework|react|next\.?js|typescript|javascript|python|java|database|table|column|api|endpoint|component|module|package|library|repository|repo|branch|commit)\b/i;
@@ -143,6 +144,7 @@ export class ExistingGatewayTaskModelGateway implements TaskModelGateway {
   private readonly model: string;
   private readonly runDurationMs: number;
   private readonly tokens = new Map<string, string>();
+  private readonly costs = new Map<string, CostRecord[]>();
 
   constructor(options: { readonly gateway: ModelGateway; readonly provider: string; readonly model: string; readonly runDurationMs?: number }) {
     this.gateway = options.gateway;
@@ -154,6 +156,7 @@ export class ExistingGatewayTaskModelGateway implements TaskModelGateway {
   async startTaskRun(taskId: string, spendCapUsd: number): Promise<void> {
     const started = await this.gateway.startRun({ runId: `task:${taskId}`, expiresAtMs: Date.now() + this.runDurationMs, spendCapUsd, allowedModels: [this.model] });
     this.tokens.set(taskId, started.token);
+    this.costs.set(taskId, []);
   }
 
   async call(taskId: string, purpose: string, messages: readonly PromptMessage[]): Promise<unknown> {
@@ -168,11 +171,20 @@ export class ExistingGatewayTaskModelGateway implements TaskModelGateway {
       wireApi: "chat-completions",
       body: { messages, response_format: { type: "json_object" } },
     });
+    const costs = this.costs.get(taskId) ?? [];
+    if (!result.replayed && !costs.some((cost) => cost.idempotencyKey === result.costRecord.idempotencyKey)) costs.push(result.costRecord);
+    this.costs.set(taskId, costs);
     return JSON.parse(responseText(result.body)) as unknown;
   }
 
   async finishTaskRun(taskId: string): Promise<void> {
     await this.gateway.finishRun(`task:${taskId}`);
     this.tokens.delete(taskId);
+  }
+
+  takeCostRecords(taskId: string): readonly CostRecord[] {
+    const records = this.costs.get(taskId) ?? [];
+    this.costs.delete(taskId);
+    return records;
   }
 }
