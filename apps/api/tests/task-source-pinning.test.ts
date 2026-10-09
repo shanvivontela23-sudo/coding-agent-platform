@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createTaskDatabase } from "../src/task-database.js";
 import type { TenantPool } from "../src/database.js";
+import type { TaskPlan } from "../src/task-intake.js";
 
 const session = { userId: "10000000-0000-4000-8000-000000000101", organizationId: "00000000-0000-4000-8000-000000000101", expiresAtMs: Date.now() + 60_000 };
-const plan = {
+const plan: TaskPlan = {
   whatIUnderstand: "Fix the retry button.",
   proposedApproach: "Update the handler and cover it with a test.",
-  size: "small" as const,
-  estimate: { label: "Small", costUsdMin: 0.1, costUsdMax: 0.2, timeMinutesMin: 5, timeMinutesMax: 10 },
+  size: "small",
+  estimate: { label: "estimate", costUsdMin: 0.1, costUsdMax: 0.2, timeMinutesMin: 5, timeMinutesMax: 10 },
 };
 
 describe("task plan source pinning", () => {
