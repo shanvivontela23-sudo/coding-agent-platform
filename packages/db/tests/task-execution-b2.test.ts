@@ -121,7 +121,7 @@ describe.skipIf(!baseDatabaseUrl)("B2 execution worker database boundary", () =>
     expect(await psql(databaseUrl, `SELECT status||'|'||failure_code FROM task_executions WHERE id='${execution}';`))
       .toBe("failed|WORKER_INTERRUPTED");
     expect(await psql(databaseUrl, `
-      SELECT event_type||'|'||payload->>'failure_code'
+      SELECT event_type||'|'||(payload->>'failure_code')
         FROM audit_events
        WHERE payload->>'execution_id'='${execution}'
        ORDER BY created_at DESC LIMIT 1;
