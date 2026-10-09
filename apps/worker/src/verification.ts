@@ -86,14 +86,8 @@ async function prepareSession(session: SandboxSession, source: PreparedExecution
 
 async function runGeneralChecks(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: number, signal: AbortSignal): Promise<GeneralRun> {
   const checks = new Map<string, SandboxCommandResult>();
-  if (source.commands.test) {
-    checks.set("test", await session.exec({ command: source.commands.test, cwd: session.workspacePath, timeoutMs }));
-    assertNotAborted(signal);
-  }
-  if (source.commands.build) {
-    checks.set("build", await session.exec({ command: source.commands.build, cwd: session.workspacePath, timeoutMs }));
-    assertNotAborted(signal);
-  }
+  if (source.commands.test) { checks.set("test", await session.exec({ command: source.commands.test, cwd: session.workspacePath, timeoutMs })); assertNotAborted(signal); }
+  if (source.commands.build) { checks.set("build", await session.exec({ command: source.commands.build, cwd: session.workspacePath, timeoutMs })); assertNotAborted(signal); }
   return { checks };
 }
 
@@ -110,13 +104,8 @@ async function withAbortDestroy<T>(session: SandboxSession, signal: AbortSignal,
   const destroy = async () => { if (!destroyed) { destroyed = true; await session.destroy(); } };
   const onAbort = () => { void destroy(); };
   signal.addEventListener("abort", onAbort, { once: true });
-  try {
-    assertNotAborted(signal);
-    return await operation();
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    await destroy();
-  }
+  try { assertNotAborted(signal); return await operation(); }
+  finally { signal.removeEventListener("abort", onAbort); await destroy(); }
 }
 
 export async function verifyExecution(options: {
@@ -133,20 +122,17 @@ export async function verifyExecution(options: {
   const testPatch = testOnlyPatch(options.patch);
 
   const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: options.timeoutMs });
-  let baselineChecks: GeneralRun;
+  let baselineChecks: GeneralRun | null = null;
   let baselineReproduction: SandboxCommandResult | null = null;
   await withAbortDestroy(baseline, options.signal, async () => {
     await prepareSession(baseline, options.source, options.timeoutMs, options.signal);
     baselineChecks = await runGeneralChecks(baseline, options.source, options.timeoutMs, options.signal);
-    if (testPatch && options.reproductionCommand) {
-      await applyPatch(baseline, testPatch, options.timeoutMs, options.signal);
-      baselineReproduction = await runReproduction(baseline, options.reproductionCommand, options.timeoutMs, options.signal);
-    }
+    if (testPatch && options.reproductionCommand) { await applyPatch(baseline, testPatch, options.timeoutMs, options.signal); baselineReproduction = await runReproduction(baseline, options.reproductionCommand, options.timeoutMs, options.signal); }
   });
 
   assertNotAborted(options.signal);
   const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: options.timeoutMs });
-  let patchedChecks: GeneralRun;
+  let patchedChecks: GeneralRun | null = null;
   let patchedReproduction: SandboxCommandResult | null = null;
   await withAbortDestroy(patched, options.signal, async () => {
     await prepareSession(patched, options.source, options.timeoutMs, options.signal);
@@ -154,12 +140,13 @@ export async function verifyExecution(options: {
     patchedChecks = await runGeneralChecks(patched, options.source, options.timeoutMs, options.signal);
     if (testPatch && options.reproductionCommand) patchedReproduction = await runReproduction(patched, options.reproductionCommand, options.timeoutMs, options.signal);
   });
+  if (!baselineChecks || !patchedChecks) throw new Error("Verification checks did not complete");
 
   const checks: VerificationCheck[] = [];
   for (const [name, command] of [["test", options.source.commands.test], ["build", options.source.commands.build]] as const) {
     if (!command) continue;
-    const before = baselineChecks!.checks.get(name);
-    const after = patchedChecks!.checks.get(name);
+    const before = baselineChecks.checks.get(name);
+    const after = patchedChecks.checks.get(name);
     if (!before || !after) throw new Error(`Missing ${name} verification result`);
     const beforeNames = failingTestNames(before);
     const afterNames = failingTestNames(after);
@@ -171,21 +158,22 @@ export async function verifyExecution(options: {
     checks.push({ name, command, baselineExitCode: before.exitCode, patchedExitCode: after.exitCode, status, baselineFailingTests: beforeNames, patchedFailingTests: afterNames });
   }
 
-  const baselineClassification = classifyReproduction(baselineReproduction);
-  const patchedClassification = classifyReproduction(patchedReproduction);
+  const baselineProof = baselineReproduction as SandboxCommandResult | null;
+  const patchedProof = patchedReproduction as SandboxCommandResult | null;
+  const baselineClassification = classifyReproduction(baselineProof);
+  const patchedClassification = classifyReproduction(patchedProof);
   const reproduced = Boolean(testPatch && options.reproductionCommand && baselineClassification === "assertion_failure" && patchedClassification === "passed");
   const reason = reproduced ? null : !testPatch ? "Patch contains no test-file hunks for reproduce-first proof." : !options.reproductionCommand ? "No focused reproduction command could be derived from the added test." : baselineClassification !== "assertion_failure" ? "Baseline did not fail with an assertion failure." : "Patched reproduction test did not pass.";
   const reproduce: ReproduceProof = {
     command: options.reproductionCommand,
-    baselineExitCode: baselineReproduction?.exitCode ?? null,
-    patchedExitCode: patchedReproduction?.exitCode ?? null,
-    baselineOutput: output(baselineReproduction),
-    patchedOutput: output(patchedReproduction),
+    baselineExitCode: baselineProof?.exitCode ?? null,
+    patchedExitCode: patchedProof?.exitCode ?? null,
+    baselineOutput: output(baselineProof),
+    patchedOutput: output(patchedProof),
     baselineClassification,
     patchedClassification,
     reproduced,
     reason,
   };
-
   return { checks, hasNewFailures: checks.some((check) => check.status === "failed"), reproduce };
 }
