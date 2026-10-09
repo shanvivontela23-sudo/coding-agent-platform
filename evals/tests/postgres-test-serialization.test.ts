@@ -1,30 +1,31 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-const postgresMutatingTests = [
+const apiIntegrationTests = [
   "apps/api/tests/product-07-upload-http.integration.test.ts",
   "apps/api/tests/task-read-http.integration.test.ts",
   "apps/api/tests/tenant-api.integration.test.ts",
-  "packages/db/tests/github-projects.test.ts",
-  "packages/db/tests/invitations.test.ts",
-  "packages/db/tests/task-intake.test.ts",
-  "packages/db/tests/tenant-rls.test.ts",
 ] as const;
 
 describe("PostgreSQL integration test scheduling", () => {
-  it("runs every test that applies tenant migrations in one serial Vitest project", async () => {
-    const config = await readFile("vitest.config.ts", "utf8").catch(() => "");
+  it("runs database-mutating tests in a separate serial Vitest process", async () => {
+    const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    const scripts = packageJson.scripts ?? {};
 
-    expect(config).toContain('name: "postgres-serial"');
-    expect(config).toContain("fileParallelism: false");
-    expect(config).toContain("groupOrder: 1");
-    for (const path of postgresMutatingTests) expect(config).toContain(`"${path}"`);
+    expect(scripts.test).toBe("pnpm test:parallel && pnpm test:postgres");
+    expect(scripts["test:parallel"]).toContain("vitest run evals/tests apps packages");
+    expect(scripts["test:parallel"]).toContain("--exclude 'packages/db/tests/**/*.test.ts'");
+    expect(scripts["test:parallel"]).toContain("--exclude 'apps/api/tests/*.integration.test.ts'");
+
+    expect(scripts["test:postgres"]).toContain("vitest run --no-file-parallelism");
+    expect(scripts["test:postgres"]).toContain("packages/db/tests");
+    for (const path of apiIntegrationTests) expect(scripts["test:postgres"]).toContain(path);
   });
 
-  it("keeps the non-PostgreSQL test project ahead of the serial database phase", async () => {
-    const config = await readFile("vitest.config.ts", "utf8").catch(() => "");
-
-    expect(config).toContain('name: "parallel"');
-    expect(config).toContain("groupOrder: 0");
+  it("does not hide PostgreSQL races behind retries", async () => {
+    const packageJson = await readFile("package.json", "utf8");
+    expect(packageJson).not.toMatch(/\b(?:retry|rerun)\b/i);
   });
 });
