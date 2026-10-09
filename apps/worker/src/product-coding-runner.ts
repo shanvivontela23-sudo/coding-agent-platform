@@ -47,13 +47,16 @@ export class ProductCodingRunner {
       gatewayUrl: this.options.route.gatewayUrl,
       timeoutMs,
     });
+    let phase: "locked" | "dependency-setup" | "coding" | "testing" | "offline" = "locked";
     try {
+      await session.setNetworkPhase("dependency-setup");
+      phase = "dependency-setup";
       if (source.commands.install) {
-        await session.setNetworkPhase("dependency-setup");
         const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs });
         if (install.exitCode !== 0) throw new Error("coding dependency setup failed");
       }
       await session.setNetworkPhase("coding");
+      phase = "coding";
       const outcome = await this.options.harnessRunner.run(session, {
         ticketText: `${source.requirement}\n\nApproved plan:\n${source.plan}\n\nFor bug fixes, add a focused regression test that fails before the fix and passes after it.`,
         model: this.options.route.model,
@@ -72,7 +75,17 @@ export class ProductCodingRunner {
         summary: `${this.options.harnessRunner.name} completed in ${outcome.turnsUsed} turns.`,
       };
     } finally {
-      try { await session.setNetworkPhase("offline"); } finally { await session.destroy(); }
+      try {
+        if (phase === "coding") {
+          await session.setNetworkPhase("testing");
+          phase = "testing";
+        } else if (phase === "dependency-setup") {
+          await session.setNetworkPhase("offline");
+          phase = "offline";
+        }
+      } finally {
+        await session.destroy();
+      }
     }
   }
 }
