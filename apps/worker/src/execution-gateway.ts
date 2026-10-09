@@ -39,7 +39,7 @@ export class FileBackedExecutionGatewayControl implements ExecutionGatewayContro
     this.gatewayStore = new FileGatewayStore({ rootDir: options.gatewayStoreDir });
     this.callStore = new FileHarnessCallStore({ rootDir: options.harnessCallStoreDir });
     this.tokenService = new RunTokenService({ secret: options.runTokenSecret, ...(options.nowMs ? { clock: options.nowMs } : {}) });
-    this.spendSource = new LiteLLMSpendClient({ baseUrl: options.litellmGatewayUrl, adminToken: options.litellmAdminToken, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) });
+    this.spendSource = new LiteLLMSpendClient({ baseUrl: options.litellmGatewayUrl, adminToken: options.litellmAdminToken, ...(options.fetchImpl ? { fetch: options.fetchImpl } : {}) });
     const config = loadHarnessHttpConfig();
     this.reconciler = new HarnessSpendReconciler({
       callStore: this.callStore,
