@@ -1,3 +1,5 @@
+import { parsePatchFiles } from "./patch-parser.js";
+
 export type PatchSafetyLimits = {
   readonly maxFiles: number;
   readonly maxBytes: number;
@@ -21,15 +23,12 @@ const lockfiles = new Set([
   "Pipfile.lock", "Cargo.lock", "go.sum", "Gemfile.lock", "composer.lock",
 ]);
 
-function normalizePath(path: string): string {
-  const value = path.replace(/^([ab])\//, "");
-  if (!value || value.startsWith("/") || value.includes("\\") || value.split("/").some((part) => part === ".." || part === ".")) {
-    throw new Error(`Patch path escapes repository root: ${path}`);
-  }
-  return value;
+function addedLines(patch: string): string {
+  return patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).map((line) => line.slice(1)).join("\n");
 }
 
 function findSecrets(patch: string): string[] {
+  const additions = addedLines(patch);
   const findings: string[] = [];
   const patterns: ReadonlyArray<readonly [string, RegExp]> = [
     ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
@@ -37,8 +36,14 @@ function findSecrets(patch: string): string[] {
     ["aws-access-key", /\bAKIA[0-9A-Z]{16}\b/],
     ["openai-key", /\bsk-[A-Za-z0-9_-]{24,}\b/],
   ];
-  for (const [name, pattern] of patterns) if (pattern.test(patch)) findings.push(name);
+  for (const [name, pattern] of patterns) if (pattern.test(additions)) findings.push(name);
   return findings;
+}
+
+function blocked(path: string, limits: PatchSafetyLimits): boolean {
+  const blockedPrefixes = [".github/workflows/", ".circleci/", ...(limits.blockedCiPaths ?? [])];
+  const blockedExact = new Set([".gitlab-ci.yml", "azure-pipelines.yml"]);
+  return blockedExact.has(path) || blockedPrefixes.some((prefix) => path === prefix.replace(/\/$/, "") || path.startsWith(prefix));
 }
 
 export function inspectPatchSafety(patch: string, limits: PatchSafetyLimits): PatchSafetyResult {
@@ -48,21 +53,15 @@ export function inspectPatchSafety(patch: string, limits: PatchSafetyLimits): Pa
   if (bytes > limits.maxBytes) throw new Error(`Patch exceeds maximum bytes (${bytes} > ${limits.maxBytes})`);
   if (/^(?:new file mode|old mode|new mode) 120000$/m.test(patch)) throw new Error("Patch contains a symlink change");
 
+  const parsed = parsePatchFiles(patch);
+  if (parsed.length > limits.maxFiles) throw new Error(`Patch exceeds maximum files (${parsed.length} > ${limits.maxFiles})`);
   const files: string[] = [];
   const seen = new Set<string>();
-  for (const match of patch.matchAll(/^diff --git (\S+) (\S+)$/gm)) {
-    const left = normalizePath(match[1]!);
-    const right = normalizePath(match[2]!);
-    if (left !== right) throw new Error("Patch renames are not accepted in B2");
-    if (!seen.has(right)) { seen.add(right); files.push(right); }
-  }
-  if (files.length > limits.maxFiles) throw new Error(`Patch exceeds maximum files (${files.length} > ${limits.maxFiles})`);
-
-  const blockedPrefixes = [".github/workflows/", ".circleci/", ...(limits.blockedCiPaths ?? [])];
-  const blockedExact = new Set([".gitlab-ci.yml", "azure-pipelines.yml"]);
-  for (const path of files) {
-    if (blockedExact.has(path) || blockedPrefixes.some((prefix) => path === prefix.replace(/\/$/, "") || path.startsWith(prefix))) {
-      throw new Error(`Patch changes CI configuration: ${path}`);
+  for (const file of parsed) {
+    for (const path of [file.oldPath, file.newPath]) {
+      if (!path) continue;
+      if (blocked(path, limits)) throw new Error(`Patch changes CI configuration: ${path}`);
+      if (!seen.has(path)) { seen.add(path); files.push(path); }
     }
   }
 
