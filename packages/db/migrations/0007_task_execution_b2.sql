@@ -18,9 +18,13 @@ ALTER TABLE task_executions
   ADD COLUMN coding_started_at timestamptz,
   ADD COLUMN coding_finished_at timestamptz,
   ADD COLUMN patch_exported_at timestamptz,
-  ADD COLUMN verified_at timestamptz;
+  ADD COLUMN verified_at timestamptz,
+  ADD COLUMN result_patch text,
+  ADD COLUMN change_document text,
+  ADD COLUMN result_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN cost_usd numeric(14,8) CHECK (cost_usd IS NULL OR cost_usd >= 0);
 
-ALTER TABLE task_executions DROP CONSTRAINT task_executions_status_check;
+ALTER TABLE task_executions DROP CONSTRAINT IF EXISTS task_executions_status_check;
 ALTER TABLE task_executions
   ADD CONSTRAINT task_executions_status_check
   CHECK (status IN ('queued','running','succeeded','failed','cancelled','timed_out','verification_failed','fix_not_reproduced'));
@@ -88,7 +92,10 @@ BEGIN
     NULL,
     p_task_id,
     v_event_type,
-    pg_catalog.jsonb_build_object('execution_id',p_execution_id::text,'failure_code',p_failure_code)
+    pg_catalog.jsonb_build_object(
+      'execution_id', p_execution_id::text,
+      'failure_code', p_failure_code
+    )
   );
 END;
 $$;
@@ -103,12 +110,7 @@ RETURNS TABLE(
   source_commit_sha text,
   source_version_id uuid,
   budget_usd numeric,
-  timeout_seconds integer,
-  source_prepared_at timestamptz,
-  coding_started_at timestamptz,
-  coding_finished_at timestamptz,
-  patch_exported_at timestamptz,
-  verified_at timestamptz
+  timeout_seconds integer
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -126,52 +128,58 @@ BEGIN
 
   FOR v_row IN
     UPDATE public.task_executions AS e
-       SET status='cancelled',
-           finished_at=COALESCE(e.finished_at,pg_catalog.clock_timestamp()),
-           lease_owner=NULL,
-           lease_expires_at=NULL,
-           updated_at=pg_catalog.clock_timestamp()
-     WHERE e.status='running'
+       SET status = 'cancelled',
+           finished_at = COALESCE(e.finished_at, pg_catalog.clock_timestamp()),
+           lease_owner = NULL,
+           lease_expires_at = NULL,
+           updated_at = pg_catalog.clock_timestamp()
+     WHERE e.status = 'running'
        AND e.cancel_requested_at IS NOT NULL
        AND (e.lease_expires_at IS NULL OR e.lease_expires_at <= pg_catalog.clock_timestamp())
     RETURNING e.organization_id,e.task_id,e.id,e.failure_code
   LOOP
-    PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,v_row.id,'cancelled',v_row.failure_code);
+    PERFORM public.task_execution_terminal_audit(
+      v_row.organization_id,v_row.task_id,v_row.id,'cancelled',v_row.failure_code
+    );
   END LOOP;
 
   FOR v_row IN
     UPDATE public.task_executions AS e
-       SET status='timed_out',
-           finished_at=COALESCE(e.finished_at,pg_catalog.clock_timestamp()),
-           failure_code=COALESCE(e.failure_code,'EXECUTION_TIMEOUT'),
-           failure_message=COALESCE(e.failure_message,'Implementation exceeded its wall-clock timeout.'),
-           lease_owner=NULL,
-           lease_expires_at=NULL,
-           updated_at=pg_catalog.clock_timestamp()
-     WHERE e.status='running'
+       SET status = 'timed_out',
+           finished_at = COALESCE(e.finished_at, pg_catalog.clock_timestamp()),
+           failure_code = COALESCE(e.failure_code, 'EXECUTION_TIMEOUT'),
+           failure_message = COALESCE(e.failure_message, 'Implementation exceeded its wall-clock timeout.'),
+           lease_owner = NULL,
+           lease_expires_at = NULL,
+           updated_at = pg_catalog.clock_timestamp()
+     WHERE e.status = 'running'
        AND e.started_at IS NOT NULL
        AND e.started_at + pg_catalog.make_interval(secs => e.timeout_seconds) <= pg_catalog.clock_timestamp()
     RETURNING e.organization_id,e.task_id,e.id,e.failure_code
   LOOP
-    PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,v_row.id,'timed_out',v_row.failure_code);
+    PERFORM public.task_execution_terminal_audit(
+      v_row.organization_id,v_row.task_id,v_row.id,'timed_out',v_row.failure_code
+    );
   END LOOP;
 
   FOR v_row IN
     UPDATE public.task_executions AS e
-       SET status='failed',
-           finished_at=COALESCE(e.finished_at,pg_catalog.clock_timestamp()),
-           failure_code='WORKER_INTERRUPTED',
-           failure_message='Implementation worker stopped during paid coding. Start a new attempt to retry safely.',
-           lease_owner=NULL,
-           lease_expires_at=NULL,
-           updated_at=pg_catalog.clock_timestamp()
-     WHERE e.status='running'
+       SET status = 'failed',
+           finished_at = COALESCE(e.finished_at, pg_catalog.clock_timestamp()),
+           failure_code = 'WORKER_INTERRUPTED',
+           failure_message = 'Implementation worker stopped during paid coding. Start a new attempt to retry safely.',
+           lease_owner = NULL,
+           lease_expires_at = NULL,
+           updated_at = pg_catalog.clock_timestamp()
+     WHERE e.status = 'running'
        AND e.lease_expires_at <= pg_catalog.clock_timestamp()
        AND e.coding_started_at IS NOT NULL
        AND e.coding_finished_at IS NULL
     RETURNING e.organization_id,e.task_id,e.id,e.failure_code
   LOOP
-    PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,v_row.id,'failed',v_row.failure_code);
+    PERFORM public.task_execution_terminal_audit(
+      v_row.organization_id,v_row.task_id,v_row.id,'failed',v_row.failure_code
+    );
   END LOOP;
 
   RETURN QUERY
@@ -180,9 +188,9 @@ BEGIN
       FROM public.task_executions AS e
      WHERE e.cancel_requested_at IS NULL
        AND (
-         e.status='queued'
+         e.status = 'queued'
          OR (
-           e.status='running'
+           e.status = 'running'
            AND e.lease_expires_at <= pg_catalog.clock_timestamp()
            AND (e.coding_started_at IS NULL OR e.coding_finished_at IS NOT NULL)
          )
@@ -196,21 +204,19 @@ BEGIN
      LIMIT 1
   ), claimed AS (
     UPDATE public.task_executions AS e
-       SET status='running',
-           lease_owner=p_worker_id,
-           lease_expires_at=pg_catalog.clock_timestamp()+pg_catalog.make_interval(secs => p_lease_seconds),
-           started_at=COALESCE(e.started_at,pg_catalog.clock_timestamp()),
-           updated_at=pg_catalog.clock_timestamp()
+       SET status = 'running',
+           lease_owner = p_worker_id,
+           lease_expires_at = pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_lease_seconds),
+           started_at = COALESCE(e.started_at, pg_catalog.clock_timestamp()),
+           updated_at = pg_catalog.clock_timestamp()
       FROM candidate
-     WHERE e.id=candidate.id
-    RETURNING e.id,e.organization_id,e.task_id,e.project_id,e.attempt,e.source_commit_sha,e.source_version_id,
-              e.budget_usd,e.timeout_seconds,e.source_prepared_at,e.coding_started_at,e.coding_finished_at,
-              e.patch_exported_at,e.verified_at
+     WHERE e.id = candidate.id
+    RETURNING e.id,e.organization_id,e.task_id,e.project_id,e.attempt,
+              e.source_commit_sha,e.source_version_id,e.budget_usd,e.timeout_seconds
   )
-  SELECT claimed.id,claimed.organization_id,claimed.task_id,claimed.project_id,claimed.attempt,
-         claimed.source_commit_sha,claimed.source_version_id,claimed.budget_usd,claimed.timeout_seconds,
-         claimed.source_prepared_at,claimed.coding_started_at,claimed.coding_finished_at,
-         claimed.patch_exported_at,claimed.verified_at
+  SELECT claimed.id,claimed.organization_id,claimed.task_id,claimed.project_id,
+         claimed.attempt,claimed.source_commit_sha,claimed.source_version_id,
+         claimed.budget_usd,claimed.timeout_seconds
     FROM claimed;
 END;
 $$;
@@ -232,37 +238,56 @@ BEGIN
     RAISE EXCEPTION 'lease seconds must be between 5 and 3600';
   END IF;
 
-  SELECT e.organization_id,e.task_id,e.status,e.started_at,e.timeout_seconds,e.cancel_requested_at,e.failure_code
+  SELECT e.organization_id,e.task_id,e.status,e.started_at,e.timeout_seconds,
+         e.cancel_requested_at,e.failure_code
     INTO v_row
     FROM public.task_executions AS e
-   WHERE e.id=p_execution_id AND e.lease_owner=p_worker_id
+   WHERE e.id = p_execution_id
+     AND e.lease_owner = p_worker_id
    FOR UPDATE;
 
-  IF NOT FOUND THEN RETURN 'lost'; END IF;
-  IF v_row.status <> 'running' THEN RETURN v_row.status; END IF;
+  IF NOT FOUND THEN
+    RETURN 'lost';
+  END IF;
+  IF v_row.status <> 'running' THEN
+    RETURN v_row.status;
+  END IF;
 
   IF v_row.cancel_requested_at IS NOT NULL THEN
     UPDATE public.task_executions
-       SET status='cancelled',finished_at=pg_catalog.clock_timestamp(),lease_owner=NULL,lease_expires_at=NULL,updated_at=pg_catalog.clock_timestamp()
+       SET status='cancelled',
+           finished_at=pg_catalog.clock_timestamp(),
+           lease_owner=NULL,
+           lease_expires_at=NULL,
+           updated_at=pg_catalog.clock_timestamp()
      WHERE id=p_execution_id;
-    PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,p_execution_id,'cancelled',v_row.failure_code);
+    PERFORM public.task_execution_terminal_audit(
+      v_row.organization_id,v_row.task_id,p_execution_id,'cancelled',v_row.failure_code
+    );
     RETURN 'cancelled';
   END IF;
 
   IF v_row.started_at IS NOT NULL
      AND v_row.started_at + pg_catalog.make_interval(secs => v_row.timeout_seconds) <= pg_catalog.clock_timestamp() THEN
     UPDATE public.task_executions
-       SET status='timed_out',finished_at=pg_catalog.clock_timestamp(),failure_code=COALESCE(failure_code,'EXECUTION_TIMEOUT'),
+       SET status='timed_out',
+           finished_at=pg_catalog.clock_timestamp(),
+           failure_code=COALESCE(failure_code,'EXECUTION_TIMEOUT'),
            failure_message=COALESCE(failure_message,'Implementation exceeded its wall-clock timeout.'),
-           lease_owner=NULL,lease_expires_at=NULL,updated_at=pg_catalog.clock_timestamp()
+           lease_owner=NULL,
+           lease_expires_at=NULL,
+           updated_at=pg_catalog.clock_timestamp()
      WHERE id=p_execution_id
      RETURNING failure_code INTO v_row.failure_code;
-    PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,p_execution_id,'timed_out',v_row.failure_code);
+    PERFORM public.task_execution_terminal_audit(
+      v_row.organization_id,v_row.task_id,p_execution_id,'timed_out',v_row.failure_code
+    );
     RETURN 'timed_out';
   END IF;
 
   UPDATE public.task_executions
-     SET lease_expires_at=pg_catalog.clock_timestamp()+pg_catalog.make_interval(secs => p_lease_seconds),updated_at=pg_catalog.clock_timestamp()
+     SET lease_expires_at=pg_catalog.clock_timestamp()+pg_catalog.make_interval(secs => p_lease_seconds),
+         updated_at=pg_catalog.clock_timestamp()
    WHERE id=p_execution_id;
   RETURN 'running';
 END;
@@ -292,10 +317,14 @@ BEGIN
   SELECT e.organization_id,e.task_id,e.started_at,e.timeout_seconds,e.cancel_requested_at,e.failure_code
     INTO v_row
     FROM public.task_executions AS e
-   WHERE e.id=p_execution_id AND e.status='running' AND e.lease_owner=p_worker_id
+   WHERE e.id=p_execution_id
+     AND e.status='running'
+     AND e.lease_owner=p_worker_id
    FOR UPDATE;
 
-  IF NOT FOUND THEN RETURN 'lost'; END IF;
+  IF NOT FOUND THEN
+    RETURN 'lost';
+  END IF;
 
   IF v_row.cancel_requested_at IS NOT NULL THEN
     v_final_status := 'cancelled';
@@ -326,25 +355,27 @@ BEGIN
          updated_at=pg_catalog.clock_timestamp()
    WHERE id=p_execution_id;
 
-  PERFORM public.task_execution_terminal_audit(v_row.organization_id,v_row.task_id,p_execution_id,v_final_status,v_failure_code);
+  PERFORM public.task_execution_terminal_audit(
+    v_row.organization_id,v_row.task_id,p_execution_id,v_final_status,v_failure_code
+  );
   RETURN v_final_status;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid,uuid,uuid,text,text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid,uuid,uuid,text,text) FROM coding_agent_api;
-REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid,uuid,uuid,text,text) FROM coding_agent_worker;
+REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid, uuid, uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid, uuid, uuid, text, text) FROM coding_agent_api;
+REVOKE ALL ON FUNCTION public.task_execution_terminal_audit(uuid, uuid, uuid, text, text) FROM coding_agent_worker;
 
-REVOKE ALL ON FUNCTION public.claim_task_execution(text,integer) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.claim_task_execution(text,integer) FROM coding_agent_api;
-GRANT EXECUTE ON FUNCTION public.claim_task_execution(text,integer) TO coding_agent_worker;
+REVOKE ALL ON FUNCTION public.claim_task_execution(text, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.claim_task_execution(text, integer) FROM coding_agent_api;
+GRANT EXECUTE ON FUNCTION public.claim_task_execution(text, integer) TO coding_agent_worker;
 
-REVOKE ALL ON FUNCTION public.heartbeat_task_execution(uuid,text,integer) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.heartbeat_task_execution(uuid,text,integer) FROM coding_agent_api;
-GRANT EXECUTE ON FUNCTION public.heartbeat_task_execution(uuid,text,integer) TO coding_agent_worker;
+REVOKE ALL ON FUNCTION public.heartbeat_task_execution(uuid, text, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.heartbeat_task_execution(uuid, text, integer) FROM coding_agent_api;
+GRANT EXECUTE ON FUNCTION public.heartbeat_task_execution(uuid, text, integer) TO coding_agent_worker;
 
-REVOKE ALL ON FUNCTION public.finish_task_execution(uuid,text,text,text,text) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.finish_task_execution(uuid,text,text,text,text) FROM coding_agent_api;
-GRANT EXECUTE ON FUNCTION public.finish_task_execution(uuid,text,text,text,text) TO coding_agent_worker;
+REVOKE ALL ON FUNCTION public.finish_task_execution(uuid, text, text, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.finish_task_execution(uuid, text, text, text, text) FROM coding_agent_api;
+GRANT EXECUTE ON FUNCTION public.finish_task_execution(uuid, text, text, text, text) TO coding_agent_worker;
 
 COMMIT;
