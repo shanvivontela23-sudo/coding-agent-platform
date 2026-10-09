@@ -14,11 +14,14 @@ describe("PostgreSQL integration test scheduling", () => {
     expect(parallelScript).toContain("vitest run evals/tests apps packages");
     expect(parallelScript).toContain("--exclude 'packages/db/tests/**/*.test.ts'");
 
-    const excludedGlobs = [...parallelScript.matchAll(/--exclude '([^']+)'/g)].map((match) => match[1]);
+    const excludedGlobs = [...parallelScript.matchAll(/--exclude '([^']+)'/g)]
+      .map((match) => match[1])
+      .filter((glob): glob is string => glob !== undefined);
     const apiIntegrationGlob = excludedGlobs.find(
       (glob) => glob.startsWith("apps/api/tests/") && glob.endsWith(".integration.test.ts"),
     );
     expect(apiIntegrationGlob).toBeDefined();
+    if (!apiIntegrationGlob) throw new Error("test:parallel must exclude the API integration-test glob");
 
     expect(postgresScript).toContain("vitest run --no-file-parallelism");
     expect(postgresScript).toContain("packages/db/tests");
