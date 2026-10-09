@@ -30,7 +30,7 @@ export async function runFakeTaskExecutionWorker(options: {
       queue,
       runner,
       workerId: options.workerId,
-      leaseSeconds: options.leaseSeconds,
+      ...(options.leaseSeconds === undefined ? {} : { leaseSeconds: options.leaseSeconds }),
     });
     if (!result.worked && !options.signal.aborted) {
       try {
