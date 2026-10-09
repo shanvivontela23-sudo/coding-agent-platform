@@ -75,6 +75,12 @@ function webLocation(origin: string, path: string, error?: string): string {
 function sessionFromMembership(membership: Pick<Membership, "userId" | "organizationId">, durationMs: number) {
   return { userId: membership.userId, organizationId: membership.organizationId, expiresAtMs: Date.now() + durationMs };
 }
+function onboardingSessionFromRequest(request: IncomingMessage, secret: string): OnboardingIdentity {
+  const token = parseRequestCookies(request).get("onboarding_session");
+  if (!token) throw new AppError("AUTH_REQUIRED", "Authentication required.", 401);
+  try { return verifyOnboardingToken(token, secret); }
+  catch { throw new AppError("AUTH_REQUIRED", "Authentication required.", 401); }
+}
 function fallbackCode(pathname: string): SafeErrorCode {
   if (pathname === "/auth/email") return "AUTH_SIGN_IN_FAILED";
   if (pathname.includes("github")) return "GITHUB_FORBIDDEN";
@@ -202,23 +208,21 @@ export function createApiServer(options: ApiServerOptions) {
         appendCookie(response, clearCookie("supabase_oauth_flow", secureCookies)); await finishIdentity(identity, response); return;
       }
       if (request.method === "POST" && url.pathname === "/onboarding/organization") {
-        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
-        const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret); const form = new URLSearchParams(await body(request)); const organizationName = (form.get("organizationName") ?? "").trim();
+        const identity = onboardingSessionFromRequest(request, options.sessionSecret); const form = new URLSearchParams(await body(request)); const organizationName = (form.get("organizationName") ?? "").trim();
         if (organizationName.length < 2 || organizationName.length > 80) throw new Error("invalid organization name");
         const created = await options.database.createOrganizationWithOwner(identity, organizationName); const session = { ...created, expiresAtMs: Date.now() + options.sessionDurationMs };
         appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies)); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, webLocation(options.webOrigin, "/home")); return;
       }
       if (request.method === "GET" && url.pathname === "/api/invitations") {
-        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
-        const invitations = await options.database.listVerifiedInvitations(verifyOnboardingToken(onboardingCookie, options.sessionSecret)); json(response, 200, { invitations }); return;
+        const identity = onboardingSessionFromRequest(request, options.sessionSecret);
+        const invitations = await options.database.listVerifiedInvitations(identity); json(response, 200, { invitations }); return;
       }
       if (request.method === "POST" && url.pathname === "/invitations/accept") {
-        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
-        const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret); const form = new URLSearchParams(await body(request)); const accepted = await options.database.acceptVerifiedInvitation(identity, form.get("invitationId") ?? "");
+        const identity = onboardingSessionFromRequest(request, options.sessionSecret); const form = new URLSearchParams(await body(request)); const accepted = await options.database.acceptVerifiedInvitation(identity, form.get("invitationId") ?? "");
         const session = { ...accepted, expiresAtMs: Date.now() + options.sessionDurationMs }; appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies)); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, webLocation(options.webOrigin, "/home")); return;
       }
       if (request.method === "POST" && url.pathname === "/invitations/decline") {
-        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session"); verifyOnboardingToken(onboardingCookie, options.sessionSecret); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return;
+        onboardingSessionFromRequest(request, options.sessionSecret); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return;
       }
       if (request.method === "GET" && url.pathname === "/api/home") {
         const session = tenantSessionFromRequest(request, options.sessionSecret);
