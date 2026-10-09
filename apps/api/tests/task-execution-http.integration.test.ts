@@ -69,7 +69,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await workerPool?.end(); await apiPool?.end(); await adminPool?.end();
-  if (rootPool) { await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`); await rootPool.end(); }
+  if (rootPool) { await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb}`); await rootPool.end(); }
 }, 30_000);
 
 const githubApp = { async checkInstallation() { return undefined; } } as unknown as GitHubAppClient;
