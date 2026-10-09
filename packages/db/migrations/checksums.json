@@ -4,5 +4,5 @@
   "0003_github_projects.sql": "344d3c7cdc7dfcd04eea849ca06f5a33e5f13cc906f1d3e29e7613ef1a91514a",
   "0004_task_intake.sql": "2900e2b6fab38434ee910d9f43f7f378f1ec4c825ac155e0c9ecefcc20302f9d",
   "0005_zip_projects_and_task_review_fixes.sql": "7d22c83f60c3cbd01c3b1a313179e2bd6a9aaf6e664c8965526f650dba39e3f1",
-  "0006_task_execution.sql": "d45db747abb5540b4a95c733b354bb02466bcb5bc288028301579f6f4dfbfa06"
+  "0006_task_execution.sql": "4e392204068f9a8e79d2523633ce5fd895c43bd32eca74e2b83adc63fe4e0a45"
 }
