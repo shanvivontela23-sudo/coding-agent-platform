@@ -14,10 +14,10 @@ export async function runFakeTaskExecutionWorker(options: {
 }): Promise<void> {
   const env = options.env ?? process.env;
   if (env.TASK_EXECUTION_FAKE_RUNNER !== "1") {
-    throw new Error("TASK_EXECUTION_FAKE_RUNNER=1 is required for the B1 worker");
+    throw new Error("TASK_EXECUTION_FAKE_RUNNER=1 is required for the local fake worker");
   }
-  if (options.databaseUsername !== "coding_agent_api") {
-    throw new Error("task execution worker must connect as coding_agent_api");
+  if (options.databaseUsername !== "coding_agent_worker") {
+    throw new Error("task execution worker must connect as coding_agent_worker");
   }
   if (!options.workerId.trim()) throw new Error("workerId is required");
 
