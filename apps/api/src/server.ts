@@ -4,15 +4,15 @@ import {
   createOnboardingToken,
   createSessionToken,
   verifyOnboardingToken,
-  verifySessionToken,
   type OnboardingIdentity,
   type SessionIdentity,
   type SupabaseAuthClient,
   type SupabaseIdentity,
 } from "./auth.js";
-import type { InviteRole, Membership, ProductDatabase } from "./database.js";
-import { AppError, isSafeErrorCode, safeErrorCode, type SafeErrorCode } from "./errors.js";
-import type { GitHubAppClient } from "./github-app.js";
+import type { HomeData, InviteRole, Membership, ProductDatabase } from "./database.js";
+import { AppError, isSafeErrorCode, type SafeErrorCode } from "./errors.js";
+import type { GitHubAppClient, GitHubInstallationDetails } from "./github-app.js";
+import { genericRequestFailureMessage, logRequestError, parseRequestCookies, tenantSessionFromRequest } from "./http-request.js";
 
 export type ApiServerOptions = {
   readonly webOrigin: string;
@@ -25,6 +25,7 @@ export type ApiServerOptions = {
   readonly githubApp?: GitHubAppClient;
   readonly nowMs?: () => number;
   readonly randomBytes?: () => Uint8Array;
+  readonly githubInstallationDetailsTimeoutMs?: number;
 };
 
 const analysisLimits = {
@@ -33,6 +34,8 @@ const analysisLimits = {
   maxFiles: 25_000,
   maxFileBytes: 2 * 1024 * 1024,
 } as const;
+
+const githubInstallationCacheMs = 5 * 60_000;
 
 type GitHubStatePayload = {
   readonly purpose: "github_install";
@@ -44,8 +47,11 @@ type GitHubStatePayload = {
 
 type HomeGitHubState =
   | { readonly status: "connected"; readonly accountLogin: string; readonly managementUrl: string }
+  | { readonly status: "unknown"; readonly accountLogin: string | null; readonly managementUrl: null }
   | { readonly status: "disconnected"; readonly accountLogin: null; readonly managementUrl: null }
   | null;
+
+type CachedInstallationDetails = { readonly details: GitHubInstallationDetails; readonly expiresAtMs: number };
 
 function redirect(response: ServerResponse, location: string): void { response.statusCode = 303; response.setHeader("location", location); response.end(); }
 function cookie(name: string, value: string, maxAgeSeconds: number, secure: boolean): string { return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`; }
@@ -61,14 +67,6 @@ async function body(request: IncomingMessage): Promise<string> {
   for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks).toString("utf8");
 }
-function cookies(request: IncomingMessage): Map<string, string> {
-  const values = new Map<string, string>();
-  for (const part of (request.headers.cookie ?? "").split(";")) {
-    const index = part.indexOf("=");
-    if (index > 0) values.set(part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim()));
-  }
-  return values;
-}
 function webLocation(origin: string, path: string, error?: string): string {
   const url = new URL(path, origin);
   if (error) url.searchParams.set("error", error);
@@ -81,15 +79,6 @@ function fallbackCode(pathname: string): SafeErrorCode {
   if (pathname === "/auth/email") return "AUTH_SIGN_IN_FAILED";
   if (pathname.includes("github")) return "GITHUB_FORBIDDEN";
   return "INTERNAL_ERROR";
-}
-function logCaughtError(request: IncomingMessage, pathname: string, error: unknown): void {
-  console.error(JSON.stringify({ event: "api_error", method: request.method ?? "UNKNOWN", path: pathname, code: safeErrorCode(error, fallbackCode(pathname)) }));
-}
-function tenantSession(request: IncomingMessage, secret: string): SessionIdentity {
-  const token = cookies(request).get("tenant_session");
-  if (!token) throw new AppError("AUTH_REQUIRED", "Authentication required.", 401);
-  try { return verifySessionToken(token, secret); }
-  catch { throw new AppError("AUTH_REQUIRED", "Authentication required.", 401); }
 }
 function github(options: ApiServerOptions): GitHubAppClient {
   if (!options.githubApp) throw new AppError("GITHUB_FORBIDDEN", "GitHub connection is not configured.", 503);
@@ -124,25 +113,54 @@ function verifyGitHubState(value: string, secret: string, session: SessionIdenti
   return state as GitHubStatePayload;
 }
 function json(response: ServerResponse, status: number, value: unknown): void { response.statusCode = status; response.setHeader("content-type", "application/json"); response.end(JSON.stringify(value)); }
+function lastKnownGitHubAccount(home: HomeData): string | null {
+  for (let index = home.projects.length - 1; index >= 0; index -= 1) {
+    const source = home.projects[index]?.source;
+    if (source?.type !== "github") continue;
+    const slash = source.fullName.indexOf("/");
+    if (slash > 0) return source.fullName.slice(0, slash);
+  }
+  return null;
+}
 
 export function createApiServer(options: ApiServerOptions) {
   const apiOrigin = options.apiOrigin ?? "http://localhost:3001";
   const secureCookies = new URL(apiOrigin).protocol === "https:";
   const now = options.nowMs ?? Date.now;
   const random = options.randomBytes ?? (() => nodeRandomBytes(32));
+  const githubDetailsTimeoutMs = options.githubInstallationDetailsTimeoutMs ?? 3_000;
+  const installationDetailsCache = new Map<number, CachedInstallationDetails>();
 
-  const homeGitHubState = async (session: SessionIdentity): Promise<HomeGitHubState> => {
+  const getInstallationDetails = async (installationId: number): Promise<GitHubInstallationDetails> => {
+    const cached = installationDetailsCache.get(installationId);
+    if (cached && cached.expiresAtMs > now()) return cached.details;
+    const client = github(options);
+    const details = await new Promise<GitHubInstallationDetails>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("GitHub installation details timed out")), githubDetailsTimeoutMs);
+      void client.getInstallationDetails(installationId).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error: unknown) => { clearTimeout(timer); reject(error); },
+      );
+    });
+    installationDetailsCache.set(installationId, { details, expiresAtMs: now() + githubInstallationCacheMs });
+    return details;
+  };
+
+  const homeGitHubState = async (session: SessionIdentity, accountLogin: string | null): Promise<HomeGitHubState> => {
     if (typeof options.database.getGitHubInstallation !== "function") return null;
     const installation = await options.database.getGitHubInstallation(session);
     if (!installation) return null;
     if (installation.status === "disconnected") return { status: "disconnected", accountLogin: null, managementUrl: null };
     try {
-      const details = await github(options).getInstallationDetails(installation.installationId);
+      const details = await getInstallationDetails(installation.installationId);
       return { status: "connected", ...details };
     } catch (error) {
-      if (!isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) throw error;
-      if (typeof options.database.markGitHubInstallationDisconnected === "function") await options.database.markGitHubInstallationDisconnected(session);
-      return { status: "disconnected", accountLogin: null, managementUrl: null };
+      if (isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED")) {
+        installationDetailsCache.delete(installation.installationId);
+        if (typeof options.database.markGitHubInstallationDisconnected === "function") await options.database.markGitHubInstallationDisconnected(session);
+        return { status: "disconnected", accountLogin: null, managementUrl: null };
+      }
+      return { status: "unknown", accountLogin, managementUrl: null };
     }
   };
 
@@ -178,45 +196,46 @@ export function createApiServer(options: ApiServerOptions) {
         appendCookie(response, cookie("supabase_oauth_flow", flow.flowCookie, 600, secureCookies)); redirect(response, flow.authorizationUrl); return;
       }
       if (request.method === "GET" && url.pathname === "/auth/github/callback") {
-        const code = url.searchParams.get("code"); const flowId = url.searchParams.get("flow"); const flowCookie = cookies(request).get("supabase_oauth_flow");
+        const code = url.searchParams.get("code"); const flowId = url.searchParams.get("flow"); const flowCookie = parseRequestCookies(request).get("supabase_oauth_flow");
         if (!code || !flowId || !flowCookie) throw new Error("missing OAuth callback state");
         const identity = await options.auth.completeGitHubOAuth({ code, flowId, flowCookie });
         appendCookie(response, clearCookie("supabase_oauth_flow", secureCookies)); await finishIdentity(identity, response); return;
       }
       if (request.method === "POST" && url.pathname === "/onboarding/organization") {
-        const onboardingCookie = cookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
+        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
         const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret); const form = new URLSearchParams(await body(request)); const organizationName = (form.get("organizationName") ?? "").trim();
         if (organizationName.length < 2 || organizationName.length > 80) throw new Error("invalid organization name");
         const created = await options.database.createOrganizationWithOwner(identity, organizationName); const session = { ...created, expiresAtMs: Date.now() + options.sessionDurationMs };
         appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies)); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, webLocation(options.webOrigin, "/home")); return;
       }
       if (request.method === "GET" && url.pathname === "/api/invitations") {
-        const onboardingCookie = cookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
+        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
         const invitations = await options.database.listVerifiedInvitations(verifyOnboardingToken(onboardingCookie, options.sessionSecret)); json(response, 200, { invitations }); return;
       }
       if (request.method === "POST" && url.pathname === "/invitations/accept") {
-        const onboardingCookie = cookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
+        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session");
         const identity = verifyOnboardingToken(onboardingCookie, options.sessionSecret); const form = new URLSearchParams(await body(request)); const accepted = await options.database.acceptVerifiedInvitation(identity, form.get("invitationId") ?? "");
         const session = { ...accepted, expiresAtMs: Date.now() + options.sessionDurationMs }; appendCookie(response, cookie("tenant_session", createSessionToken(session, options.sessionSecret), Math.floor(options.sessionDurationMs / 1000), secureCookies)); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, webLocation(options.webOrigin, "/home")); return;
       }
       if (request.method === "POST" && url.pathname === "/invitations/decline") {
-        const onboardingCookie = cookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session"); verifyOnboardingToken(onboardingCookie, options.sessionSecret); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return;
+        const onboardingCookie = parseRequestCookies(request).get("onboarding_session"); if (!onboardingCookie) throw new Error("missing onboarding session"); verifyOnboardingToken(onboardingCookie, options.sessionSecret); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return;
       }
       if (request.method === "GET" && url.pathname === "/api/home") {
-        const session = tenantSession(request, options.sessionSecret);
-        const [home, githubState] = await Promise.all([options.database.getHome(session), homeGitHubState(session)]);
+        const session = tenantSessionFromRequest(request, options.sessionSecret);
+        const home = await options.database.getHome(session);
+        const githubState = await homeGitHubState(session, lastKnownGitHubAccount(home));
         json(response, 200, { ...home, github: githubState }); return;
       }
       if (request.method === "GET" && url.pathname === "/api/members") {
-        const session = tenantSession(request, options.sessionSecret); const members = await options.database.getMembers(session);
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const members = await options.database.getMembers(session);
         json(response, 200, members.currentUser.role === "owner" ? members : { ...members, invitations: [] }); return;
       }
       if (request.method === "POST" && url.pathname === "/members/invitations") {
-        const session = tenantSession(request, options.sessionSecret); const form = new URLSearchParams(await body(request)); const email = (form.get("email") ?? "").trim().toLowerCase(); const roleValue = form.get("role");
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const form = new URLSearchParams(await body(request)); const email = (form.get("email") ?? "").trim().toLowerCase(); const roleValue = form.get("role");
         if (roleValue !== "developer" && roleValue !== "rep") throw new Error("invalid invitation role"); await options.database.createInvitation(session, email, roleValue satisfies InviteRole); redirect(response, webLocation(options.webOrigin, "/members")); return;
       }
       if (request.method === "GET" && url.pathname === "/github/connect/start") {
-        const session = tenantSession(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
         if (role !== "owner" && role !== "developer") { redirect(response, webLocation(options.webOrigin, "/home", "Only owners and developers can connect repositories.")); return; }
         const existing = typeof options.database.getGitHubInstallation === "function" ? await options.database.getGitHubInstallation(session) : null;
         if (existing?.status === "connected") {
@@ -234,7 +253,7 @@ export function createApiServer(options: ApiServerOptions) {
         redirect(response, github(options).installationUrl(state)); return;
       }
       if (request.method === "GET" && url.pathname === "/auth/github/installation/callback") {
-        const session = tenantSession(request, options.sessionSecret); const stateValue = url.searchParams.get("state");
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const stateValue = url.searchParams.get("state");
         if (!stateValue) throw new AppError("GITHUB_STATE_INVALID", "GitHub connection state is invalid or expired.", 400);
         const state = verifyGitHubState(stateValue, options.sessionSecret, session, now());
         const consumed = await requireDatabaseMethod(options.database, "consumeGitHubConnectionState")(session, hashNonce(state.nonce), new Date(now()));
@@ -246,7 +265,7 @@ export function createApiServer(options: ApiServerOptions) {
         redirect(response, webLocation(options.webOrigin, "/github/repositories")); return;
       }
       if (request.method === "GET" && url.pathname === "/api/github/repositories") {
-        const session = tenantSession(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
         if (role !== "owner" && role !== "developer") throw new AppError("GITHUB_FORBIDDEN", "Repository access is not allowed for this role.", 403);
         const installation = await requireDatabaseMethod(options.database, "getGitHubInstallation")(session);
         if (!installation || installation.status !== "connected") throw new AppError("GITHUB_NOT_CONNECTED", "GitHub is not connected.", 409);
@@ -264,7 +283,7 @@ export function createApiServer(options: ApiServerOptions) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/github/projects") {
-        const session = tenantSession(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const role = await requireDatabaseMethod(options.database, "getMembershipRole")(session);
         if (role !== "owner" && role !== "developer") throw new AppError("GITHUB_FORBIDDEN", "Repository access is not allowed for this role.", 403);
         const installation = await requireDatabaseMethod(options.database, "getGitHubInstallation")(session);
         if (!installation || installation.status !== "connected") throw new AppError("GITHUB_NOT_CONNECTED", "GitHub is not connected.", 409);
@@ -280,7 +299,7 @@ export function createApiServer(options: ApiServerOptions) {
         return;
       }
       if (request.method === "GET" && /^\/api\/projects\/[0-9a-f-]+$/i.test(url.pathname)) {
-        const session = tenantSession(request, options.sessionSecret); const projectId = url.pathname.slice("/api/projects/".length); const project = await requireDatabaseMethod(options.database, "getProjectReport")(session, projectId);
+        const session = tenantSessionFromRequest(request, options.sessionSecret); const projectId = url.pathname.slice("/api/projects/".length); const project = await requireDatabaseMethod(options.database, "getProjectReport")(session, projectId);
         if (!project) throw new AppError("PROJECT_NOT_FOUND", "Project was not found.", 404);
         if (project.installation.status === "connected") {
           try { await github(options).checkInstallation(project.installation.installationId); }
@@ -297,7 +316,12 @@ export function createApiServer(options: ApiServerOptions) {
       if (request.method === "POST" && url.pathname === "/auth/sign-out") { appendCookie(response, clearCookie("tenant_session", secureCookies)); appendCookie(response, clearCookie("onboarding_session", secureCookies)); redirect(response, options.webOrigin); return; }
       response.statusCode = 404; response.end("not found");
     } catch (error) {
-      logCaughtError(request, url.pathname, error);
+      const logged = logRequestError(request, url.pathname, error, fallbackCode(url.pathname));
+      if (isSafeErrorCode(error, "AUTH_REQUIRED")) {
+        if (url.pathname.startsWith("/api/")) json(response, 401, { code: "AUTH_REQUIRED", error: "Please sign in to continue." });
+        else redirect(response, webLocation(options.webOrigin, "/", "Please sign in to continue."));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/auth/email") { redirect(response, webLocation(options.webOrigin, "/", "Sign-in failed. Check your email and password.")); return; }
       if (url.pathname === "/auth/github/installation/callback" || url.pathname === "/github/connect/start") { redirect(response, webLocation(options.webOrigin, "/home", "Unable to connect that GitHub installation.")); return; }
       if (url.pathname === "/auth/github/start" || url.pathname === "/auth/github/callback") { redirect(response, webLocation(options.webOrigin, "/", "GitHub sign-in failed. Please try again.")); return; }
@@ -305,15 +329,14 @@ export function createApiServer(options: ApiServerOptions) {
       if (request.method === "POST" && url.pathname === "/members/invitations") { redirect(response, webLocation(options.webOrigin, "/members", "Unable to send that invitation.")); return; }
       if (url.pathname.startsWith("/invitations/")) { redirect(response, webLocation(options.webOrigin, "/invites", "That invitation could not be used.")); return; }
       if (request.method === "POST" && url.pathname === "/github/projects") {
-        const message = isSafeErrorCode(error, "REPOSITORY_TOO_LARGE") ? "Repository too large to analyse." : isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED") ? "GitHub was disconnected. Reconnect to continue." : "Unable to analyse that repository.";
+        const message = isSafeErrorCode(error, "REPOSITORY_TOO_LARGE") ? "Repository too large to analyse." : isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED") ? "GitHub was disconnected. Reconnect to continue." : error instanceof AppError ? "Unable to analyse that repository." : `Unable to analyse that repository. ${genericRequestFailureMessage(logged.requestId)}`;
         redirect(response, webLocation(options.webOrigin, "/github/repositories", message)); return;
       }
       if (url.pathname.startsWith("/api/")) {
-        const status = error instanceof AppError ? error.status : isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED") ? 409 : 401;
-        const code = safeErrorCode(error, status === 401 ? "AUTH_REQUIRED" : "INTERNAL_ERROR");
-        json(response, status, { code, error: error instanceof AppError ? error.publicMessage : status === 401 ? "Authentication required." : "Request failed." }); return;
+        const status = error instanceof AppError ? error.status : 500;
+        json(response, status, { code: logged.code, error: error instanceof AppError ? error.publicMessage : genericRequestFailureMessage(logged.requestId) }); return;
       }
-      response.statusCode = 401; json(response, 401, { code: "AUTH_REQUIRED", error: "Authentication required." });
+      json(response, 500, { code: logged.code, error: genericRequestFailureMessage(logged.requestId) });
     }
   });
 }
