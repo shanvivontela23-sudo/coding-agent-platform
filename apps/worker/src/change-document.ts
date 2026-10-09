@@ -4,7 +4,7 @@ export type ChangeDocumentInput = {
   readonly files: readonly string[];
   readonly checks: readonly { readonly name: string; readonly status: string }[];
   readonly reproduceProof: string;
-  readonly costUsd: number;
+  readonly costUsd: number | null;
   readonly reviewFocus: string;
 };
 
@@ -18,7 +18,7 @@ function sanitize(value: string): string {
 }
 
 export function buildChangeDocument(input: ChangeDocumentInput): string {
-  if (!Number.isFinite(input.costUsd) || input.costUsd < 0) throw new Error("execution cost must be non-negative");
+  if (input.costUsd !== null && (!Number.isFinite(input.costUsd) || input.costUsd < 0)) throw new Error("execution cost must be non-negative");
   const checks = input.checks.length > 0
     ? input.checks.map((check) => `- ${sanitize(check.name)}: ${sanitize(check.status)}`).join("\n")
     : "- No checks recorded";
@@ -40,7 +40,7 @@ export function buildChangeDocument(input: ChangeDocumentInput): string {
     sanitize(input.reproduceProof),
     "",
     "## Execution cost",
-    `$${input.costUsd.toFixed(2)}`,
+    input.costUsd === null ? "Cost unavailable" : `$${input.costUsd.toFixed(2)}`,
     "",
     "## Developer review focus",
     sanitize(input.reviewFocus),
