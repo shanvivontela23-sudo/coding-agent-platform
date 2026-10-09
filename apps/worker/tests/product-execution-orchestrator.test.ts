@@ -18,7 +18,6 @@ const execution: ClaimedExecution = {
   budgetUsd: 2,
   timeoutSeconds: 100,
 };
-
 const source: PreparedExecutionSource = {
   repository: { pinnedCommit: "a".repeat(40), archiveSha256: "b".repeat(64), archive: new Uint8Array([1]) },
   jobType: "bug_fix",
@@ -27,7 +26,6 @@ const source: PreparedExecutionSource = {
   commands: { install: null, test: "pnpm test", build: null },
   reviewFocus: "retry state",
 };
-
 const patch = "diff --git /dev/null b/src/retry.test.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/retry.test.ts\n@@ -0,0 +1 @@\n+test('retry',()=>expect(true).toBe(true));\n";
 const coding: ProductCodingResult = { patch, reproductionCommand: "pnpm test src/retry.test.ts", costUsd: 0.25, summary: "coded" };
 const verification: VerificationResult = {
@@ -36,37 +34,30 @@ const verification: VerificationResult = {
   reproduce: { command: "pnpm test src/retry.test.ts", baselineExitCode: 1, patchedExitCode: 0, baselineOutput: "AssertionError", patchedOutput: "PASS", baselineClassification: "assertion_failure", patchedClassification: "passed", reproduced: true, reason: null },
 };
 
-function progress(overrides: Partial<ExecutionProgress> = {}): ExecutionProgress {
-  return { sourcePreparedAt: null, codingStartedAt: null, codingFinishedAt: null, patchExportedAt: null, verifiedAt: null, resultPatch: null, resultMetadata: {}, ...overrides };
-}
-
+type CodingSpy = (taskId: string, source: PreparedExecutionSource, options: { readonly signal: AbortSignal; readonly timeoutMs: number }) => Promise<ProductCodingResult>;
+type VerifySpy = (options: { readonly timeoutMs: number; readonly signal: AbortSignal }) => Promise<VerificationResult>;
+function progress(overrides: Partial<ExecutionProgress> = {}): ExecutionProgress { return { sourcePreparedAt: null, codingStartedAt: null, codingFinishedAt: null, patchExportedAt: null, verifiedAt: null, resultPatch: null, resultMetadata: {}, ...overrides }; }
 function store(initial: ExecutionProgress): ExecutionStore & { calls: string[]; costs: Array<number | null> } {
-  const state = { value: initial };
-  const calls: string[] = [];
-  const costs: Array<number | null> = [];
+  const state = { value: initial }; const calls: string[] = []; const costs: Array<number | null> = [];
   return {
-    calls,
-    costs,
+    calls, costs,
     async getProgress() { return state.value; },
     async markSourcePrepared() { calls.push("source_prepared"); state.value = { ...state.value, sourcePreparedAt: "now" }; },
     async markCodingStarted() { calls.push("coding_started"); state.value = { ...state.value, codingStartedAt: "now" }; },
     async saveCost(_execution, costUsd) { calls.push("cost"); costs.push(costUsd); state.value = { ...state.value, resultMetadata: { ...state.value.resultMetadata, costUsd } }; },
-    async saveSafeCodingOutput(_execution, input) {
-      calls.push("coding_finished", "patch_exported");
-      state.value = { ...state.value, codingFinishedAt: "now", patchExportedAt: "now", resultPatch: input.patch, resultMetadata: { ...state.value.resultMetadata, reproductionCommand: input.reproductionCommand, codingSummary: input.codingSummary, costUsd: input.costUsd } };
-    },
+    async saveSafeCodingOutput(_execution, input) { calls.push("coding_finished", "patch_exported"); state.value = { ...state.value, codingFinishedAt: "now", patchExportedAt: "now", resultPatch: input.patch, resultMetadata: { ...state.value.resultMetadata, reproductionCommand: input.reproductionCommand, codingSummary: input.codingSummary, costUsd: input.costUsd } }; },
     async saveVerification() { calls.push("verified"); state.value = { ...state.value, verifiedAt: "now" }; },
   };
 }
-
 function sourceProvider(): ExecutionSourceProvider { return { async prepare() { return source; } }; }
-function codingRunner(spy = vi.fn(async () => coding)): ProductCodingRunner { return { run: spy } as unknown as ProductCodingRunner; }
+function makeCodingSpy(): ReturnType<typeof vi.fn<CodingSpy>> { return vi.fn<CodingSpy>(async () => coding); }
+function codingRunner(spy: CodingSpy = async () => coding): ProductCodingRunner { return { run: spy } as unknown as ProductCodingRunner; }
 const verificationProvider = {} as SandboxProvider;
 
 describe("ProductExecutionOrchestrator", () => {
   it("splits one execution timeout into at most 60% coding and 40% verification", async () => {
-    const coder = vi.fn(async () => coding);
-    const verify = vi.fn(async () => verification);
+    const coder = makeCodingSpy();
+    const verify = vi.fn<VerifySpy>(async () => verification);
     const orchestrator = new ProductExecutionOrchestrator({ store: store(progress()), sourceProvider: sourceProvider(), codingRunner: codingRunner(coder), verificationSandboxProvider: verificationProvider, patchLimits: { maxFiles: 10, maxBytes: 100_000 }, verify });
     await orchestrator.run(execution, { signal: new AbortController().signal });
     expect(coder.mock.calls[0]?.[2]).toMatchObject({ timeoutMs: 60_000 });
@@ -97,14 +88,14 @@ describe("ProductExecutionOrchestrator", () => {
   });
 
   it("never automatically re-enters coding after coding_started without coding_finished", async () => {
-    const coder = vi.fn(async () => coding);
+    const coder = makeCodingSpy();
     const orchestrator = new ProductExecutionOrchestrator({ store: store(progress({ sourcePreparedAt: "earlier", codingStartedAt: "earlier" })), sourceProvider: sourceProvider(), codingRunner: codingRunner(coder), verificationSandboxProvider: verificationProvider, patchLimits: { maxFiles: 10, maxBytes: 100_000 }, verify: async () => verification });
     await expect(orchestrator.run(execution, { signal: new AbortController().signal })).rejects.toThrow(/WORKER_INTERRUPTED/);
     expect(coder).not.toHaveBeenCalled();
   });
 
   it("resumes model-free verification from a safely persisted exported patch without model spend", async () => {
-    const coder = vi.fn(async () => coding);
+    const coder = makeCodingSpy();
     const durable = store(progress({ sourcePreparedAt: "earlier", codingStartedAt: "earlier", codingFinishedAt: "earlier", patchExportedAt: "earlier", resultPatch: patch, resultMetadata: { reproductionCommand: "pnpm test src/retry.test.ts", codingSummary: "coded", costUsd: 0.25 } }));
     const orchestrator = new ProductExecutionOrchestrator({ store: durable, sourceProvider: sourceProvider(), codingRunner: codingRunner(coder), verificationSandboxProvider: verificationProvider, patchLimits: { maxFiles: 10, maxBytes: 100_000 }, verify: async () => verification });
     await expect(orchestrator.run(execution, { signal: new AbortController().signal })).resolves.toMatchObject({ status: "succeeded" });
