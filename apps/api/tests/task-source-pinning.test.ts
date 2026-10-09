@@ -7,7 +7,7 @@ const plan = {
   whatIUnderstand: "Fix the retry button.",
   proposedApproach: "Update the handler and cover it with a test.",
   size: "small" as const,
-  estimate: { costUsdMin: 0.1, costUsdMax: 0.2, timeMinutesMin: 5, timeMinutesMax: 10 },
+  estimate: { label: "Small", costUsdMin: 0.1, costUsdMax: 0.2, timeMinutesMin: 5, timeMinutesMax: 10 },
 };
 
 describe("task plan source pinning", () => {
