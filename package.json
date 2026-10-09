@@ -8,7 +8,9 @@
   "scripts": {
     "lint": "eslint evals apps packages",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run evals/tests apps packages",
+    "test": "pnpm test:parallel && pnpm test:postgres",
+    "test:parallel": "vitest run evals/tests apps packages --exclude 'packages/db/tests/**/*.test.ts' --exclude 'apps/api/tests/*.integration.test.ts'",
+    "test:postgres": "vitest run --no-file-parallelism packages/db/tests apps/api/tests/*.integration.test.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "dataset:validate": "tsx evals/src/dataset/cli.ts",
     "protocol:record": "tsx evals/src/gateway/http/recorder-cli.ts",
