@@ -8,7 +8,7 @@ describe("Part B1 execution application contract", () => {
     const database = await source("apps/api/src/task-execution-database.ts");
     expect(database).toContain("task_executions_one_active_per_task");
     expect(database).toContain("ON CONFLICT DO NOTHING");
-    expect(database).toContain("status='approved'");
+    expect(database).toContain('row.status !== "approved"');
     expect(database).toContain("planned_source_commit_sha");
     expect(database).toContain("planned_source_version_id");
     expect(database).toContain("current_user_role");
