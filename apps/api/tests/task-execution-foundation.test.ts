@@ -37,8 +37,9 @@ describe("Part B1 execution application contract", () => {
     expect(worker).toContain("CodingRunner");
     expect(worker).toContain("heartbeat");
     expect(worker).toContain("AbortController");
-    expect(worker).toContain("timed_out");
-    expect(worker).toContain("cancelled");
+    const queue = await source("apps/worker/src/postgres-execution-queue.ts");
+    expect(queue).toContain("cancelled");
+    expect(queue).toContain("timed_out");
     const fake = await source("apps/worker/src/fake-coding-runner.ts");
     expect(fake).toContain("FakeCodingRunner");
     expect(fake).not.toMatch(/e2b|anthropic|openai|litellm/i);
