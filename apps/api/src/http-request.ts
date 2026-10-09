@@ -33,11 +33,20 @@ export function genericRequestFailureMessage(requestId: string): string {
   return `Something went wrong (ref ${requestId}). Please try again.`;
 }
 
+function redact(value: string, redactValues: readonly string[]): string {
+  let result = value;
+  for (const secret of redactValues) {
+    if (secret) result = result.replaceAll(secret, "[REDACTED]");
+  }
+  return result;
+}
+
 export function logRequestError(
   request: IncomingMessage,
   pathname: string,
   error: unknown,
   fallbackCode: SafeErrorCode = "INTERNAL_ERROR",
+  redactValues: readonly string[] = [],
 ): { readonly requestId: string; readonly code: SafeErrorCode } {
   const requestId = randomBytes(3).toString("hex");
   const actual = error instanceof Error ? error : new Error(typeof error === "string" ? error : "Non-Error value thrown");
@@ -50,8 +59,8 @@ export function logRequestError(
     code,
     error: {
       name: actual.name,
-      message: actual.message,
-      stack: actual.stack ?? null,
+      message: redact(actual.message, redactValues),
+      stack: actual.stack ? redact(actual.stack, redactValues) : null,
     },
   }));
   return { requestId, code };
