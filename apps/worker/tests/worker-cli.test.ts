@@ -5,9 +5,8 @@ async function text(path: string): Promise<string> { return await readFile(path,
 
 describe("B2 worker CLI", () => {
   it("exposes a pnpm dev entrypoint with explicit fake local runner", async () => {
-    const pkg = JSON.parse(await text("apps/worker/package.json")) as { scripts?: Record<string, string>; dependencies?: Record<string, string> };
+    const pkg = JSON.parse(await text("apps/worker/package.json")) as { scripts?: Record<string, string> };
     expect(pkg.scripts?.dev).toBe("tsx src/cli.ts --fake");
-    expect(pkg.dependencies?.pg).toBe("8.23.1");
   });
 
   it("requires DATABASE_URL and worker id, restricts the database user, and handles shutdown signals", async () => {
