@@ -15,6 +15,7 @@ type HomeProjectSource =
   | { readonly type: "upload"; readonly versionNumber: number };
 type HomeGitHubState =
   | { readonly status: "connected"; readonly accountLogin: string; readonly managementUrl: string }
+  | { readonly status: "unknown"; readonly accountLogin: string | null; readonly managementUrl: null }
   | { readonly status: "disconnected"; readonly accountLogin: null; readonly managementUrl: null }
   | null;
 type HomePayload = {
@@ -52,7 +53,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const home = await loadHome();
   const params = searchParams ? await searchParams : {};
   const errorValue = Array.isArray(params.error) ? params.error[0] : params.error;
-  const githubConnected = home.github?.status === "connected";
+  const githubAvailable = home.github?.status === "connected" || home.github?.status === "unknown";
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/home">
       <div className="space-y-10">
@@ -70,13 +71,20 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               <SectionTitle id="projects-heading">Projects</SectionTitle>
               <p className="mt-1 text-sm text-muted-foreground">GitHub repositories and ZIP projects appear here.</p>
             </div>
-            {githubConnected ? (
+            {githubAvailable ? (
               <div className="flex flex-col gap-2 sm:items-end">
                 <Link href="/github/repositories" className={buttonVariants()}>Add a repository</Link>
-                <p className="text-sm text-muted-foreground">
-                  Connected to GitHub as <span className="font-medium text-foreground">{home.github.accountLogin}</span>{" "}
-                  <a href={home.github.managementUrl} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">Manage access</a>
-                </p>
+                {home.github.status === "connected" ? (
+                  <p className="text-sm text-muted-foreground">
+                    Connected to GitHub as <span className="font-medium text-foreground">{home.github.accountLogin}</span>{" "}
+                    <a href={home.github.managementUrl} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">Manage access</a>
+                  </p>
+                ) : (
+                  <div className="text-right text-sm text-muted-foreground">
+                    {home.github.accountLogin ? <p>Connected to GitHub as <span className="font-medium text-foreground">{home.github.accountLogin}</span></p> : null}
+                    <p className="text-xs">Could not check GitHub right now</p>
+                  </div>
+                )}
               </div>
             ) : (
               <form action={`${apiOrigin}/github/connect/start`} method="get" className="w-full sm:w-auto">
