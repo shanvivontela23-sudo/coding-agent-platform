@@ -8,7 +8,7 @@ Product development proceeds in parallel with evaluation. The former 40-task gat
 
 - `apps/web` — Next.js web app, login, onboarding, signed-in projects, members, and project reports.
 - `apps/api` — Node API, Supabase Auth integration, tenant session issuance, GitHub App integration, and tenant-scoped database access.
-- `apps/worker` — asynchronous worker boundary.
+- `apps/worker` — asynchronous worker boundary and task-execution orchestration.
 - `packages/db` — PostgreSQL schema, restricted roles, RLS, and tenant-isolation checks.
 - `evals` — benchmark, gateway, sandbox, and regression infrastructure.
 
@@ -16,7 +16,7 @@ Product development proceeds in parallel with evaluation. The former 40-task gat
 
 Prerequisites: Node.js 22+, pnpm 10.17.1+, Docker, `psql`, and a Supabase project with email/password enabled. GitHub can optionally be enabled as a Supabase Auth provider for developer sign-in. Connecting source repositories uses the separate Dhara GitHub App described below.
 
-The schema migrations are administrator actions. The running API is **never** configured with the postgres account; it connects as the restricted `coding_agent_api` login created by the first migration.
+The schema migrations are administrator actions. Runtime processes are **never** configured with the postgres account. The API connects as `coding_agent_api`; the task worker connects separately as `coding_agent_worker`.
 
 From the repository root, install dependencies and start disposable PostgreSQL:
 
@@ -33,7 +33,7 @@ docker run --name coding-agent-postgres \
 until PGPASSWORD=postgres pg_isready -h 127.0.0.1 -p 5432 -U postgres -d coding_agent; do sleep 1; done
 ```
 
-Apply every numbered migration in order as the local administrator, then assign a local password to the already-created restricted API login:
+Apply every numbered migration in order as the local administrator, then assign local passwords to the restricted API and worker logins:
 
 ```bash
 for migration in packages/db/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
@@ -46,10 +46,10 @@ done
 PGPASSWORD=postgres psql \
   postgresql://postgres@127.0.0.1:5432/coding_agent \
   -v ON_ERROR_STOP=1 \
-  -c "ALTER ROLE coding_agent_api PASSWORD 'coding-agent-local-api';"
+  -c "ALTER ROLE coding_agent_api PASSWORD 'coding-agent-local-api'; ALTER ROLE coding_agent_worker PASSWORD 'coding-agent-local-worker';"
 ```
 
-Start the API in terminal 1 using **only** the restricted login role:
+Start the API in terminal 1 using **only** the restricted API login:
 
 ```bash
 export DATABASE_URL="postgresql://coding_agent_api:coding-agent-local-api@127.0.0.1:5432/coding_agent"
@@ -73,6 +73,16 @@ Start the web app in terminal 2:
 export NEXT_PUBLIC_API_ORIGIN="http://localhost:3001"
 pnpm --filter @coding-agent/web dev
 ```
+
+Start the local task worker in terminal 3:
+
+```bash
+export DATABASE_URL="postgresql://coding_agent_worker:coding-agent-local-worker@127.0.0.1:5432/coding_agent"
+export TASK_EXECUTION_WORKER_ID="local-worker-1"
+pnpm --filter @coding-agent/worker dev
+```
+
+The `dev` worker intentionally uses the deterministic fake coding runner. It exercises queue leasing, cancellation, timeout, and terminal-state plumbing without contacting a model provider or E2B. It exists so locally started executions do not remain queued forever while testing the product shell. Real B2 sandbox/harness execution is opt-in only through the guarded live smoke described below.
 
 Open `http://localhost:3000`. Reps sign in with a Supabase email/password. Developers may use **Continue with GitHub** when the GitHub provider is enabled in Supabase. On a user's first successful sign-in, Dhara sends them to **Create your organization**; the API calls the narrowly scoped database bootstrap function, creates a new organization plus owner membership atomically, then issues the signed tenant session. No manual organization or membership seed is required.
 
@@ -102,11 +112,13 @@ Put these values in the server `.env` (the committed `.env.example` contains emp
 
 The private key may be provided with literal `\n` escapes; the API converts them to newlines only in memory. GitHub user-access tokens used to verify installation ownership and GitHub installation tokens used to read repositories are short-lived server-side credentials. Dhara does not persist them, expose them to the browser, or log them.
 
-**Contents: Write** will be needed in the later pull-request slice when Dhara begins writing branches/files. Do not grant that permission for this read-only analysis slice.
+**Contents: Write** will be needed in the later pull-request slice when Dhara begins writing branches/files. Do not grant that permission for this read-only analysis/execution slice.
 
 ### Database trust boundary
 
-`coding_agent_api` is a `NOSUPERUSER NOBYPASSRLS NOINHERIT` login and has no direct tenant-table access. Authenticated tenant routes start a transaction, `SET LOCAL ROLE coding_agent_app`, then set the verified tenant UUID with a bound `set_config('app.organization_id', ..., true)`. Login membership lookup, first-run organization creation, and the two verified invitation operations are the only SECURITY DEFINER database entry points available to the API login. GitHub installation and project-report persistence stays behind normal tenant RLS.
+`coding_agent_api` and `coding_agent_worker` are separate `NOSUPERUSER NOBYPASSRLS NOINHERIT` logins. Neither gets direct tenant-table privileges. Authenticated API routes start a transaction, `SET LOCAL ROLE coding_agent_app`, then set the verified tenant UUID with a bound `set_config('app.organization_id', ..., true)`. The API role cannot claim, heartbeat, or finish execution queue rows.
+
+The worker can call only the narrow SECURITY DEFINER execution claim/heartbeat/finish functions. Those functions return the claimed organization id. After a claim, worker tenant reads and writes explicitly enter `coding_agent_app` and set only that claimed organization through the same `withTenant()` transaction boundary. Execution/check/artifact history is append-and-update only; the application role cannot delete it.
 
 ## Try task intake for real with Anthropic
 
@@ -206,6 +218,32 @@ docker compose --env-file .env.local-gateway \
   -f evals/deploy/http-gateway/compose.local.yaml down
 ```
 
+## Owner-run B2 live execution smoke
+
+`scripts/b2-live-smoke.ts` is intentionally excluded from normal tests and CI. It uses the real Phase 0 E2B sandbox and Codex harness contracts and can incur **both model-provider and E2B charges**. Do not run it as part of ordinary development.
+
+The owner supplies a sealed source archive that resolves to `B2_LIVE_PINNED_COMMIT`, an execution-scoped gateway URL/token, model id, E2B key, approved requirement/plan, and project commands. The script refuses to start unless both explicit acknowledgements are present:
+
+```bash
+export B2_LIVE_SMOKE=1
+export B2_LIVE_PAID_ACK=I_UNDERSTAND_PAID_MODEL_AND_E2B_CHARGES
+export B2_LIVE_SOURCE_ARCHIVE=/absolute/path/to/sealed-source.tar.gz
+export B2_LIVE_PINNED_COMMIT=<40-character-lowercase-sha>
+export B2_LIVE_GATEWAY_URL=<execution-scoped-gateway-url>
+export B2_LIVE_RUN_TOKEN=<execution-scoped-run-token>
+export B2_LIVE_MODEL=<model-id>
+export B2_LIVE_CODEX_VERSION=<installed-codex-version>
+export B2_LIVE_REQUIREMENT='sanitized confirmed requirement'
+export B2_LIVE_PLAN='approved plan'
+export B2_LIVE_TEST_COMMAND='pnpm test'
+export B2_LIVE_BUILD_COMMAND='pnpm build'
+export E2B_API_KEY=<owner-e2b-key>
+
+pnpm tsx scripts/b2-live-smoke.ts
+```
+
+The smoke uses a separate fresh sandbox for baseline and patched verification, applies only the exported patch to the patched copy, keeps verification model-free/offline, and reports only file/check/proof/cost summaries. It does not publish a GitHub branch/PR or promote a ZIP version.
+
 ## Development checks
 
 ```bash
@@ -218,4 +256,4 @@ pnpm --filter @coding-agent/web build
 
 ## Security
 
-This repository is public. Never commit API keys, OAuth credentials, provider credentials, customer code, private tickets, canary values, or `.env` files. Organization-owned rows use PostgreSQL row-level security. Tenant relationships use composite `(organization_id, id)` foreign keys, `audit_events` is append-only for the application role, and the API process must use `coding_agent_api` rather than a database administrator account. Repository analysis treats source archives as hostile input: entries are stream-parsed in memory with byte/file caps, special-link/device entries and unsafe paths are ignored, repository content is never executed, and only the deterministic report is retained.
+This repository is public. Never commit API keys, OAuth credentials, provider credentials, customer code, private tickets, canary values, or `.env` files. Organization-owned rows use PostgreSQL row-level security. Tenant relationships use composite `(organization_id, id)` foreign keys, `audit_events` is append-only for the application role, and runtime processes use restricted `coding_agent_api` / `coding_agent_worker` roles rather than a database administrator account. Repository analysis treats source archives as hostile input: entries are stream-parsed in memory with byte/file caps, special-link/device entries and unsafe paths are ignored, repository content is never executed during analysis, and only the deterministic report is retained.
