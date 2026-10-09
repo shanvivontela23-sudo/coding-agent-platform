@@ -23,7 +23,7 @@ function database(): ProductDatabase {
     createInvitation: async () => { throw new Error("not used"); },
     listVerifiedInvitations: async () => [],
     acceptVerifiedInvitation: async () => ({ userId, organizationId }),
-    getGitHubInstallation: async () => ({ installationId: 42, status: "connected", accountLogin: "acme" }),
+    getGitHubInstallation: async () => ({ installationId: 42, status: "connected" }),
   } as unknown as ProductDatabase;
 }
 
@@ -72,7 +72,7 @@ async function home(baseUrl: string): Promise<Response> {
 }
 
 describe("home GitHub resilience", () => {
-  it("returns home projects with unknown GitHub state when installation details fail", async () => {
+  it("returns home projects with unknown GitHub state and the persisted account when installation details fail", async () => {
     await withServer({ githubApp: github(async () => { throw new Error("GitHub 500"); }) }, async (baseUrl) => {
       const response = await home(baseUrl);
       expect(response.status).toBe(200);
