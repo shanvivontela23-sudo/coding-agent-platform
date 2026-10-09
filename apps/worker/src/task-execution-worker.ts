@@ -49,7 +49,7 @@ export async function runExecutionWorkerOnce(options: {
   }, execution.timeoutSeconds * 1_000);
 
   let runnerFailure: unknown;
-  let runnerResult: CodingRunResult | void;
+  let runnerResult: CodingRunResult | void = undefined;
   try {
     runnerResult = await options.runner.run(execution, { signal: controller.signal });
   } catch (error) {
