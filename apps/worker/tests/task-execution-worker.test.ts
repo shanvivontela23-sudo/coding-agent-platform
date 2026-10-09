@@ -39,6 +39,8 @@ describe("task execution worker", () => {
   it("records runner failure without an automatic rerun", async () => {
     const queue = new FakeQueue(claimed);
     const result = await runExecutionWorkerOnce({ queue, runner: new FakeCodingRunner({ fail: true }), workerId: "worker-1" });
+    expect(result.worked).toBe(true);
+    if (!result.worked) throw new Error("expected worker to claim an execution");
     expect(result.status).toBe("failed");
     expect(queue.finished).toEqual(["failed"]);
   });
@@ -46,6 +48,8 @@ describe("task execution worker", () => {
   it.each(["cancelled", "timed_out"] as const)("lets %s beat a late runner success", async (control) => {
     const queue = new FakeQueue(claimed, [control]);
     const result = await runExecutionWorkerOnce({ queue, runner: new FakeCodingRunner(), workerId: "worker-1" });
+    expect(result.worked).toBe(true);
+    if (!result.worked) throw new Error("expected worker to claim an execution");
     expect(result.status).toBe(control);
     expect(queue.finished).toEqual([]);
   });
