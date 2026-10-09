@@ -1,7 +1,13 @@
-import type { ClaimedExecution, ExecutionControlState, ExecutionQueue } from "./postgres-execution-queue.js";
+import type { ClaimedExecution, ExecutionControlState, ExecutionFinishStatus, ExecutionQueue } from "./postgres-execution-queue.js";
+
+export type CodingRunResult = {
+  readonly status: Exclude<ExecutionFinishStatus, "failed">;
+  readonly failureCode?: string | null;
+  readonly failureMessage?: string | null;
+};
 
 export interface CodingRunner {
-  run(execution: ClaimedExecution, options: { readonly signal: AbortSignal }): Promise<void>;
+  run(execution: ClaimedExecution, options: { readonly signal: AbortSignal }): Promise<CodingRunResult | void>;
 }
 
 export type WorkerOnceResult =
@@ -43,8 +49,9 @@ export async function runExecutionWorkerOnce(options: {
   }, execution.timeoutSeconds * 1_000);
 
   let runnerFailure: unknown;
+  let runnerResult: CodingRunResult | void;
   try {
-    await options.runner.run(execution, { signal: controller.signal });
+    runnerResult = await options.runner.run(execution, { signal: controller.signal });
   } catch (error) {
     runnerFailure = error;
   } finally {
@@ -58,16 +65,26 @@ export async function runExecutionWorkerOnce(options: {
   }
 
   if (runnerFailure) {
+    const interrupted = runnerFailure instanceof Error && runnerFailure.message.includes("WORKER_INTERRUPTED");
     const status = await options.queue.finish(
       execution.executionId,
       options.workerId,
       "failed",
-      "RUNNER_FAILED",
-      "Implementation failed before delivery.",
+      interrupted ? "WORKER_INTERRUPTED" : "RUNNER_FAILED",
+      interrupted
+        ? "Implementation worker stopped during paid coding. Start a new attempt to retry safely."
+        : "Implementation failed before delivery.",
     );
     return { worked: true, executionId: execution.executionId, status };
   }
 
-  const status = await options.queue.finish(execution.executionId, options.workerId, "succeeded");
+  const requestedStatus = runnerResult?.status ?? "succeeded";
+  const status = await options.queue.finish(
+    execution.executionId,
+    options.workerId,
+    requestedStatus,
+    runnerResult?.failureCode ?? null,
+    runnerResult?.failureMessage ?? null,
+  );
   return { worked: true, executionId: execution.executionId, status };
 }
