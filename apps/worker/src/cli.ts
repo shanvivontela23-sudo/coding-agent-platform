@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { createRuntimePostgresPool } from "../../api/src/postgres-pool.js";
 import { runFakeTaskExecutionWorker } from "./main.js";
 
 function required(name: string): string {
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   const stop = () => controller.abort();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+  const pool = createRuntimePostgresPool(databaseUrl, 2);
 
   try {
     await runFakeTaskExecutionWorker({
