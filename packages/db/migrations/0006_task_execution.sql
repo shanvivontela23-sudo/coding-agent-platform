@@ -10,6 +10,42 @@ ALTER TABLE tasks
     FOREIGN KEY (organization_id, project_id, planned_source_version_id)
     REFERENCES project_versions (organization_id, project_id, id) ON DELETE RESTRICT;
 
+CREATE OR REPLACE FUNCTION public.pin_task_source_on_plan_ready()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_commit text;
+  v_version uuid;
+BEGIN
+  IF NEW.status <> 'plan_ready' OR OLD.status IS NOT DISTINCT FROM NEW.status THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT pr.analysed_commit, pr.analysed_version_id
+    INTO v_commit, v_version
+    FROM public.project_reports AS pr
+   WHERE pr.organization_id = NEW.organization_id
+     AND pr.project_id = NEW.project_id
+   LIMIT 1;
+
+  IF NOT FOUND OR ((v_commit IS NOT NULL) = (v_version IS NOT NULL)) THEN
+    RAISE EXCEPTION 'task plan source is unavailable';
+  END IF;
+
+  NEW.planned_source_commit_sha := v_commit;
+  NEW.planned_source_version_id := v_version;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER tasks_pin_source_on_plan_ready
+BEFORE UPDATE OF status ON tasks
+FOR EACH ROW
+WHEN (NEW.status = 'plan_ready' AND OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION public.pin_task_source_on_plan_ready();
+
 CREATE TABLE task_executions (
   id uuid PRIMARY KEY,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -95,7 +131,7 @@ ALTER TABLE model_calls
   ADD COLUMN task_execution_id uuid,
   ADD CONSTRAINT model_calls_task_execution_fk
     FOREIGN KEY (organization_id, task_id, task_execution_id)
-    REFERENCES task_executions (organization_id, task_id, id) ON DELETE SET NULL;
+    REFERENCES task_executions (organization_id, task_id, id) ON DELETE SET NULL (task_execution_id);
 
 ALTER TABLE task_executions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_executions FORCE ROW LEVEL SECURITY;
