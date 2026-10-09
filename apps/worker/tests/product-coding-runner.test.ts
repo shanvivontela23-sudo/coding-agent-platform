@@ -60,15 +60,8 @@ describe("ProductCodingRunner", () => {
   it("uses the existing SandboxProvider and HarnessRunner with an execution-scoped route and required reconciled cost", async () => {
     const provider = new Provider();
     const harness = new Harness();
-    const runner = new ProductCodingRunner({
-      sandboxProvider: provider,
-      harnessRunner: harness,
-      route: { gatewayUrl: "http://gateway.local/v1", runToken: "execution-token", model: "test-model" },
-      readCostUsd: async () => 0.37,
-    });
-
+    const runner = new ProductCodingRunner({ sandboxProvider: provider, harnessRunner: harness, route: { gatewayUrl: "http://gateway.local/v1", runToken: "execution-token", model: "test-model" }, readCostUsd: async () => 0.37 });
     const result = await runner.run("50000000-0000-4000-8000-000000000241", source, { signal: new AbortController().signal, timeoutMs: 12_000 });
-
     expect(provider.request).toMatchObject({ repository: source.repository, gatewayUrl: "http://gateway.local/v1", timeoutMs: 12_000 });
     expect(provider.session.phases).toContain("dependency-setup");
     expect(provider.session.phases).toContain("coding");
@@ -78,17 +71,8 @@ describe("ProductCodingRunner", () => {
   });
 
   it("reconciles and exposes cost when the harness ends non-completed", async () => {
-    const harness: HarnessRunner = {
-      name: "codex",
-      version: "test",
-      async run() { return { status: "limit-hit", limit: "spend", turnsUsed: 1, wallClockSeconds: 1, patch: { patch: "", status: "" } }; },
-    };
-    const runner = new ProductCodingRunner({
-      sandboxProvider: new Provider(),
-      harnessRunner: harness,
-      route: { gatewayUrl: "http://gateway.local/v1", runToken: "token", model: "model" },
-      readCostUsd: async () => 0.19,
-    });
+    const harness: HarnessRunner = { name: "codex", version: "test", async run() { return { status: "limit-hit", limit: "spend", turnsUsed: 1, wallClockSeconds: 1, patch: { patch: "", status: "" } }; } };
+    const runner = new ProductCodingRunner({ sandboxProvider: new Provider(), harnessRunner: harness, route: { gatewayUrl: "http://gateway.local/v1", runToken: "token", model: "model" }, readCostUsd: async () => 0.19 });
     const error = await runner.run("50000000-0000-4000-8000-000000000242", source, { signal: new AbortController().signal, timeoutMs: 5_000 }).catch((value: unknown) => value);
     expect(error).toBeInstanceOf(CodingRunError);
     expect((error as CodingRunError).costUsd).toBe(0.19);
@@ -98,14 +82,14 @@ describe("ProductCodingRunner", () => {
   it("destroys the sandbox immediately on abort and does not invoke the harness again", async () => {
     const provider = new Provider();
     const controller = new AbortController();
-    let release: (() => void) | null = null;
+    let releaseHarness: (() => void) | undefined;
     const harness: HarnessRunner & { calls: number } = {
       name: "codex",
       version: "test",
       calls: 0,
       async run() {
         this.calls += 1;
-        await new Promise<void>((resolve) => { release = resolve; });
+        await new Promise<void>((resolve) => { releaseHarness = resolve; });
         return { status: "completed", limit: null, turnsUsed: 1, wallClockSeconds: 1, patch: { patch: "", status: "" } };
       },
     };
@@ -117,7 +101,7 @@ describe("ProductCodingRunner", () => {
     await expect(running).rejects.toThrow(/abort/i);
     expect(provider.session.destroyed).toBe(true);
     expect(harness.calls).toBe(1);
-    release?.();
+    if (releaseHarness) (releaseHarness as () => void)();
     await Promise.resolve();
     expect(harness.calls).toBe(1);
     expect(readCostUsd).toHaveBeenCalledTimes(1);
