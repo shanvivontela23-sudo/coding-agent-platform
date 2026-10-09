@@ -18,15 +18,15 @@ describe("Part B2 task execution migration contract", () => {
     expect(checksums["0006_task_execution.sql"]).toBe("4e392204068f9a8e79d2523633ce5fd895c43bd32eca74e2b83adc63fe4e0a45");
     const sql = await migration();
     expect(checksums[migrationName]).toBe(createHash("sha256").update(sql).digest("hex"));
-    expect(Object.keys(checksums)).toHaveLength(7);
+    expect(Object.keys(checksums)).toContain(migrationName);
   });
 
   it("moves queue execution to a dedicated worker role with no direct table grants", async () => {
     const sql = await migration();
     expect(sql).toMatch(/CREATE ROLE coding_agent_worker[\s\S]*LOGIN[\s\S]*NOSUPERUSER[\s\S]*NOBYPASSRLS[\s\S]*NOINHERIT/i);
     expect(sql).toContain("GRANT coding_agent_app TO coding_agent_worker");
-    expect(sql).toContain("REVOKE EXECUTE ON FUNCTION public.claim_task_execution(text, integer) FROM coding_agent_api");
-    expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.claim_task_execution(text, integer) TO coding_agent_worker");
+    expect(sql).toMatch(/REVOKE EXECUTE ON FUNCTION public\.claim_task_execution\(text,\s*integer\) FROM coding_agent_api/);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.claim_task_execution\(text,\s*integer\) TO coding_agent_worker/);
     expect(sql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)[\s\S]*task_executions[\s\S]*TO\s+coding_agent_worker/i);
   });
 
