@@ -8,8 +8,10 @@ function required(name: string): string {
 }
 
 async function main(): Promise<void> {
-  if (!process.argv.includes("--fake")) {
-    throw new Error("The development worker requires --fake; real B2 execution is exercised only through explicit product wiring/live smoke.");
+  if (process.env.TASK_EXECUTION_FAKE_RUNNER !== "1") {
+    throw new Error(
+      "Refusing to dequeue executions without real product execution wiring. Set TASK_EXECUTION_FAKE_RUNNER=1 only for explicit local queue testing; it does not produce a real implementation.",
+    );
   }
 
   const databaseUrl = required("DATABASE_URL");
@@ -31,7 +33,7 @@ async function main(): Promise<void> {
       databaseUsername: "coding_agent_worker",
       workerId,
       signal: controller.signal,
-      env: { ...process.env, TASK_EXECUTION_FAKE_RUNNER: "1" },
+      env: process.env,
     });
   } finally {
     process.removeListener("SIGINT", stop);
