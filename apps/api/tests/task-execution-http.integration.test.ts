@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { FakeCodingRunner } from "../../worker/src/fake-coding-runner.js";
+import { PostgresExecutionQueue, type RestrictedQueryPool } from "../../worker/src/postgres-execution-queue.js";
+import { runExecutionWorkerOnce } from "../../worker/src/task-execution-worker.js";
 import { createSessionToken } from "../src/auth.js";
 import { createProductDatabase } from "../src/database.js";
 import type { GitHubAppClient } from "../src/github-app.js";
@@ -68,7 +71,7 @@ afterAll(async () => {
 const githubApp = { async checkInstallation() { return undefined; } } as unknown as GitHubAppClient;
 
 describe.skipIf(!baseDatabaseUrl)("task execution HTTP controls", () => {
-  it("starts idempotently, cancels, and creates a separate later attempt", async () => {
+  it("starts idempotently, runs the fake worker, and creates separate later attempts", async () => {
     const database = createProductDatabase(apiPool!);
     const service = createTaskExecutionService({ database: createTaskExecutionDatabase(apiPool!), budgetUsd: 1.25, timeoutSeconds: 900 });
     const base = createApiServer({ webOrigin: "http://localhost:3000", apiOrigin: "http://localhost:3001", sessionSecret, sessionDurationMs: 60_000, onboardingDurationMs: 60_000, auth: { async signInWithPassword() { throw new Error("not used"); }, startGitHubOAuth() { throw new Error("not used"); }, async completeGitHubOAuth() { throw new Error("not used"); } }, database, githubApp });
@@ -87,11 +90,29 @@ describe.skipIf(!baseDatabaseUrl)("task execution HTTP controls", () => {
       const duplicate = await fetch(`${endpoint}/start`, { method: "POST", headers: ownerHeaders });
       const duplicatePayload = await duplicate.json() as typeof firstPayload;
       expect(duplicate.status).toBe(200); expect(duplicatePayload.created).toBe(false); expect(duplicatePayload.execution.id).toBe(firstPayload.execution.id);
-      const cancelled = await fetch(`${endpoint}/cancel`, { method: "POST", headers: ownerHeaders });
-      expect((await cancelled.json() as { execution: { status: string } }).execution.status).toBe("cancelled");
+
+      const workerResult = await runExecutionWorkerOnce({
+        queue: new PostgresExecutionQueue(apiPool! as unknown as RestrictedQueryPool),
+        runner: new FakeCodingRunner(),
+        workerId: "integration-worker",
+        leaseSeconds: 30,
+      });
+      expect(workerResult).toEqual({ worked: true, executionId: firstPayload.execution.id, status: "succeeded" });
+      expect(await (await fetch(endpoint, { headers: ownerHeaders })).json()).toMatchObject({ execution: { id: firstPayload.execution.id, status: "succeeded", attempt: 1 } });
+
       const second = await fetch(`${endpoint}/start`, { method: "POST", headers: ownerHeaders });
       const secondPayload = await second.json() as typeof firstPayload;
       expect(second.status).toBe(201); expect(secondPayload.execution.attempt).toBe(2); expect(secondPayload.execution.id).not.toBe(firstPayload.execution.id);
+      const cancelled = await fetch(`${endpoint}/cancel`, { method: "POST", headers: ownerHeaders });
+      expect((await cancelled.json() as { execution: { status: string } }).execution.status).toBe("cancelled");
+
+      const requesterToken = createSessionToken({ userId: requesterId, organizationId, expiresAtMs: Date.now() + 60_000 }, sessionSecret);
+      const requesterHeaders = { cookie: `tenant_session=${encodeURIComponent(requesterToken)}` };
+      const third = await fetch(`${endpoint}/start`, { method: "POST", headers: requesterHeaders });
+      const thirdPayload = await third.json() as typeof firstPayload;
+      expect(third.status).toBe(201); expect(thirdPayload.execution.attempt).toBe(3);
+      const requesterCancel = await fetch(`${endpoint}/cancel`, { method: "POST", headers: requesterHeaders });
+      expect((await requesterCancel.json() as { execution: { status: string } }).execution.status).toBe("cancelled");
     } finally { server.close(); await once(server, "close"); }
   }, 30_000);
 
