@@ -1,19 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { verifySessionToken, type SessionIdentity } from "./auth.js";
-import { AppError, safeErrorCode } from "./errors.js";
+import { AppError, isSafeErrorCode } from "./errors.js";
+import { genericRequestFailureMessage, logRequestError, tenantSessionFromRequest } from "./http-request.js";
 import type { Product07Service } from "./product-07-service.js";
 
-function cookies(request: IncomingMessage): Map<string, string> {
-  const values = new Map<string, string>();
-  for (const part of (request.headers.cookie ?? "").split(";")) {
-    const index = part.indexOf("=");
-    if (index > 0) values.set(part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim()));
-  }
-  return values;
-}
-function session(request: IncomingMessage, secret: string): SessionIdentity {
-  const token = cookies(request).get("tenant_session"); if (!token) throw new AppError("AUTH_REQUIRED", "Authentication required.", 401); return verifySessionToken(token, secret);
-}
 async function readBytes(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const declared = Number(request.headers["content-length"]); if (Number.isFinite(declared) && declared > maxBytes) throw new AppError("UPLOAD_TOO_LARGE", "ZIP upload exceeds the configured limit.", 413);
   const chunks: Buffer[] = []; let total = 0;
@@ -23,7 +12,6 @@ async function readBytes(request: IncomingMessage, maxBytes: number): Promise<Bu
 function json(response: ServerResponse, status: number, value: unknown): void { response.statusCode = status; response.setHeader("content-type", "application/json"); response.end(JSON.stringify(value)); }
 function redirect(response: ServerResponse, location: string): void { response.statusCode = 303; response.setHeader("location", location); response.end(); }
 function webLocation(origin: string, path: string, error?: string): string { const url = new URL(path, origin); if (error) url.searchParams.set("error", error); return url.toString(); }
-function message(error: unknown): string { return error instanceof AppError ? error.publicMessage : "Unable to update that project."; }
 
 export async function handleProduct07HttpRequest(options: {
   readonly request: IncomingMessage;
@@ -45,7 +33,7 @@ export async function handleProduct07HttpRequest(options: {
   if (!upload && !apiProject && !reanalyse && !tokenMatch && !download && !deleteMatch) return false;
 
   try {
-    const identity = session(request, options.sessionSecret);
+    const identity = tenantSessionFromRequest(request, options.sessionSecret);
     if (apiProject) {
       const project = await options.service.getUploadProject(identity, apiProject[1]!);
       if (!project) return false;
@@ -80,9 +68,21 @@ export async function handleProduct07HttpRequest(options: {
     }
     return false;
   } catch (error) {
-    const code = safeErrorCode(error, "INTERNAL_ERROR"); console.error(JSON.stringify({ event: "api_error", method: request.method ?? "UNKNOWN", path: url.pathname, code }));
-    if (apiProject) { const status = error instanceof AppError ? error.status : 500; json(response, status, { code, error: message(error) }); return true; }
+    const logged = logRequestError(request, url.pathname, error);
+    if (isSafeErrorCode(error, "AUTH_REQUIRED")) {
+      if (apiProject) json(response, 401, { code: "AUTH_REQUIRED", error: "Please sign in to continue." });
+      else redirect(response, webLocation(options.webOrigin, "/", "Please sign in to continue."));
+      return true;
+    }
+    if (apiProject) {
+      const status = error instanceof AppError ? error.status : 500;
+      json(response, status, { code: logged.code, error: error instanceof AppError ? error.publicMessage : genericRequestFailureMessage(logged.requestId) });
+      return true;
+    }
     const projectId = reanalyse?.[1] ?? tokenMatch?.[1] ?? deleteMatch?.[1];
-    redirect(response, webLocation(options.webOrigin, projectId ? `/projects/${projectId}` : "/home", message(error))); return true;
+    const fallback = upload ? "Unable to upload that project." : "Unable to update that project.";
+    const publicMessage = error instanceof AppError ? error.publicMessage : `${fallback} ${genericRequestFailureMessage(logged.requestId)}`;
+    redirect(response, webLocation(options.webOrigin, projectId ? `/projects/${projectId}` : "/home", publicMessage));
+    return true;
   }
 }
