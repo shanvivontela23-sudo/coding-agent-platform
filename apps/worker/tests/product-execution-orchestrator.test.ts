@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxProvider } from "../../../evals/src/sandbox/types.js";
 import type { ExecutionSourceProvider, PreparedExecutionSource } from "../src/execution-source.js";
 import type { ExecutionProgress, ExecutionStore } from "../src/execution-store.js";
-import type { PatchSafetyResult } from "../src/patch-safety.js";
 import type { ProductCodingResult, ProductCodingRunner } from "../src/product-coding-runner.js";
 import { ProductExecutionOrchestrator } from "../src/product-execution-orchestrator.js";
 import type { VerificationResult } from "../src/verification.js";
