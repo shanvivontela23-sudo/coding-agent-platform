@@ -2,7 +2,7 @@ import type { SessionIdentity } from "./auth.js";
 import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./database.js";
 import { AppError } from "./errors.js";
 
-export type TaskExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+export type TaskExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "verification_failed" | "fix_not_reproduced";
 
 export type TaskExecutionRecord = {
   readonly id: string;
@@ -21,6 +21,15 @@ export type TaskExecutionRecord = {
   readonly finishedAt: string | null;
   readonly failureCode: string | null;
   readonly failureMessage: string | null;
+  readonly sourcePreparedAt: string | null;
+  readonly codingStartedAt: string | null;
+  readonly codingFinishedAt: string | null;
+  readonly patchExportedAt: string | null;
+  readonly verifiedAt: string | null;
+  readonly resultPatch: string | null;
+  readonly changeDocument: string | null;
+  readonly resultMetadata: Readonly<Record<string, unknown>>;
+  readonly costUsd: number | null;
 };
 
 export interface TaskExecutionDatabase {
@@ -46,6 +55,15 @@ type ExecutionRow = {
   finished_at: Date | string | null;
   failure_code: string | null;
   failure_message: string | null;
+  source_prepared_at: Date | string | null;
+  coding_started_at: Date | string | null;
+  coding_finished_at: Date | string | null;
+  patch_exported_at: Date | string | null;
+  verified_at: Date | string | null;
+  result_patch: string | null;
+  change_document: string | null;
+  result_metadata: Record<string, unknown> | null;
+  cost_usd: string | number | null;
 };
 
 type TaskControlRow = {
@@ -81,10 +99,19 @@ function execution(row: ExecutionRow): TaskExecutionRecord {
     finishedAt: iso(row.finished_at),
     failureCode: row.failure_code,
     failureMessage: row.failure_message,
+    sourcePreparedAt: iso(row.source_prepared_at),
+    codingStartedAt: iso(row.coding_started_at),
+    codingFinishedAt: iso(row.coding_finished_at),
+    patchExportedAt: iso(row.patch_exported_at),
+    verifiedAt: iso(row.verified_at),
+    resultPatch: row.result_patch,
+    changeDocument: row.change_document,
+    resultMetadata: row.result_metadata ?? {},
+    costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
   };
 }
 
-const executionColumns = `id,task_id,project_id,attempt,status,started_by_user_id,source_commit_sha,source_version_id,budget_usd,timeout_seconds,cancel_requested_at,queued_at,started_at,finished_at,failure_code,failure_message`;
+const executionColumns = `id,task_id,project_id,attempt,status,started_by_user_id,source_commit_sha,source_version_id,budget_usd,timeout_seconds,cancel_requested_at,queued_at,started_at,finished_at,failure_code,failure_message,source_prepared_at,coding_started_at,coding_finished_at,patch_exported_at,verified_at,result_patch,change_document,result_metadata,cost_usd`;
 
 function canControl(row: TaskControlRow, session: SessionIdentity): boolean {
   return row.current_user_role === "owner" || row.current_user_role === "developer" || (row.current_user_role === "rep" && row.requested_by_user_id === session.userId);
@@ -208,5 +235,4 @@ export function createTaskExecutionDatabase(pool: TenantPool): TaskExecutionData
   };
 }
 
-// PostgreSQL enforces this partial unique index; keeping the name here makes the concurrency invariant reviewable.
 export const ACTIVE_EXECUTION_INDEX = "task_executions_one_active_per_task";
