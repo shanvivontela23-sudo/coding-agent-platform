@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/cli.ts --fake"
+    "dev": "tsx src/cli.ts"
   }
 }
