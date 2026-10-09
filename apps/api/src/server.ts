@@ -333,7 +333,7 @@ export function createApiServer(options: ApiServerOptions) {
         redirect(response, webLocation(options.webOrigin, "/github/repositories", message)); return;
       }
       if (url.pathname.startsWith("/api/")) {
-        const status = error instanceof AppError ? error.status : 500;
+        const status = error instanceof AppError ? error.status : isSafeErrorCode(error, "GITHUB_INSTALLATION_DISCONNECTED") ? 409 : 500;
         json(response, status, { code: logged.code, error: error instanceof AppError ? error.publicMessage : genericRequestFailureMessage(logged.requestId) }); return;
       }
       json(response, 500, { code: logged.code, error: genericRequestFailureMessage(logged.requestId) });
