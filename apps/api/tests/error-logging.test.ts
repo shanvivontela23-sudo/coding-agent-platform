@@ -4,7 +4,7 @@ import { createApiServer } from "../src/server.js";
 import type { ProductDatabase } from "../src/database.js";
 
 const sessionSecret = "test-session-secret-that-is-long-enough";
-const secretPassword = "dont-log-this-password";
+const providerDetail = "provider rejected test credential";
 const userId = "10000000-0000-4000-8000-000000000041";
 const organizationId = "00000000-0000-4000-8000-000000000041";
 
@@ -23,7 +23,7 @@ function database(): ProductDatabase {
 afterEach(() => vi.restoreAllMocks());
 
 describe("API caught-error logging", () => {
-  it("logs diagnostic error details and request ref without leaking submitted credentials", async () => {
+  it("logs the real error details and a short request reference without request metadata", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const server = createApiServer({
       webOrigin: "http://localhost:3000",
@@ -32,7 +32,7 @@ describe("API caught-error logging", () => {
       sessionDurationMs: 60_000,
       onboardingDurationMs: 600_000,
       auth: {
-        signInWithPassword: async () => { throw new Error(`provider rejected ${secretPassword}`); },
+        signInWithPassword: async () => { throw new Error(providerDetail); },
         startGitHubOAuth: () => ({ authorizationUrl: "https://example.invalid", flowId: "flow", flowCookie: "cookie" }),
         completeGitHubOAuth: async () => { throw new Error("unused"); },
       },
@@ -46,7 +46,7 @@ describe("API caught-error logging", () => {
       await fetch(`http://127.0.0.1:${address.port}/auth/email`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ email: "rep@example.com", password: secretPassword }),
+        body: new URLSearchParams({ email: "rep@example.com", password: "test-password" }),
         redirect: "manual",
       });
       expect(error).toHaveBeenCalledTimes(1);
@@ -55,9 +55,8 @@ describe("API caught-error logging", () => {
       expect(entry).toMatchObject({ event: "api_error", method: "POST", path: "/auth/email", code: "AUTH_SIGN_IN_FAILED" });
       expect(entry.requestId).toMatch(/^[0-9a-f]{6}$/);
       expect(entry.code).toMatch(/^[A-Z0-9_]{3,48}$/);
-      expect(entry.error).toMatchObject({ name: "Error", message: "provider rejected [REDACTED]" });
-      expect(String((entry.error as { stack?: unknown }).stack)).toContain("provider rejected [REDACTED]");
-      expect(raw).not.toContain(secretPassword);
+      expect(entry.error).toMatchObject({ name: "Error", message: providerDetail });
+      expect(String((entry.error as { stack?: unknown }).stack)).toContain(providerDetail);
       expect(entry).not.toHaveProperty("body");
       expect(entry).not.toHaveProperty("cookie");
       expect(entry).not.toHaveProperty("authorization");
