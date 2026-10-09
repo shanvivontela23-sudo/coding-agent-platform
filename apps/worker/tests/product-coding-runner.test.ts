@@ -71,7 +71,7 @@ describe("ProductCodingRunner", () => {
     expect(provider.request).not.toHaveProperty("databaseUrl");
     expect(provider.session.phases).toContain("dependency-setup");
     expect(provider.session.phases).toContain("coding");
-    expect(provider.session.phases.at(-1)).toBe("offline");
+    expect(provider.session.phases.at(-1)).toBe("testing");
     expect(provider.session.commands).toContain("pnpm install --offline");
     expect(harness.request).toMatchObject({
       ticketText: expect.stringContaining(source.requirement),
