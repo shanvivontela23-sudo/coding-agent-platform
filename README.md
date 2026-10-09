@@ -74,15 +74,16 @@ export NEXT_PUBLIC_API_ORIGIN="http://localhost:3001"
 pnpm --filter @coding-agent/web dev
 ```
 
-Start the local task worker in terminal 3:
+Start the local task worker in terminal 3. The runnable entrypoint itself does not inject any fake behavior. For explicit local queue/plumbing testing only, opt in to the deterministic fake runner:
 
 ```bash
 export DATABASE_URL="postgresql://coding_agent_worker:coding-agent-local-worker@127.0.0.1:5432/coding_agent"
 export TASK_EXECUTION_WORKER_ID="local-worker-1"
+export TASK_EXECUTION_FAKE_RUNNER=1
 pnpm --filter @coding-agent/worker dev
 ```
 
-The `dev` worker intentionally uses the deterministic fake coding runner. It exercises queue leasing, cancellation, timeout, and terminal-state plumbing without contacting a model provider or E2B. It exists so locally started executions do not remain queued forever while testing the product shell. Real B2 sandbox/harness execution is opt-in only through the guarded live smoke described below.
+`TASK_EXECUTION_FAKE_RUNNER=1` is intentionally local-test-only. It exercises queue leasing, cancellation, timeout, and terminal-state plumbing without contacting a model provider or E2B, but it **does not produce a real implementation**. Without that explicit opt-in, the development CLI refuses to dequeue work rather than falsely reporting success. Real B2 sandbox/harness execution is exercised through the guarded owner-run live smoke described below; production wiring must construct the real `ProductExecutionOrchestrator` rather than enabling the fake runner.
 
 Open `http://localhost:3000`. Reps sign in with a Supabase email/password. Developers may use **Continue with GitHub** when the GitHub provider is enabled in Supabase. On a user's first successful sign-in, Dhara sends them to **Create your organization**; the API calls the narrowly scoped database bootstrap function, creates a new organization plus owner membership atomically, then issues the signed tenant session. No manual organization or membership seed is required.
 
