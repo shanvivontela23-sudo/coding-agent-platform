@@ -1,15 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { verifySessionToken, type SessionIdentity } from "./auth.js";
+import { AppError, isSafeErrorCode } from "./errors.js";
+import { genericRequestFailureMessage, logRequestError, tenantSessionFromRequest } from "./http-request.js";
 import type { TaskPlanningService, TaskReadService, TaskService } from "./task-service.js";
 
-function cookies(request: IncomingMessage): Map<string, string> {
-  const values = new Map<string, string>();
-  for (const part of (request.headers.cookie ?? "").split(";")) {
-    const index = part.indexOf("=");
-    if (index > 0) values.set(part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim()));
-  }
-  return values;
-}
 async function body(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -20,11 +13,6 @@ async function body(request: IncomingMessage): Promise<string> {
     chunks.push(bytes);
   }
   return Buffer.concat(chunks).toString("utf8");
-}
-function session(request: IncomingMessage, secret: string): SessionIdentity {
-  const token = cookies(request).get("tenant_session");
-  if (!token) throw new Error("authentication required");
-  return verifySessionToken(token, secret);
 }
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.statusCode = status; response.setHeader("content-type", "application/json"); response.end(JSON.stringify(value));
@@ -58,7 +46,7 @@ export async function handleTaskHttpRequest(options: {
   const planningService = options.planningService ?? options.service;
 
   try {
-    const identity = session(request, options.sessionSecret);
+    const identity = tenantSessionFromRequest(request, options.sessionSecret);
     if (configurationRoute) {
       json(response, 200, { planningConfigured: Boolean(planningService) }); return true;
     }
@@ -98,10 +86,22 @@ export async function handleTaskHttpRequest(options: {
     }
     return false;
   } catch (error) {
-    console.error(JSON.stringify({ event: "api_error", method: request.method ?? "UNKNOWN", path: url.pathname, code: "TASK_REQUEST_FAILED" }));
-    if (url.pathname.startsWith("/api/")) { json(response, 401, { code: "TASK_REQUEST_FAILED", error: "Request failed." }); return true; }
+    const logged = logRequestError(request, url.pathname, error);
+    if (isSafeErrorCode(error, "AUTH_REQUIRED")) {
+      if (url.pathname.startsWith("/api/")) json(response, 401, { code: "AUTH_REQUIRED", error: "Please sign in to continue." });
+      else redirect(response, webLocation(options.webOrigin, "/", "Please sign in to continue."));
+      return true;
+    }
+    if (url.pathname.startsWith("/api/")) {
+      const status = error instanceof AppError ? error.status : 500;
+      json(response, status, { code: logged.code, error: error instanceof AppError ? error.publicMessage : genericRequestFailureMessage(logged.requestId) });
+      return true;
+    }
     const fallback = createMatch ? `/projects/${createMatch[1]}/tasks/new` : answerMatch ? `/tasks/${answerMatch[1]}` : approveMatch ? `/tasks/${approveMatch[1]}` : "/tasks";
-    redirect(response, webLocation(options.webOrigin, fallback, error instanceof Error && /not configured/i.test(error.message) ? "Task planning is not configured." : "Unable to update that task."));
+    const message = error instanceof AppError
+      ? error.publicMessage
+      : `Unable to update that task. ${genericRequestFailureMessage(logged.requestId)}`;
+    redirect(response, webLocation(options.webOrigin, fallback, message));
     return true;
   }
 }
