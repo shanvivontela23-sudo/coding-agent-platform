@@ -35,28 +35,26 @@ async function executeChecks(options: {
   readonly timeoutMs: number;
 }): Promise<SessionRun> {
   const { session, source, patch, reproductionCommand, timeoutMs } = options;
+  await session.setNetworkPhase("dependency-setup");
   if (source.commands.install) {
-    await session.setNetworkPhase("dependency-setup");
     const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs });
     if (install.exitCode !== 0) throw new Error("Verification dependency setup failed");
   }
+  await session.setNetworkPhase("offline");
 
   if (patch !== null) {
-    await session.setNetworkPhase("offline");
     const patchPath = `${session.workspacePath}/.dhara.patch`;
     await session.writeFile(patchPath, patch);
     const applied = await session.exec({ command: "git apply --binary --whitespace=nowarn .dhara.patch", cwd: session.workspacePath, timeoutMs });
     if (applied.exitCode !== 0) throw new Error("Exported patch does not apply cleanly to approved source");
   }
 
-  await session.setNetworkPhase("testing");
   const checks = new Map<string, SandboxCommandResult>();
   if (source.commands.test) checks.set("test", await session.exec({ command: source.commands.test, cwd: session.workspacePath, timeoutMs }));
   if (source.commands.build) checks.set("build", await session.exec({ command: source.commands.build, cwd: session.workspacePath, timeoutMs }));
   const reproduction = reproductionCommand
     ? await session.exec({ command: reproductionCommand, cwd: session.workspacePath, timeoutMs })
     : null;
-  await session.setNetworkPhase("offline");
   return { checks, reproduction };
 }
 
