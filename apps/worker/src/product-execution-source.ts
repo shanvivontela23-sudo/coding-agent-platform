@@ -101,7 +101,7 @@ function zipToTarGz(zip: Uint8Array, limits: UploadArchiveLimits): Uint8Array {
     const padding = (512 - (bytes.length % 512)) % 512; if (padding) chunks.push(Buffer.alloc(padding));
   }
   chunks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(chunks), { mtime: 0 });
+  return gzipSync(Buffer.concat(chunks));
 }
 
 function installCommand(report: ProjectReport): string | null {
