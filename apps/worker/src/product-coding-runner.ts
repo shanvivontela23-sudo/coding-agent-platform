@@ -1,5 +1,5 @@
 import type { HarnessRunner } from "../../../evals/src/harness/types.js";
-import type { SandboxProvider, SandboxSession } from "../../../evals/src/sandbox/types.js";
+import type { SandboxProvider } from "../../../evals/src/sandbox/types.js";
 import type { PreparedExecutionSource } from "./execution-source.js";
 import { testPathsFromPatch } from "./patch-parser.js";
 
