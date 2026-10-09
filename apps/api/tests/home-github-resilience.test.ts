@@ -85,15 +85,12 @@ describe("home GitHub resilience", () => {
 
   it("returns home projects when the GitHub details call times out", async () => {
     await withServer({
-      githubApp: github(async () => await new Promise<never>(() => undefined)),
+      githubApp: github(async () => await new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("slow GitHub failure")), 100))),
       timeoutMs: 20,
     }, async (baseUrl) => {
-      const result = await Promise.race([
-        home(baseUrl),
-        new Promise<"test-timeout">((resolve) => setTimeout(() => resolve("test-timeout"), 250)),
-      ]);
-      expect(result).not.toBe("test-timeout");
-      const response = result as Response;
+      const startedAt = Date.now();
+      const response = await home(baseUrl);
+      expect(Date.now() - startedAt).toBeLessThan(80);
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ projects: [{ name: "API" }], github: { status: "unknown", accountLogin: "acme" } });
     });
