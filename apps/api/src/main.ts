@@ -16,6 +16,9 @@ import { attachProduct07Routes } from "./product-07-server.js";
 import { createProduct07Service } from "./product-07-service.js";
 import { createApiServer } from "./server.js";
 import { createTaskDatabase } from "./task-database.js";
+import { createTaskExecutionDatabase } from "./task-execution-database.js";
+import { attachTaskExecutionRoutes } from "./task-execution-server.js";
+import { createTaskExecutionService } from "./task-execution-service.js";
 import { ExistingGatewayTaskModelGateway } from "./task-intake.js";
 import { attachTaskRoutes } from "./task-server.js";
 import { createTaskPlanningService, createTaskReadService, type TaskPlanningService } from "./task-service.js";
@@ -85,6 +88,11 @@ const product07Service = createProduct07Service({
 const taskDatabase = createTaskDatabase(tenantPool);
 const taskCipher = createTicketCipher(process.env.TASK_TICKET_ENCRYPTION_SECRET?.trim() || sessionSecret);
 const taskReadService = createTaskReadService({ database: taskDatabase, cipher: taskCipher });
+const taskExecutionService = createTaskExecutionService({
+  database: createTaskExecutionDatabase(tenantPool),
+  budgetUsd: positiveNumber("TASK_EXECUTION_BUDGET_USD", 2),
+  timeoutSeconds: positiveInteger("TASK_EXECUTION_TIMEOUT_SECONDS", 20 * 60),
+});
 let taskPlanningService: TaskPlanningService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
 if (taskGatewayAdminToken) {
@@ -122,7 +130,8 @@ const productServer = createApiServer({
   githubApp,
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
-const server = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
+const taskServer = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
+const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };
