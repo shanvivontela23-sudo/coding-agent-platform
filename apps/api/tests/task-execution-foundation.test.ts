@@ -43,6 +43,12 @@ describe("Part B1 execution application contract", () => {
     const fake = await source("apps/worker/src/fake-coding-runner.ts");
     expect(fake).toContain("FakeCodingRunner");
     expect(fake).not.toMatch(/e2b|anthropic|openai|litellm/i);
+
+    const main = await source("apps/worker/src/main.ts");
+    expect(main).toContain("TASK_EXECUTION_FAKE_RUNNER");
+    expect(main).toContain("coding_agent_api");
+    expect(main).toContain("runExecutionWorkerOnce");
+    expect(main).not.toMatch(/e2b|anthropic|openai|litellm/i);
   });
 
   it("shows Start implementation, cancel, and polled execution states on the task page", async () => {
