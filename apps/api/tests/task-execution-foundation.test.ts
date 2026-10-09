@@ -25,10 +25,8 @@ describe("Part B1 execution application contract", () => {
 
   it("exposes status/start/cancel routes without exposing worker credentials", async () => {
     const server = await source("apps/api/src/task-execution-server.ts");
-    expect(server).toContain("/api/tasks/");
-    expect(server).toContain("/execution/start");
-    expect(server).toContain("/execution/cancel");
-    expect(server).toContain("/execution");
+    expect(server).toContain("api\\/tasks\\/");
+    expect(server).toContain("execution(?:\\/(start|cancel))?");
     expect(server).not.toMatch(/DATABASE_URL|GITHUB_APP_PRIVATE_KEY|LITELLM/i);
   });
 
