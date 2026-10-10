@@ -37,7 +37,7 @@ describe("execution gateway control", () => {
     const session = await control.open({ executionId: "execution-123", budgetUsd: 1.25, timeoutSeconds: 120 });
     const stored = await new FileGatewayStore({ rootDir: gatewayStoreDir }).getRun("execution-123");
     expect(stored).toMatchObject({ runId: "execution-123", spendCapUsd: 1.25, expiresAtMs: nowMs + 120_000, upstreamCredential: "temporary-litellm-key", allowedModels: ["test-model"], status: "active" });
-    expect(new RunTokenService({ secret, clock: () => nowMs }).verify(session.runToken)).toMatchObject({ runId: "execution-123", expiresAtMs: nowMs + 120_000 });
+    expect(new RunTokenService({ secret, clock: () => nowMs }).verify(session.runToken, "execution-123")).toMatchObject({ runId: "execution-123", expiresAtMs: nowMs + 120_000 });
     await session.finish();
     expect((await new FileGatewayStore({ rootDir: gatewayStoreDir }).getRun("execution-123")).status).toBe("completed");
   });
