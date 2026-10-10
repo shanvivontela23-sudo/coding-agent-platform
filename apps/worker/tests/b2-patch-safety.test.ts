@@ -38,6 +38,11 @@ describe("B2 patch safety", () => {
     expect(() => inspectPatchSafety(quotedPatch("../escape.ts", "src/safe.ts"), limits)).toThrow(/root/i);
   });
 
+  it("rejects file markers that disagree with the diff header", () => {
+    const disguisedWorkflow = `diff --git a/src/safe.ts b/src/safe.ts\n--- a/src/safe.ts\n+++ "b/.github/workflows/release job.yml"\n@@ -1 +1 @@\n-old\n+new\n`;
+    expect(() => inspectPatchSafety(disguisedWorkflow, limits)).toThrow(/marker.*diff header/i);
+  });
+
   it.each([
     ["path traversal", patch("../escape.ts")],
     ["workflow", patch(".github/workflows/ci.yml")],
