@@ -131,11 +131,10 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
                 pv.id AS version_id,pv.storage_key AS version_storage_key,pv.sha256 AS version_sha256
            FROM tasks t
            JOIN project_reports pr ON pr.organization_id=t.organization_id AND pr.project_id=t.project_id
-           LEFT JOIN repositories r ON r.organization_id=t.organization_id AND r.project_id=t.project_id AND r.provider='github'
-           LEFT JOIN github_installations gi ON gi.organization_id=t.organization_id
+           LEFT JOIN repositories r ON r.organization_id=t.organization_id AND r.id=t.repository_id AND r.provider='github'
+           LEFT JOIN github_installations gi ON gi.organization_id=t.organization_id AND gi.status='connected'
            LEFT JOIN project_versions pv ON pv.organization_id=t.organization_id AND pv.project_id=t.project_id AND pv.id=$4
           WHERE t.organization_id=$1 AND t.id=$2 AND t.project_id=$3
-          ORDER BY r.created_at NULLS LAST
           LIMIT 1`,
         [input.organizationId, input.taskId, input.projectId, input.sourceVersionId],
       );
@@ -148,7 +147,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
     let repository;
     if (input.sourceCommitSha) {
       const installationId = Number(row.installation_id);
-      if (!Number.isSafeInteger(installationId) || installationId <= 0 || !row.repository_full_name) throw new Error("GitHub installation or repository is unavailable for pinned execution");
+      if (!Number.isSafeInteger(installationId) || installationId <= 0 || !row.repository_full_name) throw new Error("Connected GitHub installation or task repository is unavailable for pinned execution");
       const archive = await this.options.github.read({ installationId, repositoryFullName: row.repository_full_name, commitSha: input.sourceCommitSha, maxBytes: this.options.maxGitHubArchiveBytes });
       repository = { pinnedCommit: input.sourceCommitSha, archiveSha256: archive.sha256, archive: archive.archive };
     } else if (input.sourceVersionId) {
