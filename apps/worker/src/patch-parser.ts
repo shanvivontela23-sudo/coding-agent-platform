@@ -21,7 +21,8 @@ function decodeQuotedPath(token: string): string {
     else if (/[0-7]/.test(escaped)) {
       let octal = escaped;
       for (let count = 0; count < 2 && index + 1 < body.length && /[0-7]/.test(body[index + 1]!); count += 1) {
-        index += 1; octal += body[index]!;
+        index += 1;
+        octal += body[index]!;
       }
       output += String.fromCharCode(Number.parseInt(octal, 8));
     } else throw new Error("Patch diff header path escape is unsupported");
@@ -29,27 +30,37 @@ function decodeQuotedPath(token: string): string {
   return output;
 }
 
-function parseHeaderTokens(value: string): readonly [string, string] {
-  const text = value.trim();
-  if (!text) throw new Error("Patch diff header is empty");
-  if (text.startsWith('"')) {
+function readHeaderToken(text: string, start: number): { readonly value: string; readonly next: number } {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index]!)) index += 1;
+  if (index >= text.length) throw new Error("Patch diff header path is missing");
+  if (text[index] === '"') {
+    const tokenStart = index;
+    index += 1;
     let escaped = false;
-    let end = -1;
-    for (let index = 1; index < text.length; index += 1) {
+    for (; index < text.length; index += 1) {
       const char = text[index]!;
       if (escaped) { escaped = false; continue; }
       if (char === "\\") { escaped = true; continue; }
-      if (char === '"') { end = index; break; }
+      if (char === '"') {
+        const token = text.slice(tokenStart, index + 1);
+        return { value: decodeQuotedPath(token), next: index + 1 };
+      }
     }
-    if (end < 0) throw new Error("Patch diff header quoted path is malformed");
-    const first = text.slice(0, end + 1);
-    const rest = text.slice(end + 1).trimStart();
-    if (!rest.startsWith('"') || !rest.endsWith('"')) throw new Error("Patch diff header quoted paths are malformed");
-    return [decodeQuotedPath(first), decodeQuotedPath(rest)];
+    throw new Error("Patch diff header quoted path is malformed");
   }
-  const separator = text.lastIndexOf(" b/");
-  if (separator <= 0) throw new Error("Patch diff header could not be parsed");
-  return [text.slice(0, separator), text.slice(separator + 1)];
+  const tokenStart = index;
+  while (index < text.length && !/\s/.test(text[index]!)) index += 1;
+  return { value: text.slice(tokenStart, index), next: index };
+}
+
+function parseHeaderTokens(value: string): readonly [string, string] {
+  const text = value.trim();
+  if (!text) throw new Error("Patch diff header is empty");
+  const first = readHeaderToken(text, 0);
+  const second = readHeaderToken(text, first.next);
+  if (text.slice(second.next).trim().length > 0) throw new Error("Patch diff header contains unparsed path content");
+  return [first.value, second.value];
 }
 
 export function normalizePatchPath(raw: string): string | null {
