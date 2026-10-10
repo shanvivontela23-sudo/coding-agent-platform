@@ -74,7 +74,32 @@ export NEXT_PUBLIC_API_ORIGIN="http://localhost:3001"
 pnpm --filter @coding-agent/web dev
 ```
 
-Start the local task worker in terminal 3. The runnable entrypoint itself does not inject any fake behavior. For explicit local queue/plumbing testing only, opt in to the deterministic fake runner:
+Start the real task worker in terminal 3. Normal `dev` mode composes the product `ProductExecutionOrchestrator`; it does not inject the fake runner. The worker loads the approved task and its exact pinned GitHub SHA or ZIP version, creates an execution-scoped gateway run capped at the attempt's `budget_usd`, uses E2B/Codex for coding, and reconciles actual spend through the gateway before persisting the result.
+
+```bash
+export DATABASE_URL="postgresql://coding_agent_worker:coding-agent-local-worker@127.0.0.1:5432/coding_agent"
+export TASK_EXECUTION_WORKER_ID="local-worker-1"
+
+export E2B_API_KEY="YOUR_E2B_KEY"
+export TASK_EXECUTION_MODEL="YOUR_MODEL_ID"
+export TASK_EXECUTION_CODEX_VERSION="YOUR_INSTALLED_CODEX_VERSION"
+export TASK_EXECUTION_GATEWAY_URL="http://127.0.0.1:8080"
+export MODEL_GATEWAY_RUN_TOKEN_SECRET="replace-with-at-least-32-random-characters"
+export GATEWAY_STORE_DIR="$PWD/.local/gateway-state/runs"
+export HARNESS_CALL_STORE_DIR="$PWD/.local/gateway-state/calls"
+export LITELLM_GATEWAY_URL="http://127.0.0.1:4000"
+export LITELLM_ADMIN_TOKEN="YOUR_LOCAL_LITELLM_MASTER_KEY"
+
+export GITHUB_APP_ID="YOUR_APP_ID"
+export GITHUB_APP_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'
+export PROJECT_STORAGE_ROOT="$HOME/.dhara/storage"
+
+pnpm --filter @coding-agent/worker dev
+```
+
+The real worker fails fast at startup with a single list of all missing required settings. `DATABASE_URL` must authenticate as `coding_agent_worker`. GitHub installation tokens are minted inside the worker control-plane source reader only long enough to download the exact pinned archive; they are never passed to the sandbox. ZIP versions are loaded by id and their stored SHA-256 is checked before execution.
+
+For explicit queue/plumbing testing only, opt in to the deterministic fake runner:
 
 ```bash
 export DATABASE_URL="postgresql://coding_agent_worker:coding-agent-local-worker@127.0.0.1:5432/coding_agent"
@@ -83,7 +108,7 @@ export TASK_EXECUTION_FAKE_RUNNER=1
 pnpm --filter @coding-agent/worker dev
 ```
 
-`TASK_EXECUTION_FAKE_RUNNER=1` is intentionally local-test-only. It exercises queue leasing, cancellation, timeout, and terminal-state plumbing without contacting a model provider or E2B, but it **does not produce a real implementation**. Without that explicit opt-in, the development CLI refuses to dequeue work rather than falsely reporting success. Real B2 sandbox/harness execution is exercised through the guarded owner-run live smoke described below; production wiring must construct the real `ProductExecutionOrchestrator` rather than enabling the fake runner.
+`TASK_EXECUTION_FAKE_RUNNER=1` does not contact a model provider or E2B and **does not produce a real implementation**. Use it only to exercise leasing, cancellation, timeout, and terminal-state plumbing. Do not set it for normal product execution or for the paid live smoke.
 
 Open `http://localhost:3000`. Reps sign in with a Supabase email/password. Developers may use **Continue with GitHub** when the GitHub provider is enabled in Supabase. On a user's first successful sign-in, Dhara sends them to **Create your organization**; the API calls the narrowly scoped database bootstrap function, creates a new organization plus owner membership atomically, then issues the signed tenant session. No manual organization or membership seed is required.
 
@@ -221,29 +246,21 @@ docker compose --env-file .env.local-gateway \
 
 ## Owner-run B2 live execution smoke
 
-`scripts/b2-live-smoke.ts` is intentionally excluded from normal tests and CI. It uses the real Phase 0 E2B sandbox and Codex harness contracts and can incur **both model-provider and E2B charges**. Do not run it as part of ordinary development.
+`scripts/b2-live-smoke.ts` is intentionally excluded from normal tests and CI. It uses the **same real worker composition** as `pnpm --filter @coding-agent/worker dev`, including pinned source loading, execution-budget gateway setup, E2B/Codex coding, clean-copy verification, and spend reconciliation. It can incur **both model-provider and E2B charges**. Do not run it as part of ordinary development.
 
-The owner supplies a sealed source archive that resolves to `B2_LIVE_PINNED_COMMIT`, an execution-scoped gateway URL/token, model id, E2B key, approved requirement/plan, and project commands. The script refuses to start unless both explicit acknowledgements are present:
+Before running it, configure the same real worker environment listed above. In Dhara, create and approve exactly the smoke task you want to exercise and click **Start implementation** so that one intended execution is queued. The script claims one queued execution as `coding_agent_worker`; it no longer accepts a hand-fed source archive, plan, gateway token, or cost value.
+
+It refuses to start unless both explicit acknowledgements are present:
 
 ```bash
 export B2_LIVE_SMOKE=1
 export B2_LIVE_PAID_ACK=I_UNDERSTAND_PAID_MODEL_AND_E2B_CHARGES
-export B2_LIVE_SOURCE_ARCHIVE=/absolute/path/to/sealed-source.tar.gz
-export B2_LIVE_PINNED_COMMIT=<40-character-lowercase-sha>
-export B2_LIVE_GATEWAY_URL=<execution-scoped-gateway-url>
-export B2_LIVE_RUN_TOKEN=<execution-scoped-run-token>
-export B2_LIVE_MODEL=<model-id>
-export B2_LIVE_CODEX_VERSION=<installed-codex-version>
-export B2_LIVE_REQUIREMENT='sanitized confirmed requirement'
-export B2_LIVE_PLAN='approved plan'
-export B2_LIVE_TEST_COMMAND='pnpm test'
-export B2_LIVE_BUILD_COMMAND='pnpm build'
-export E2B_API_KEY=<owner-e2b-key>
+unset TASK_EXECUTION_FAKE_RUNNER
 
 pnpm tsx scripts/b2-live-smoke.ts
 ```
 
-The smoke uses a separate fresh sandbox for baseline and patched verification, applies only the exported patch to the patched copy, keeps verification model-free/offline, and reports only file/check/proof/cost summaries. It does not publish a GitHub branch/PR or promote a ZIP version.
+If no execution is queued, the smoke exits without making a paid call. It does not publish a GitHub branch/PR or promote a ZIP version. This script is owner-run only and is **not run by tests or CI**.
 
 ## Development checks
 
