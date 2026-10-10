@@ -1,8 +1,11 @@
 import { CodexHarnessRunner } from "../../../evals/src/harness/codex.js";
+import type { HarnessRunner } from "../../../evals/src/harness/types.js";
 import { E2BSandboxProvider } from "../../../evals/src/sandbox/e2b-provider.js";
+import type { SandboxProvider } from "../../../evals/src/sandbox/types.js";
 import type { TenantPool } from "../../api/src/database.js";
 import { LocalProjectStorage } from "../../api/src/project-storage.js";
 import { FileBackedExecutionGatewayControl, type ExecutionGatewayControl } from "./execution-gateway.js";
+import type { ExecutionSourceProvider } from "./execution-source.js";
 import { PostgresExecutionStore } from "./execution-store.js";
 import { ProductCodingRunner } from "./product-coding-runner.js";
 import { ProductExecutionOrchestrator } from "./product-execution-orchestrator.js";
@@ -23,8 +26,9 @@ export function createRealProductExecutionRunner(options: {
   readonly pool: RestrictedQueryPool & Partial<TenantPool>;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly gateway?: ExecutionGatewayControl;
-  readonly sandboxProvider?: E2BSandboxProvider;
-  readonly harness?: CodexHarnessRunner;
+  readonly sandboxProvider?: SandboxProvider;
+  readonly harness?: HarnessRunner;
+  readonly sourceProvider?: ExecutionSourceProvider;
 }): ProductExecutionOrchestrator {
   const env = options.env ?? process.env;
   const tenantPool = options.pool as unknown as TenantPool;
@@ -39,7 +43,7 @@ export function createRealProductExecutionRunner(options: {
     litellmGatewayUrl: options.config.litellmGatewayUrl,
     litellmAdminToken: options.config.litellmAdminToken,
   });
-  const sourceProvider = new ProductExecutionSourceProvider({
+  const sourceProvider = options.sourceProvider ?? new ProductExecutionSourceProvider({
     pool: tenantPool,
     storage: new LocalProjectStorage({ rootDir: options.config.projectStorageRoot }),
     github: new GitHubInstallationArchiveReader({ appId: options.config.githubAppId, privateKey: options.config.githubAppPrivateKey }),
