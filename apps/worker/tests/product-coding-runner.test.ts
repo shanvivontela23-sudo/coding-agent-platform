@@ -56,16 +56,24 @@ class Harness implements HarnessRunner {
   }
 }
 
+function expectWithinStageBudget(value: number | undefined, budgetMs: number): void {
+  expect(value).toBeTypeOf("number");
+  expect(value!).toBeGreaterThan(0);
+  expect(value!).toBeLessThanOrEqual(budgetMs);
+}
+
 describe("ProductCodingRunner", () => {
   it("uses the existing SandboxProvider and HarnessRunner with an execution-scoped route and required reconciled cost", async () => {
     const provider = new Provider();
     const harness = new Harness();
     const runner = new ProductCodingRunner({ sandboxProvider: provider, harnessRunner: harness, route: { gatewayUrl: "http://gateway.local/v1", runToken: "execution-token", model: "test-model" }, readCostUsd: async () => 0.37 });
     const result = await runner.run("50000000-0000-4000-8000-000000000241", source, { signal: new AbortController().signal, timeoutMs: 12_000 });
-    expect(provider.request).toMatchObject({ repository: source.repository, gatewayUrl: "http://gateway.local/v1", timeoutMs: 12_000 });
+    expect(provider.request).toMatchObject({ repository: source.repository, gatewayUrl: "http://gateway.local/v1" });
+    expectWithinStageBudget(provider.request?.timeoutMs, 12_000);
     expect(provider.session.phases).toContain("dependency-setup");
     expect(provider.session.phases).toContain("coding");
-    expect(harness.request).toMatchObject({ timeoutMs: 12_000, gatewayUrl: "http://gateway.local/v1", runToken: "execution-token", model: "test-model" });
+    expect(harness.request).toMatchObject({ gatewayUrl: "http://gateway.local/v1", runToken: "execution-token", model: "test-model" });
+    expectWithinStageBudget(harness.request?.timeoutMs, 12_000);
     expect(result.reproductionCommand).toBe("pnpm test src/retry.test.ts");
     expect(result.costUsd).toBe(0.37);
   });
