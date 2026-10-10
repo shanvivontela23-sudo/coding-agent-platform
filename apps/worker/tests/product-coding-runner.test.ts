@@ -79,16 +79,19 @@ describe("ProductCodingRunner", () => {
     expect((error as Error).message).toMatch(/limit-hit/);
   });
 
-  it("destroys the sandbox immediately on abort and does not invoke the harness again", async () => {
+  it("destroys the sandbox immediately when aborted during coding and does not invoke the harness again", async () => {
     const provider = new Provider();
     const controller = new AbortController();
     let releaseHarness: (() => void) | undefined;
+    let signalHarnessStarted: (() => void) | undefined;
+    const harnessStarted = new Promise<void>((resolve) => { signalHarnessStarted = resolve; });
     const harness: HarnessRunner & { calls: number } = {
       name: "codex",
       version: "test",
       calls: 0,
       async run() {
         this.calls += 1;
+        signalHarnessStarted?.();
         await new Promise<void>((resolve) => { releaseHarness = resolve; });
         return { status: "completed", limit: null, turnsUsed: 1, wallClockSeconds: 1, patch: { patch: "", status: "" } };
       },
@@ -96,12 +99,13 @@ describe("ProductCodingRunner", () => {
     const readCostUsd = vi.fn(async () => 0.11);
     const runner = new ProductCodingRunner({ sandboxProvider: provider, harnessRunner: harness, route: { gatewayUrl: "http://gateway.local/v1", runToken: "token", model: "model" }, readCostUsd });
     const running = runner.run("50000000-0000-4000-8000-000000000243", source, { signal: controller.signal, timeoutMs: 30_000 });
-    await Promise.resolve(); await Promise.resolve();
+    await harnessStarted;
+    expect(harness.calls).toBe(1);
     controller.abort();
     await expect(running).rejects.toThrow(/abort/i);
     expect(provider.session.destroyed).toBe(true);
     expect(harness.calls).toBe(1);
-    if (releaseHarness) (releaseHarness as () => void)();
+    releaseHarness?.();
     await Promise.resolve();
     expect(harness.calls).toBe(1);
     expect(readCostUsd).toHaveBeenCalledTimes(1);
