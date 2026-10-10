@@ -43,8 +43,9 @@ function reproductionCommand(source: PreparedExecutionSource, patch: string): st
   return testPath ? `${source.commands.test} ${shellArg(testPath)}` : null;
 }
 
-function abortError(): Error { return new Error("execution aborted"); }
-function assertNotAborted(signal: AbortSignal): void { if (signal.aborted) throw abortError(); }
+function abortError(stageTimedOut: boolean): Error {
+  return new Error(stageTimedOut ? "coding stage timed out" : "execution aborted");
+}
 
 export class ProductCodingRunner {
   private readonly options: Options;
@@ -62,27 +63,41 @@ export class ProductCodingRunner {
 
   async run(taskId: string, source: PreparedExecutionSource, runOptions: { readonly signal: AbortSignal; readonly timeoutMs: number }): Promise<ProductCodingResult> {
     if (!Number.isFinite(runOptions.timeoutMs) || runOptions.timeoutMs <= 0) throw new Error("coding timeout must be positive");
-    assertNotAborted(runOptions.signal);
-    const session = await this.options.sandboxProvider.create({ taskId, repository: source.repository, gatewayUrl: this.options.route.gatewayUrl, timeoutMs: runOptions.timeoutMs });
+    if (runOptions.signal.aborted) throw new CodingRunError("execution aborted", null);
+
+    const deadline = Date.now() + runOptions.timeoutMs;
+    const stageController = new AbortController();
+    let stageTimedOut = false;
+    const onOuterAbort = () => stageController.abort();
+    runOptions.signal.addEventListener("abort", onOuterAbort, { once: true });
+    const stageTimer = setTimeout(() => { stageTimedOut = true; stageController.abort(); }, runOptions.timeoutMs);
+    stageTimer.unref?.();
+    const signal = stageController.signal;
+    const remainingMs = () => Math.max(1, deadline - Date.now());
+    const assertActive = () => { if (signal.aborted) throw abortError(stageTimedOut); };
+
+    let session: Awaited<ReturnType<SandboxProvider["create"]>> | null = null;
     let destroyed = false;
     let phase: "locked" | "dependency-setup" | "coding" | "testing" | "offline" = "locked";
-    const destroy = async () => { if (!destroyed) { destroyed = true; await session.destroy(); } };
-    const onAbort = () => { void destroy(); };
-    runOptions.signal.addEventListener("abort", onAbort, { once: true });
+    const destroy = async () => { if (session && !destroyed) { destroyed = true; await session.destroy(); } };
+    const onStageAbort = () => { void destroy(); };
+    signal.addEventListener("abort", onStageAbort, { once: true });
 
     try {
-      assertNotAborted(runOptions.signal);
+      assertActive();
+      session = await this.options.sandboxProvider.create({ taskId, repository: source.repository, gatewayUrl: this.options.route.gatewayUrl, timeoutMs: remainingMs() });
+      assertActive();
       await session.setNetworkPhase("dependency-setup");
       phase = "dependency-setup";
-      assertNotAborted(runOptions.signal);
+      assertActive();
       if (source.commands.install) {
-        const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: runOptions.timeoutMs });
-        assertNotAborted(runOptions.signal);
+        const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: remainingMs() });
+        assertActive();
         if (install.exitCode !== 0) throw new Error("coding dependency setup failed");
       }
       await session.setNetworkPhase("coding");
       phase = "coding";
-      assertNotAborted(runOptions.signal);
+      assertActive();
 
       const harnessPromise = this.options.harnessRunner.run(session, {
         ticketText: `${source.requirement}\n\nApproved plan:\n${source.plan}\n\nFor bug fixes, add a focused regression test that fails before the fix and passes after it.`,
@@ -90,13 +105,13 @@ export class ProductCodingRunner {
         gatewayUrl: this.options.route.gatewayUrl,
         runToken: this.options.route.runToken,
         maxTurns: this.options.maxTurns ?? 24,
-        timeoutMs: runOptions.timeoutMs,
+        timeoutMs: remainingMs(),
       });
       let rejectAbort: ((error: Error) => void) | null = null;
       const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
-      const abortHarness = () => { void destroy(); rejectAbort?.(abortError()); };
-      runOptions.signal.addEventListener("abort", abortHarness, { once: true });
-      if (runOptions.signal.aborted) abortHarness();
+      const abortHarness = () => { void destroy(); rejectAbort?.(abortError(stageTimedOut)); };
+      signal.addEventListener("abort", abortHarness, { once: true });
+      if (signal.aborted) abortHarness();
       let outcome;
       try {
         outcome = await Promise.race([harnessPromise, aborted]);
@@ -105,9 +120,9 @@ export class ProductCodingRunner {
         const costUsd = await this.reconciledCost();
         throw new CodingRunError(error instanceof Error ? error.message : "coding harness failed", costUsd, { cause: error });
       } finally {
-        runOptions.signal.removeEventListener("abort", abortHarness);
+        signal.removeEventListener("abort", abortHarness);
       }
-      assertNotAborted(runOptions.signal);
+      assertActive();
       const costUsd = await this.reconciledCost();
       if (costUsd === null) throw new CodingRunError("execution cost reconciliation failed", null);
       if (outcome.status !== "completed") throw new CodingRunError(`coding harness ended with ${outcome.status}${outcome.limit ? ` (${outcome.limit})` : ""}`, costUsd);
@@ -117,8 +132,10 @@ export class ProductCodingRunner {
       const costUsd = await this.reconciledCost();
       throw new CodingRunError(error instanceof Error ? error.message : "coding failed", costUsd, { cause: error });
     } finally {
-      runOptions.signal.removeEventListener("abort", onAbort);
-      if (!destroyed && !runOptions.signal.aborted) {
+      clearTimeout(stageTimer);
+      runOptions.signal.removeEventListener("abort", onOuterAbort);
+      signal.removeEventListener("abort", onStageAbort);
+      if (session && !destroyed && !signal.aborted) {
         try {
           if (phase === "coding") await session.setNetworkPhase("testing");
           else if (phase === "dependency-setup") await session.setNetworkPhase("offline");
