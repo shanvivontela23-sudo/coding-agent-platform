@@ -64,10 +64,11 @@ export class ProductExecutionOrchestrator implements CodingRunner {
       if (runOptions.signal.aborted) throw abortError();
       const codingTimeoutMs = Math.min(codingBudgetMs, remaining());
       if (codingTimeoutMs <= 0) throw new Error("execution timeout expired before coding");
-      await this.options.store.markCodingStarted(execution);
       const runtime = await this.openCodingRuntime(execution);
       let coding;
       try {
+        if (runOptions.signal.aborted) throw abortError();
+        await this.options.store.markCodingStarted(execution);
         coding = await runtime.runner.run(execution.executionId, source, { signal: runOptions.signal, timeoutMs: codingTimeoutMs });
       } catch (error) {
         if (error instanceof CodingRunError) await this.options.store.saveCost(execution, error.costUsd);
