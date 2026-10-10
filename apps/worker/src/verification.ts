@@ -11,9 +11,7 @@ export type VerificationCheck = {
   readonly baselineFailingTests: readonly string[];
   readonly patchedFailingTests: readonly string[];
 };
-
 export type ReproduceClassification = "passed" | "assertion_failure" | "error" | "not_run";
-
 export type ReproduceProof = {
   readonly command: string | null;
   readonly baselineExitCode: number | null;
@@ -25,52 +23,36 @@ export type ReproduceProof = {
   readonly reproduced: boolean;
   readonly reason: string | null;
 };
-
-export type VerificationResult = {
-  readonly checks: readonly VerificationCheck[];
-  readonly hasNewFailures: boolean;
-  readonly reproduce: ReproduceProof;
-};
-
+export type VerificationResult = { readonly checks: readonly VerificationCheck[]; readonly hasNewFailures: boolean; readonly reproduce: ReproduceProof };
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
 
 function abortError(): Error { return new Error("execution aborted"); }
 function assertNotAborted(signal: AbortSignal): void { if (signal.aborted) throw abortError(); }
 function output(result: SandboxCommandResult | null): string { return result ? [result.stdout, result.stderr, result.error].filter(Boolean).join("\n").trim() : ""; }
-
 function classifyReproduction(result: SandboxCommandResult | null): ReproduceClassification {
   if (!result) return "not_run";
   if (result.exitCode === 0) return "passed";
   const text = output(result);
-  const infrastructureError = /no test files? found|not found|cannot find|can't find|no such file|error collecting|collection error|failed to collect|syntaxerror|typeerror:.*compile|ts\d{4}|compilation failed|compile error|module not found|cannot resolve|could not resolve/i;
-  if (infrastructureError.test(text)) return "error";
-  const assertionFailure = /assertionerror|assertion failed|expected\b.*\b(?:to|but|received)|\bFAIL(?:ED)?\b|[×✗]\s+/i;
-  return assertionFailure.test(text) ? "assertion_failure" : "error";
+  if (/no test files? found|not found|cannot find|can't find|no such file|error collecting|collection error|failed to collect|syntaxerror|typeerror:.*compile|ts\d{4}|compilation failed|compile error|module not found|cannot resolve|could not resolve/i.test(text)) return "error";
+  return /assertionerror|assertion failed|expected\b.*\b(?:to|but|received)|\bFAIL(?:ED)?\b|[×✗]\s+/i.test(text) ? "assertion_failure" : "error";
 }
-
 function failingTestNames(result: SandboxCommandResult): readonly string[] {
   if (result.exitCode === 0) return [];
   const text = output(result);
   const names = new Set<string>();
   for (const pattern of [/(?:^|\n)\s*FAIL\s+([^\n]+)/g, /(?:^|\n)\s*FAILED\s+([^\n]+)/g, /(?:^|\n)\s*[×✗]\s+([^\n]+)/g]) {
-    for (const match of text.matchAll(pattern)) {
-      const name = match[1]?.trim();
-      if (name) names.add(name);
-    }
+    for (const match of text.matchAll(pattern)) { const name = match[1]?.trim(); if (name) names.add(name); }
   }
   return [...names];
 }
-
 async function applyPatch(session: SandboxSession, patch: string, timeoutMs: number, signal: AbortSignal): Promise<void> {
   assertNotAborted(signal);
-  const patchPath = `${session.workspacePath}/.dhara.patch`;
-  await session.writeFile(patchPath, patch);
+  await session.writeFile(`${session.workspacePath}/.dhara.patch`, patch);
   assertNotAborted(signal);
   const applied = await session.exec({ command: "git apply --binary --whitespace=nowarn .dhara.patch", cwd: session.workspacePath, timeoutMs });
   assertNotAborted(signal);
   if (applied.exitCode !== 0) throw new Error("Exported patch does not apply cleanly to approved source");
 }
-
 async function prepareSession(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: number, signal: AbortSignal): Promise<void> {
   assertNotAborted(signal);
   await session.setNetworkPhase("dependency-setup");
@@ -83,14 +65,12 @@ async function prepareSession(session: SandboxSession, source: PreparedExecution
   await session.setNetworkPhase("offline");
   assertNotAborted(signal);
 }
-
 async function runGeneralChecks(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: number, signal: AbortSignal): Promise<GeneralRun> {
   const checks = new Map<string, SandboxCommandResult>();
   if (source.commands.test) { checks.set("test", await session.exec({ command: source.commands.test, cwd: session.workspacePath, timeoutMs })); assertNotAborted(signal); }
   if (source.commands.build) { checks.set("build", await session.exec({ command: source.commands.build, cwd: session.workspacePath, timeoutMs })); assertNotAborted(signal); }
   return { checks };
 }
-
 async function runReproduction(session: SandboxSession, command: string | null, timeoutMs: number, signal: AbortSignal): Promise<SandboxCommandResult | null> {
   if (!command) return null;
   assertNotAborted(signal);
@@ -98,7 +78,6 @@ async function runReproduction(session: SandboxSession, command: string | null, 
   assertNotAborted(signal);
   return result;
 }
-
 async function withAbortDestroy<T>(session: SandboxSession, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
   let destroyed = false;
   const destroy = async () => { if (!destroyed) { destroyed = true; await session.destroy(); } };
@@ -108,15 +87,7 @@ async function withAbortDestroy<T>(session: SandboxSession, signal: AbortSignal,
   finally { signal.removeEventListener("abort", onAbort); await destroy(); }
 }
 
-export async function verifyExecution(options: {
-  readonly sandboxProvider: SandboxProvider;
-  readonly taskId: string;
-  readonly source: PreparedExecutionSource;
-  readonly patch: string;
-  readonly reproductionCommand: string | null;
-  readonly timeoutMs: number;
-  readonly signal: AbortSignal;
-}): Promise<VerificationResult> {
+export async function verifyExecution(options: { readonly sandboxProvider: SandboxProvider; readonly taskId: string; readonly source: PreparedExecutionSource; readonly patch: string; readonly reproductionCommand: string | null; readonly timeoutMs: number; readonly signal: AbortSignal }): Promise<VerificationResult> {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("verification timeout must be positive");
   assertNotAborted(options.signal);
   const testPatch = testOnlyPatch(options.patch);
@@ -140,13 +111,15 @@ export async function verifyExecution(options: {
     patchedChecks = await runGeneralChecks(patched, options.source, options.timeoutMs, options.signal);
     if (testPatch && options.reproductionCommand) patchedReproduction = await runReproduction(patched, options.reproductionCommand, options.timeoutMs, options.signal);
   });
-  if (!baselineChecks || !patchedChecks) throw new Error("Verification checks did not complete");
 
+  const baselineRun = baselineChecks as GeneralRun | null;
+  const patchedRun = patchedChecks as GeneralRun | null;
+  if (!baselineRun || !patchedRun) throw new Error("Verification checks did not complete");
   const checks: VerificationCheck[] = [];
   for (const [name, command] of [["test", options.source.commands.test], ["build", options.source.commands.build]] as const) {
     if (!command) continue;
-    const before = baselineChecks.checks.get(name);
-    const after = patchedChecks.checks.get(name);
+    const before = baselineRun.checks.get(name);
+    const after = patchedRun.checks.get(name);
     if (!before || !after) throw new Error(`Missing ${name} verification result`);
     const beforeNames = failingTestNames(before);
     const afterNames = failingTestNames(after);
@@ -164,16 +137,9 @@ export async function verifyExecution(options: {
   const patchedClassification = classifyReproduction(patchedProof);
   const reproduced = Boolean(testPatch && options.reproductionCommand && baselineClassification === "assertion_failure" && patchedClassification === "passed");
   const reason = reproduced ? null : !testPatch ? "Patch contains no test-file hunks for reproduce-first proof." : !options.reproductionCommand ? "No focused reproduction command could be derived from the added test." : baselineClassification !== "assertion_failure" ? "Baseline did not fail with an assertion failure." : "Patched reproduction test did not pass.";
-  const reproduce: ReproduceProof = {
-    command: options.reproductionCommand,
-    baselineExitCode: baselineProof?.exitCode ?? null,
-    patchedExitCode: patchedProof?.exitCode ?? null,
-    baselineOutput: output(baselineProof),
-    patchedOutput: output(patchedProof),
-    baselineClassification,
-    patchedClassification,
-    reproduced,
-    reason,
+  return {
+    checks,
+    hasNewFailures: checks.some((check) => check.status === "failed"),
+    reproduce: { command: options.reproductionCommand, baselineExitCode: baselineProof?.exitCode ?? null, patchedExitCode: patchedProof?.exitCode ?? null, baselineOutput: output(baselineProof), patchedOutput: output(patchedProof), baselineClassification, patchedClassification, reproduced, reason },
   };
-  return { checks, hasNewFailures: checks.some((check) => check.status === "failed"), reproduce };
 }
