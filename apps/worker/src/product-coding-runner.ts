@@ -96,6 +96,7 @@ export class ProductCodingRunner {
       const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
       const abortHarness = () => { void destroy(); rejectAbort?.(abortError()); };
       runOptions.signal.addEventListener("abort", abortHarness, { once: true });
+      if (runOptions.signal.aborted) abortHarness();
       let outcome;
       try {
         outcome = await Promise.race([harnessPromise, aborted]);
