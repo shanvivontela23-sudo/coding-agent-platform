@@ -23,12 +23,12 @@ describe("execution gateway control", () => {
     });
     const secret = "s".repeat(32);
     const control = new FileBackedExecutionGatewayControl({
-      gatewayUrl: "http://gateway.local",
+      gatewayUrl: "http://127.0.0.1:8080",
       model: "test-model",
       runTokenSecret: secret,
       gatewayStoreDir,
       harnessCallStoreDir,
-      litellmGatewayUrl: "http://litellm.local",
+      litellmGatewayUrl: "http://127.0.0.1:4000",
       litellmAdminToken: "admin",
       fetchImpl,
       nowMs: () => nowMs,
