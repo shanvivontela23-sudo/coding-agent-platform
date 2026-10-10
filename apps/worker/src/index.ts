@@ -1,10 +1,15 @@
 export const workerService = "coding-agent-worker" as const;
 export { FakeCodingRunner } from "./fake-coding-runner.js";
-export { runFakeTaskExecutionWorker } from "./main.js";
+export { runFakeTaskExecutionWorker, runTaskExecutionWorker } from "./main.js";
 export { PostgresExecutionStore } from "./execution-store.js";
-export { ProductCodingRunner } from "./product-coding-runner.js";
+export { FileBackedExecutionGatewayControl } from "./execution-gateway.js";
+export { ProductCodingRunner, CodingRunError } from "./product-coding-runner.js";
 export { ProductExecutionOrchestrator } from "./product-execution-orchestrator.js";
+export { ProductExecutionSourceProvider, GitHubInstallationArchiveReader } from "./product-execution-source.js";
+export { createRealProductExecutionRunner } from "./real-worker.js";
+export { loadRealWorkerConfig } from "./worker-config.js";
 export { inspectPatchSafety } from "./patch-safety.js";
+export { parsePatchFiles, testOnlyPatch, testPathsFromPatch } from "./patch-parser.js";
 export { verifyExecution } from "./verification.js";
 export { buildChangeDocument } from "./change-document.js";
 export { PostgresExecutionQueue } from "./postgres-execution-queue.js";
@@ -13,3 +18,4 @@ export type { ClaimedExecution, ExecutionControlState, ExecutionFinishStatus, Ex
 export type { CodingRunResult, CodingRunner, WorkerOnceResult } from "./task-execution-worker.js";
 export type { ExecutionProgress, ExecutionStore } from "./execution-store.js";
 export type { ExecutionSourceProvider, PreparedExecutionSource } from "./execution-source.js";
+export type { ExecutionGatewayControl, ExecutionGatewaySession } from "./execution-gateway.js";
