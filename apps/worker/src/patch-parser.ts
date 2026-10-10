@@ -42,10 +42,7 @@ function readHeaderToken(text: string, start: number): { readonly value: string;
       const char = text[index]!;
       if (escaped) { escaped = false; continue; }
       if (char === "\\") { escaped = true; continue; }
-      if (char === '"') {
-        const token = text.slice(tokenStart, index + 1);
-        return { value: decodeQuotedPath(token), next: index + 1 };
-      }
+      if (char === '"') return { value: decodeQuotedPath(text.slice(tokenStart, index + 1)), next: index + 1 };
     }
     throw new Error("Patch diff header quoted path is malformed");
   }
@@ -63,12 +60,24 @@ function parseHeaderTokens(value: string): readonly [string, string] {
   return [first.value, second.value];
 }
 
+function parseFileMarker(value: string): string | null {
+  const text = value.trim();
+  if (!text) throw new Error("Patch file marker path is missing");
+  if (text.startsWith('"')) {
+    const token = readHeaderToken(text, 0);
+    if (text.slice(token.next).trim().length > 0) throw new Error("Patch file marker contains unparsed path content");
+    return normalizePatchPath(token.value);
+  }
+  const tab = text.indexOf("\t");
+  const raw = tab >= 0 ? text.slice(0, tab) : text;
+  if (/\s/.test(raw)) throw new Error("Patch file marker path with spaces must be quoted");
+  return normalizePatchPath(raw);
+}
+
 export function normalizePatchPath(raw: string): string | null {
   if (raw === "/dev/null") return null;
   const path = raw.replace(/^[ab]\//, "");
-  if (!path || raw === path || path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\") || path.includes("\0")) {
-    throw new Error(`Patch path escapes repository root: ${raw}`);
-  }
+  if (!path || raw === path || path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\") || path.includes("\0")) throw new Error(`Patch path escapes repository root: ${raw}`);
   const segments = path.split("/");
   if (segments.some((part) => !part || part === "." || part === "..")) throw new Error(`Patch path escapes repository root: ${raw}`);
   return path;
@@ -85,11 +94,22 @@ export function parsePatchFiles(patch: string): readonly ParsedPatchFile[] {
     const match = matches[index]!;
     const start = match.index!;
     const end = index + 1 < matches.length ? matches[index + 1]!.index! : patch.length;
+    const raw = patch.slice(start, end);
     const [leftRaw, rightRaw] = parseHeaderTokens(match[1]!);
     const oldPath = normalizePatchPath(leftRaw);
     const newPath = normalizePatchPath(rightRaw);
     if (oldPath === null && newPath === null) throw new Error("Patch file cannot have /dev/null on both sides");
-    files.push({ oldPath, newPath, raw: patch.slice(start, end) });
+
+    const oldMarkerMatch = raw.match(/^--- (.*)$/m);
+    const newMarkerMatch = raw.match(/^\+\+\+ (.*)$/m);
+    if (Boolean(oldMarkerMatch) !== Boolean(newMarkerMatch)) throw new Error("Patch old/new file markers are incomplete");
+    if (oldMarkerMatch && newMarkerMatch) {
+      const markerOld = parseFileMarker(oldMarkerMatch[1]!);
+      const markerNew = parseFileMarker(newMarkerMatch[1]!);
+      if (markerOld !== null && markerOld !== oldPath) throw new Error("Patch old file marker does not match diff header");
+      if (markerNew !== null && markerNew !== newPath) throw new Error("Patch new file marker does not match diff header");
+    }
+    files.push({ oldPath, newPath, raw });
   }
   return files;
 }
@@ -105,8 +125,6 @@ export function testOnlyPatch(patch: string): string | null {
 
 export function testPathsFromPatch(patch: string): readonly string[] {
   const paths = new Set<string>();
-  for (const file of parsePatchFiles(patch)) {
-    for (const path of [file.oldPath, file.newPath]) if (path && isTestPath(path)) paths.add(path);
-  }
+  for (const file of parsePatchFiles(patch)) for (const path of [file.oldPath, file.newPath]) if (path && isTestPath(path)) paths.add(path);
   return [...paths];
 }
