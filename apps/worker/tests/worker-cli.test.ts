@@ -10,25 +10,31 @@ describe("B2 worker CLI", () => {
     expect(pkg.scripts?.dev).not.toContain("--fake");
   });
 
-  it("requires DATABASE_URL and worker id, restricts the database user, handles shutdown signals, and gates fake mode by env", async () => {
+  it("composes the real worker by default and keeps fake execution behind an explicit env opt-in", async () => {
     const cli = await text("apps/worker/src/cli.ts");
-    expect(cli).toContain("DATABASE_URL");
-    expect(cli).toContain("TASK_EXECUTION_WORKER_ID");
+    expect(cli).toContain("loadRealWorkerConfig");
+    expect(cli).toContain("createRealProductExecutionRunner");
+    expect(cli).toContain("runTaskExecutionWorker");
+    expect(cli).toContain("TASK_EXECUTION_FAKE_RUNNER");
     expect(cli).toContain("coding_agent_worker");
     expect(cli).toContain("SIGINT");
     expect(cli).toContain("SIGTERM");
-    expect(cli).toContain("AbortController");
     expect(cli).toContain("pool.end");
-    expect(cli).toContain("TASK_EXECUTION_FAKE_RUNNER");
     expect(cli).not.toContain("process.argv.includes(\"--fake\")");
   });
 
-  it("documents the local command, worker-only database URL, and explicit fake-only opt-in", async () => {
+  it("documents the real worker command/config and the explicit fake-only queue mode", async () => {
     const readme = await text("README.md");
-    expect(readme).toContain("pnpm --filter @coding-agent/worker dev");
-    expect(readme).toContain("TASK_EXECUTION_WORKER_ID");
-    expect(readme).toContain("coding_agent_worker");
-    expect(readme).toContain("TASK_EXECUTION_FAKE_RUNNER=1");
-    expect(readme).toContain("does not produce a real implementation");
+    for (const value of [
+      "pnpm --filter @coding-agent/worker dev",
+      "TASK_EXECUTION_WORKER_ID",
+      "coding_agent_worker",
+      "TASK_EXECUTION_MODEL",
+      "TASK_EXECUTION_GATEWAY_URL",
+      "E2B_API_KEY",
+      "LITELLM_ADMIN_TOKEN",
+      "TASK_EXECUTION_FAKE_RUNNER=1",
+      "does not produce a real implementation",
+    ]) expect(readme).toContain(value);
   });
 });
