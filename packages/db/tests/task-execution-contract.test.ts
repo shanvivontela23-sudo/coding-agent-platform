@@ -29,7 +29,7 @@ describe("Part B1 task execution migration contract", () => {
     expect(migration).toContain("GRANT EXECUTE ON FUNCTION public.claim_task_execution(text, integer) TO coding_agent_api");
   });
 
-  it("records only the new migration checksum without changing applied migration checksums", async () => {
+  it("keeps the applied 0006 checksum unchanged as later migrations are added", async () => {
     const migration = await readFile(migrationPath, "utf8");
     const checksums = JSON.parse(await readFile("packages/db/migrations/checksums.json", "utf8")) as Record<string, string>;
     expect(checksums).toMatchObject({
@@ -40,6 +40,5 @@ describe("Part B1 task execution migration contract", () => {
       "0005_zip_projects_and_task_review_fixes.sql": "7d22c83f60c3cbd01c3b1a313179e2bd6a9aaf6e664c8965526f650dba39e3f1",
     });
     expect(checksums["0006_task_execution.sql"]).toBe(createHash("sha256").update(migration).digest("hex"));
-    expect(Object.keys(checksums)).toHaveLength(6);
   });
 });

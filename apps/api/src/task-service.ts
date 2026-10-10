@@ -1,6 +1,6 @@
 import type { SessionIdentity } from "./auth.js";
 import type { ProjectCodeReader } from "./project-code-reader.js";
-import type { TaskDatabase, TaskDetail, TaskListItem } from "./task-database.js";
+import type { PlannedSourcePin, TaskDatabase, TaskDetail, TaskListItem } from "./task-database.js";
 import { maskPersonalData, TaskPlanner, type TaskModelGateway } from "./task-intake.js";
 import type { TicketCipher } from "./ticket-crypto.js";
 
@@ -59,11 +59,14 @@ export function createTaskPlanningService(options: {
     const task = await options.database.getTask(session, taskId);
     if (!task || task.status === "approved") return;
     const context = await options.codeReader.readContext(session, task.projectId, task.maskedTicket);
+    const sourcePin: PlannedSourcePin = context.source === "github"
+      ? { source: "github", commitSha: context.revision }
+      : { source: "upload", versionId: context.revision };
     const answers = task.questions.filter((question) => question.answerStatus === "answered" && question.answer).map((question) => ({ question: question.question, answer: question.answer! }));
     try {
       const plan = await planner.plan({ taskId, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers });
       await persistCosts(session, taskId);
-      await options.database.savePlan(session, taskId, plan);
+      await options.database.savePlan(session, taskId, plan, sourcePin);
     } catch (error) {
       await persistCosts(session, taskId);
       throw error;

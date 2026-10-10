@@ -6,25 +6,35 @@ Turn an approved Dhara task into a controlled implementation attempt that runs a
 
 ## Product flow
 
-A support rep creates and clarifies a task, reviews Dhara's plain-language plan, and approves it. When the plan becomes `plan_ready`, Dhara pins the source used to create that plan: a GitHub commit SHA or an immutable ZIP project-version id. After approval, the task-owning rep, a developer, or an owner can start implementation. Start is idempotent and there is at most one active execution per task.
+A support rep creates and clarifies a task, reviews Dhara's plain-language plan, and approves it. When the plan becomes `plan_ready`, Dhara pins the exact source the planner actually read: a GitHub commit SHA or an immutable ZIP project-version id. After approval, the task-owning rep, a developer, or an owner can start implementation. Start is idempotent and there is at most one active execution per task.
 
-Every implementation is a separate execution attempt with its own snapshotted budget and wall-clock timeout. Failed, cancelled, or timed-out attempts are never automatically rerun. A later user-initiated attempt is a new record. Publication is separate from execution so publication-only failures can be retried without paying to rerun coding.
+Every implementation is a separate execution attempt with its own snapshotted budget and wall-clock timeout. Failed, cancelled, interrupted, or timed-out attempts are never automatically rerun. A later user-initiated attempt is a new record. Publication is separate from execution so publication-only failures can be retried without paying to rerun coding.
 
 ## Execution architecture
 
 Product execution reuses the Phase 0 sandbox, model-gateway, and harness contracts behind a product orchestrator rather than creating a second execution stack. `CodingRunner` is the product-facing adapter over `HarnessRunner`. Automated tests and CI use fakes only: no paid model calls and no live E2B calls.
 
-The execution queue is PostgreSQL-backed. Workers claim eligible rows with a lease using `FOR UPDATE SKIP LOCKED`; expired leases can be reclaimed without creating another execution attempt. The API uses the existing restricted `coding_agent_api` login and tenant `withTenant()` boundary. Cross-tenant worker claiming is exposed only through narrowly scoped `SECURITY DEFINER` queue functions with fixed search paths, fully qualified relations, PUBLIC execute revoked, and execute granted only to `coding_agent_api`.
+The execution queue is PostgreSQL-backed. Workers claim eligible rows with a lease using `FOR UPDATE SKIP LOCKED`. The API continues to use restricted `coding_agent_api`; workers connect as a separate `coding_agent_worker` role. Both are `NOSUPERUSER NOBYPASSRLS NOINHERIT`. `coding_agent_worker` has no direct table privileges. Queue claim/heartbeat/finish functions are `SECURITY DEFINER`, PUBLIC execute is revoked, execute is granted only to `coding_agent_worker`, and `coding_agent_api` is explicitly revoked. After a claim returns an organization id, worker tenant reads/writes use the existing `withTenant()` boundary for only that claimed organization.
 
-Execution cancellation is user-controlled from the task page. Queued work can be cancelled immediately; running work records a cancellation request and the worker stops at the next control check. The wall-clock timeout is snapshotted with the execution budget and enforced independently of model/provider timeouts.
+The worker has a real entrypoint (`pnpm --filter @coding-agent/worker dev`) that reads `DATABASE_URL` and a worker id, refuses a non-`coding_agent_worker` URL, and shuts down cleanly on SIGINT/SIGTERM.
+
+Execution cancellation is user-controlled from the task page. Queued work can be cancelled immediately; running work records a cancellation request and the worker stops at the next control check. The wall-clock timeout is snapshotted with the execution budget and enforced independently of model/provider timeouts. A queued execution that has not been claimed for 60 seconds is shown as **Waiting for a worker** rather than looking healthy indefinitely.
+
+## Durable progress and lease reclaim
+
+An execution records durable milestones: `source_prepared`, `coding_started`, `coding_finished`, `patch_exported`, and `verified`. Milestones only move forward.
+
+Lease reclaim must never cause an automatic paid model rerun. A reclaimed execution may repeat only a step known to be safe and free of model spend. If `coding_started` is present without `coding_finished`, the reclaim path marks the attempt terminal `failed` with failure code `WORKER_INTERRUPTED`; the user must explicitly start a new attempt. If coding finished, later deterministic/offline preparation, patch handling, and verification work may resume from the persisted milestone when safe.
+
+Every worker-created terminal transition (`succeeded`, `failed`, worker-observed `cancelled`, `timed_out`) writes an append-only audit event in the same database transaction as the status change. The audit payload includes the execution id and failure code when one exists.
 
 ## Source pinning and drift
 
-Source is pinned when the plan becomes `plan_ready`, because the plan is meaningful only for the source Dhara inspected.
+Source is pinned when the plan becomes `plan_ready`, because the plan is meaningful only for the source Dhara inspected. The pin must come from the same `ProjectCodeContext` that supplied repository text to the planner; it must not be inferred later from a possibly stale `project_reports` row.
 
-For ZIP projects the pin is the immutable project-version id. Before execution or delivery, if the project's current version differs from that approved version, the result is `source_changed`.
+For ZIP projects the pin is the immutable project-version id returned with the planner context. Before execution or delivery, if the project's current version differs from that approved version, the result is `source_changed`.
 
-For GitHub projects the pin is the approved commit SHA. A moving default branch does not itself block execution: Dhara runs on the approved SHA and later creates the delivery branch from it. At publication time Dhara records how many commits the default branch moved. It blocks with `source_changed` only if a file named in the approved plan changed between the approved SHA and the current head.
+For GitHub projects the pin is the exact commit SHA whose tree/blobs were read into the planner context. A moving default branch does not itself block execution: Dhara runs on the approved SHA and later creates the delivery branch from it. At publication time Dhara records how many commits the default branch moved. It blocks with `source_changed` only if a file named in the approved plan changed between the approved SHA and the current head.
 
 ## Sandbox and network trust boundary
 
@@ -48,9 +58,11 @@ If no such failing test can be produced, the execution is explicitly marked **fi
 
 Before a patch is accepted, stored for download, or published, Dhara enforces snapshotted limits for maximum changed files and total patch bytes, rejects paths outside the repository root, rejects symlinks, and refuses changes to `.github/workflows` or other configured CI files. Lockfile and dependency-manifest changes are allowed only as flagged review items in the result. A secret scan runs over the patch before any publication or downloadable storage.
 
+Execution history is append-and-update only. `coding_agent_app` may not DELETE `task_executions`, `task_execution_checks`, or `task_execution_artifacts`.
+
 ## Checks, artifacts, and cost
 
-Execution attempts own structured check records and artifact metadata. Model calls can link to the execution that incurred them while planning calls remain task-level. B1 establishes these durable records; later slices fill them with real patch, verification, proof, and publication data.
+Execution attempts own structured check records and artifact metadata. Model calls can link to the execution that incurred them while planning calls remain task-level. B1 establishes these durable records; B2 fills them with baseline checks, clean patched checks, reproduce proof, sanitized patch metadata, change-document metadata, and total execution cost.
 
 ## Change document
 
@@ -62,7 +74,7 @@ The same change document is shown on the task page, becomes the GitHub PR body, 
 
 GitHub delivery is server-only. Dhara creates a deterministic branch from the approved SHA, opens an idempotent PR, and can adopt that existing branch/PR after restart. Dhara never merges. The required GitHub App write permission is added only in B3 after the exact permission is stated to the owner and reviewed before it is needed.
 
-ZIP delivery creates a new immutable project version. It is downloadable and has an in-app diff because there is no GitHub PR. Only developers and owners can publish a GitHub PR or promote a ZIP result to the project's current version.
+ZIP delivery creates a new immutable project version. It is downloadable and has an in-app diff because there is no GitHub PR. B2 shows an in-app diff for ZIP execution results; B4 performs immutable ZIP version creation/promotion. Only developers and owners can publish a GitHub PR or promote a ZIP result.
 
 ## Roles
 
@@ -72,7 +84,7 @@ The support rep who owns the task, developers, and owners may start or cancel an
 
 - `cancelled`: implementation was cancelled; nothing was published.
 - `timed_out`: the execution exceeded its snapshotted wall-clock limit; nothing was published.
-- `failed`: the coding/execution layer failed; nothing is automatically rerun.
+- `failed`: the coding/execution layer failed, including `WORKER_INTERRUPTED`; nothing is automatically rerun.
 - `verification_failed`: one or more checks newly fail on the clean patched copy.
 - `fix_not_reproduced`: Dhara could not prove the bug with a fail-before/pass-after test and labels the result accordingly.
 - `source_changed`: delivery is blocked only under the ZIP/current-version rule or GitHub approved-plan-file drift rule above.
@@ -86,7 +98,7 @@ Pin source at `plan_ready`; add migration `0006` for task executions, checks, ar
 
 ### B2 — real orchestration and verification
 
-Wire the real sandbox/gateway/harness contracts behind `CodingRunner` while faking them in CI. Add baseline checks, clean-copy verification, reproduce-first proof, patch limits, CI-path refusal, dependency/lockfile flags, secret scan, change document, ZIP diff view, and execution cost display. Add an owner-run live smoke script behind explicit environment flags; do not run it automatically.
+Add migration `0007` for the dedicated worker role, durable milestones, terminal audit behavior, append/update-only execution history, and B1 review corrections. Wire the real sandbox/gateway/harness contracts behind `CodingRunner` while faking them in CI. Add baseline checks, clean-copy verification, reproduce-first proof, patch limits, CI-path refusal, dependency/lockfile flags, secret scan, change document, ZIP diff view, execution cost display, the runnable worker command, and the 60-second waiting-for-worker state. Add an owner-run live smoke script behind explicit environment flags; do not run it automatically.
 
 ### B3 — GitHub publication
 
@@ -98,9 +110,11 @@ Create the execution result as a new immutable ZIP project version, expose downl
 
 ## Security invariants
 
-- Applied migrations `0001`–`0005` are immutable; Part B starts with new migration `0006` and adds only its checksum.
+- Applied migrations `0001`–`0006` are immutable. B2 adds `0007` and only its checksum.
 - Tenant-owned relationships keep composite `(organization_id, id)` foreign-key boundaries.
 - `audit_events` remains append-only for the application role.
+- `coding_agent_api` cannot claim/heartbeat/finish worker jobs after `0007`.
+- `coding_agent_worker` has no direct tenant-table privileges and enters tenant data only through `withTenant()` after claiming an organization through the narrow queue functions.
 - No runtime API or worker process connects as postgres/superuser.
 - CI never makes paid model calls or live E2B calls.
 - No automatic merge, no automatic paid rerun, and no publication secret enters a coding sandbox.

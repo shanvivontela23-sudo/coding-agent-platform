@@ -2,5 +2,8 @@
   "name": "@coding-agent/worker",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/cli.ts"
+  }
 }

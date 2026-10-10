@@ -10,12 +10,13 @@ export type ClaimedExecution = {
   readonly timeoutSeconds: number;
 };
 
-export type ExecutionControlState = "running" | "cancelled" | "timed_out" | "lost" | "succeeded" | "failed";
+export type ExecutionFinishStatus = "succeeded" | "failed" | "verification_failed" | "fix_not_reproduced";
+export type ExecutionControlState = "running" | "cancelled" | "timed_out" | "lost" | ExecutionFinishStatus;
 
 export interface ExecutionQueue {
   claim(workerId: string, leaseSeconds: number): Promise<ClaimedExecution | null>;
   heartbeat(executionId: string, workerId: string, leaseSeconds: number): Promise<ExecutionControlState>;
-  finish(executionId: string, workerId: string, status: "succeeded" | "failed", failureCode?: string | null, failureMessage?: string | null): Promise<ExecutionControlState>;
+  finish(executionId: string, workerId: string, status: ExecutionFinishStatus, failureCode?: string | null, failureMessage?: string | null): Promise<ExecutionControlState>;
 }
 
 export interface RestrictedQueryPool {
@@ -64,7 +65,7 @@ export class PostgresExecutionQueue implements ExecutionQueue {
     return result.rows[0]?.heartbeat_task_execution ?? "lost";
   }
 
-  async finish(executionId: string, workerId: string, status: "succeeded" | "failed", failureCode: string | null = null, failureMessage: string | null = null): Promise<ExecutionControlState> {
+  async finish(executionId: string, workerId: string, status: ExecutionFinishStatus, failureCode: string | null = null, failureMessage: string | null = null): Promise<ExecutionControlState> {
     const result = await this.pool.query<{ finish_task_execution: ExecutionControlState }>(
       "SELECT public.finish_task_execution($1,$2,$3,$4,$5)",
       [executionId, workerId, status, failureCode, failureMessage],
