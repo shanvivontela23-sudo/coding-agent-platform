@@ -16,17 +16,17 @@ const base = {
 };
 
 function setup(overrides: Record<string, unknown> = {}) {
-  const context = { ...base, ...overrides } as any;
+  const context = { ...base, ...overrides };
   const database = {
     getPublishContext: vi.fn(async () => context),
     markPublishing: vi.fn(async () => undefined),
-    markPublished: vi.fn(async (_session, _taskId, result) => result),
-    markSourceChanged: vi.fn(async (_session, _taskId, result) => result),
-    markFailed: vi.fn(async (_session, _taskId, failure) => failure),
-  } as any;
+    markPublished: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
+    markSourceChanged: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
+    markFailed: vi.fn(async (_session: typeof session, _taskId: string, failure: unknown) => failure),
+  };
   const publisher = {
-    publish: vi.fn(async () => ({ status: "published", branchName: "dhara/execution-x", baseMovedCommits: 2, currentHeadSha: "b".repeat(40), branchHeadSha: "c".repeat(40), pullRequestNumber: 7, pullRequestUrl: "https://github.com/acme/demo/pull/7" })),
-  } as any;
+    publish: vi.fn(async () => ({ status: "published" as const, branchName: "dhara/execution-x", baseMovedCommits: 2, currentHeadSha: "b".repeat(40), branchHeadSha: "c".repeat(40), pullRequestNumber: 7, pullRequestUrl: "https://github.com/acme/demo/pull/7" })),
+  };
   return { database, publisher, service: createTaskPublicationService({ database, publisher }) };
 }
 
