@@ -34,32 +34,29 @@ export class PostgresZipResultBuildQueue implements ZipResultBuildQueue {
     } : null;
   }
 
-  async markReady(executionId: string): Promise<boolean> {
-    const result = await this.pool.query<{ mark_zip_result_build_ready: boolean }>("SELECT public.mark_zip_result_build_ready($1)", [executionId]);
-    return result.rows[0]?.mark_zip_result_build_ready === true;
-  }
-
   async markFailed(executionId: string, code: "ZIP_RESULT_FAILED" | "ZIP_RESULT_INTERRUPTED", message: string): Promise<boolean> {
     const result = await this.pool.query<{ fail_zip_result_build: boolean }>("SELECT public.fail_zip_result_build($1,$2,$3)", [executionId, code, message]);
     return result.rows[0]?.fail_zip_result_build === true;
   }
 }
 
+export type ZipResultCompletion = "inserted" | "existing" | "lost";
+
 export class PostgresZipResultArtifactStore {
   constructor(private readonly pool: RestrictedQueryPool) {}
 
-  async insert(input: {
+  async complete(input: {
     readonly executionId: string;
     readonly artifactId: string;
     readonly storageKey: string;
     readonly sha256: string;
     readonly sizeBytes: number;
     readonly fileCount: number;
-  }): Promise<boolean> {
-    const result = await this.pool.query<{ insert_zip_result_artifact: boolean }>(
-      "SELECT public.insert_zip_result_artifact($1,$2,$3,$4,$5,$6)",
+  }): Promise<ZipResultCompletion> {
+    const result = await this.pool.query<{ complete_zip_result_build: ZipResultCompletion }>(
+      "SELECT public.complete_zip_result_build($1,$2,$3,$4,$5,$6)",
       [input.executionId, input.artifactId, input.storageKey, input.sha256, input.sizeBytes, input.fileCount],
     );
-    return result.rows[0]?.insert_zip_result_artifact === true;
+    return result.rows[0]?.complete_zip_result_build ?? "lost";
   }
 }
