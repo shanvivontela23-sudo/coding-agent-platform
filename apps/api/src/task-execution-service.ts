@@ -16,8 +16,8 @@ export interface TaskExecutionService {
 
 export function createTaskExecutionService(options: {
   readonly database: TaskExecutionDatabase;
-  readonly readinessReader: TaskExecutionReadinessReader;
-  readonly githubApp: GitHubInstallationPermissionReader;
+  readonly readinessReader?: TaskExecutionReadinessReader;
+  readonly githubApp?: GitHubInstallationPermissionReader;
   readonly budgetUsd: number;
   readonly timeoutSeconds: number;
 }): TaskExecutionService {
@@ -25,9 +25,11 @@ export function createTaskExecutionService(options: {
   if (!Number.isSafeInteger(options.timeoutSeconds) || options.timeoutSeconds <= 0) throw new Error("execution timeout must be a positive integer");
 
   const blocker = async (session: SessionIdentity, taskId: string): Promise<string | null> => {
+    if (!options.readinessReader) return null;
     const readiness = await options.readinessReader.get(session, taskId);
     if (!readiness.reportHasInstallCommand) return REANALYSE_BEFORE_IMPLEMENTATION;
     if (readiness.githubInstallationId !== null) {
+      if (!options.githubApp) throw new Error("GitHub permission reader is required for GitHub execution readiness");
       const permissions = await options.githubApp.getInstallationPermissions(readiness.githubInstallationId);
       if (permissions.contents !== "write") return CONTENTS_WRITE_REQUIRED;
     }
@@ -39,9 +41,7 @@ export function createTaskExecutionService(options: {
     async readiness(session, taskId) { return { implementationBlocker: await blocker(session, taskId) }; },
     async start(session, taskId) {
       const implementationBlocker = await blocker(session, taskId);
-      if (implementationBlocker === REANALYSE_BEFORE_IMPLEMENTATION) {
-        throw new AppError("TASK_EXECUTION_REANALYSIS_REQUIRED", implementationBlocker, 409);
-      }
+      if (implementationBlocker === REANALYSE_BEFORE_IMPLEMENTATION) throw new AppError("TASK_EXECUTION_REANALYSIS_REQUIRED", implementationBlocker, 409);
       if (implementationBlocker) throw new AppError("GITHUB_CONTENTS_WRITE_REQUIRED", implementationBlocker, 409);
       return await options.database.start(session, taskId, { budgetUsd: options.budgetUsd, timeoutSeconds: options.timeoutSeconds });
     },
