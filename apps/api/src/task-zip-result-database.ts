@@ -1,4 +1,3 @@
-import type { SessionIdentity } from "./auth.js";
 import { assertUuid, type TenantPool, withTenant } from "./database.js";
 import { AppError } from "./errors.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
