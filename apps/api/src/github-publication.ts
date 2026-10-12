@@ -30,8 +30,9 @@ export function deterministicPublicationBranch(executionId: string): string {
 
 function safePlanPath(value: string): string | null {
   const trimmed = value.trim().replace(/^[`'"(]+|[`'"),.;:]+$/g, "");
-  if (!trimmed || trimmed.startsWith("/") || trimmed.includes("\\") || trimmed.includes("..") || !trimmed.includes("/")) return null;
+  if (!trimmed || trimmed.startsWith("/") || trimmed.includes("\\") || trimmed.includes("..")) return null;
   if (!/^[A-Za-z0-9._@+/-]+$/.test(trimmed)) return null;
+  if (!trimmed.includes("/") && !/^[A-Za-z0-9_.+-]+\.[A-Za-z0-9_.+-]+$/.test(trimmed)) return null;
   return trimmed;
 }
 
