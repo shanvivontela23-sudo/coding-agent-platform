@@ -14,7 +14,7 @@ function client(options: { changedFiles?: readonly string[]; existingPr?: { numb
     ensurePatchedBranch: vi.fn(async () => ({ headSha: "c".repeat(40) })),
     findOpenPullRequest: vi.fn(async () => options.existingPr ?? null),
     createPullRequest: vi.fn(async () => ({ number: 42, url: "https://github.com/acme/demo/pull/42" })),
-  } as any;
+  };
 }
 
 const input = {
