@@ -9,6 +9,12 @@ import { createLiveDemoPreflight, runDemoPreflight } from "./preflight.js";
 function cleanEnv(env: Readonly<Record<string, string | undefined>>): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
+function runtimeEnv(explicit: Readonly<Record<string, string | undefined>>): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(["PATH", "HOME", "USER", "TMPDIR", "SHELL", "TERM", "DOCKER_HOST"].flatMap((name) => {
+    const value = process.env[name]; return value ? [[name, value] as const] : [];
+  }));
+  return cleanEnv({ ...inherited, ...explicit });
+}
 
 async function checkCommand(command: string, args: readonly string[]): Promise<void> {
   try { await runCommand(command, args); }
@@ -32,7 +38,7 @@ async function discoverNgrokTunnel(): Promise<string> {
 }
 
 function startProcess(label: string, plan: DemoProcessPlan, config: DemoConfig): ChildProcess {
-  const child = spawn(plan.command, [...plan.args], { env: cleanEnv({ ...process.env, ...plan.env }), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(plan.command, [...plan.args], { env: runtimeEnv(plan.env), stdio: ["ignore", "pipe", "pipe"] });
   const write = (target: NodeJS.WriteStream, chunk: Buffer | string) => target.write(`[${label}] ${redactDemoSecrets(String(chunk), config)}`);
   child.stdout?.on("data", (chunk: Buffer) => write(process.stdout, chunk));
   child.stderr?.on("data", (chunk: Buffer) => write(process.stderr, chunk));
@@ -68,7 +74,7 @@ async function main(): Promise<void> {
   process.stdout.write(`Database migrations: ${migration.applied.length > 0 ? `applied ${migration.applied.join(", ")}` : `verified through ${migration.plan.at(-1)?.name ?? "none"}`}\n`);
 
   const placeholderPlan = createDemoLaunchPlan(config, "https://placeholder.invalid");
-  await runCommand(placeholderPlan.compose.command, placeholderPlan.compose.args, { env: cleanEnv({ ...process.env, ...placeholderPlan.compose.env }) });
+  await runCommand(placeholderPlan.compose.command, placeholderPlan.compose.args, { env: runtimeEnv(placeholderPlan.compose.env) });
 
   let ngrok: ChildProcess | null = null;
   let api: ChildProcess | null = null;
@@ -79,7 +85,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     await Promise.all([stopChild(worker), stopChild(web), stopChild(api), stopChild(ngrok)]);
-    await runCommand("docker", ["compose", "--env-file", ".env", "-f", "evals/deploy/http-gateway/compose.local.yaml", "down"], { env: cleanEnv({ ...process.env, ...placeholderPlan.compose.env }) }).catch(() => undefined);
+    await runCommand("docker", ["compose", "--env-file", ".env", "-f", "evals/deploy/http-gateway/compose.local.yaml", "down"], { env: runtimeEnv(placeholderPlan.compose.env) }).catch(() => undefined);
   };
   const requestShutdown = () => { void down().finally(() => process.exit(0)); };
   process.once("SIGINT", requestShutdown);

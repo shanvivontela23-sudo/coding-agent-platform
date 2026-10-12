@@ -37,6 +37,7 @@ describe("demo configuration", () => {
       TASK_EXECUTION_CODEX_VERSION: "codex",
       MODEL_GATEWAY_RUN_TOKEN_SECRET: value,
       LITELLM_MASTER_KEY: value,
+      POSTGRES_PASSWORD: value,
       ANTHROPIC_API_KEY: value,
       TASK_MODEL_NAME: "anthropic/model",
       NGROK_AUTHTOKEN: value,
