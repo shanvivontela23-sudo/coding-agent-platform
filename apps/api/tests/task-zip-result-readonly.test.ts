@@ -18,15 +18,14 @@ const secret = "zip-result-readonly-session-secret-long-enough";
 describe("ZIP result polling", () => {
   it("keeps ten concurrent GET /execution requests storage-write free", async () => {
     const writeVersion = vi.fn();
-    const insertArtifact = vi.fn(async () => { throw new Error("must not save during GET"); });
+    const completeBuild = vi.fn(async () => { throw new Error("must not complete during GET"); });
     const database: TaskZipResultDatabase = {
       getStatus: vi.fn(async () => ({ status: "pending" as const, errorCode: null, errorMessage: null, artifact: null })),
       getContext: vi.fn(async () => null),
       getArtifact: vi.fn(async () => null),
-      insertArtifact,
+      completeBuild,
       acceptUnproven: vi.fn(async () => null),
       retryBuild: vi.fn(async () => null),
-      markReady: vi.fn(async () => false),
       markFailed: vi.fn(async () => false),
       promote: vi.fn(async () => { throw new Error("not used"); }),
       auditDownload: vi.fn(async () => undefined),
@@ -55,6 +54,6 @@ describe("ZIP result polling", () => {
     }
     expect(database.getStatus).toHaveBeenCalledTimes(10);
     expect(writeVersion).not.toHaveBeenCalled();
-    expect(insertArtifact).not.toHaveBeenCalled();
+    expect(completeBuild).not.toHaveBeenCalled();
   });
 });
