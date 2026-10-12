@@ -28,6 +28,24 @@ CREATE TABLE task_execution_publications (
     REFERENCES organization_memberships (organization_id, user_id) ON DELETE RESTRICT
 );
 
+CREATE OR REPLACE FUNCTION public.prevent_task_execution_publication_downgrade()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF OLD.status = 'published' AND NEW.status <> 'published' THEN
+    RAISE EXCEPTION 'published task execution publication is terminal';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER task_execution_publications_published_terminal
+BEFORE UPDATE OF status ON task_execution_publications
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_task_execution_publication_downgrade();
+
 ALTER TABLE task_execution_publications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_execution_publications FORCE ROW LEVEL SECURITY;
 
