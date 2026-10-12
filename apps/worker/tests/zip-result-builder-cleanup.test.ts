@@ -69,9 +69,9 @@ const job = {
 };
 
 const patch = [
-  "diff --git a/src/a.txt b/src/a.txt",
-  "--- a/src/a.txt",
-  "+++ b/src/a.txt",
+  "diff --git a/a.txt b/a.txt",
+  "--- a/a.txt",
+  "+++ b/a.txt",
   "@@ -1 +1 @@",
   "-old",
   "+new",
@@ -97,7 +97,7 @@ function buildInput(sourceStorageKey: string, sourceSha256: string) {
     resultPatch: patch,
     changeDocument: "note",
     resultMetadata: {
-      verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644" as const, deleted: false }],
+      verifiedFiles: [{ path: "a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644" as const, deleted: false }],
     },
   };
 }
