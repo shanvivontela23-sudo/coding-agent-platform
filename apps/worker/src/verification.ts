@@ -39,6 +39,7 @@ export type VerificationResult = {
   /** Present on real verification results. Optional only for legacy injected test doubles. */
   readonly verifiedFiles?: readonly VerifiedFile[];
 };
+export type VerifiedExecutionResult = VerificationResult & { readonly verifiedFiles: readonly VerifiedFile[] };
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
 type SetupResult = { readonly complete: true } | { readonly complete: false; readonly reason: string };
 
@@ -48,7 +49,7 @@ function output(result: SandboxCommandResult | null): string { return result ? [
 function emptyReproduce(command: string | null, reason: string | null): ReproduceProof {
   return { command, baselineExitCode: null, patchedExitCode: null, baselineOutput: "", patchedOutput: "", baselineClassification: "not_run", patchedClassification: "not_run", reproduced: false, reason };
 }
-function incomplete(reason: string, command: string | null): VerificationResult {
+function incomplete(reason: string, command: string | null): VerifiedExecutionResult {
   return { checks: [], hasNewFailures: false, complete: false, incompleteReason: reason, reproduce: emptyReproduce(command, "Reproduce-first proof was not run because verification could not establish a trusted baseline."), verifiedFiles: [] };
 }
 function classifyReproduction(result: SandboxCommandResult | null): ReproduceClassification {
@@ -142,7 +143,7 @@ async function withAbortDestroy<T>(session: SandboxSession, signal: AbortSignal,
   finally { signal.removeEventListener("abort", onAbort); await destroy(); }
 }
 
-export async function verifyExecution(options: { readonly sandboxProvider: SandboxProvider; readonly taskId: string; readonly source: PreparedExecutionSource; readonly patch: string; readonly reproductionCommand: string | null; readonly timeoutMs: number; readonly signal: AbortSignal }): Promise<VerificationResult> {
+export async function verifyExecution(options: { readonly sandboxProvider: SandboxProvider; readonly taskId: string; readonly source: PreparedExecutionSource; readonly patch: string; readonly reproductionCommand: string | null; readonly timeoutMs: number; readonly signal: AbortSignal }): Promise<VerifiedExecutionResult> {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("verification timeout must be positive");
   if (options.signal.aborted) throw abortError(false);
   if (!options.source.commands.test && !options.source.commands.build) return incomplete("Project analysis did not provide a test or build command, so no baseline check could run.", options.reproductionCommand);
