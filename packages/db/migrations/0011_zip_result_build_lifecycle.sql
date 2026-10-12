@@ -153,7 +153,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.complete_zip_result_build(
+CREATE OR REPLACE FUNCTION public.insert_zip_result_artifact(
   p_execution_id uuid,
   p_artifact_id uuid,
   p_storage_key text,
@@ -161,7 +161,7 @@ CREATE OR REPLACE FUNCTION public.complete_zip_result_build(
   p_size_bytes bigint,
   p_file_count integer
 )
-RETURNS text
+RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
@@ -170,18 +170,14 @@ DECLARE
   v_row record;
   v_inserted uuid;
 BEGIN
-  UPDATE public.task_executions AS e
-     SET zip_build_status='ready',
-         zip_build_started_at=NULL,
-         zip_build_error_code=NULL,
-         zip_build_error_message=NULL,
-         updated_at=pg_catalog.clock_timestamp()
+  SELECT e.organization_id,e.task_id,e.project_id,e.source_version_id
+    INTO v_row
+    FROM public.task_executions AS e
    WHERE e.id=p_execution_id
-     AND e.zip_build_status='building'
-  RETURNING e.organization_id,e.task_id,e.project_id,e.source_version_id INTO v_row;
+     AND e.zip_build_status='building';
 
   IF NOT FOUND THEN
-    RETURN 'lost';
+    RETURN false;
   END IF;
 
   INSERT INTO public.task_execution_artifacts
@@ -197,10 +193,29 @@ BEGIN
   ON CONFLICT DO NOTHING
   RETURNING id INTO v_inserted;
 
-  IF v_inserted IS NULL THEN
-    RETURN 'existing';
-  END IF;
-  RETURN 'inserted';
+  RETURN v_inserted IS NOT NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.mark_zip_result_build_ready(p_execution_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_count integer;
+BEGIN
+  UPDATE public.task_executions
+     SET zip_build_status='ready',
+         zip_build_started_at=NULL,
+         zip_build_error_code=NULL,
+         zip_build_error_message=NULL,
+         updated_at=pg_catalog.clock_timestamp()
+   WHERE id=p_execution_id
+     AND zip_build_status='building';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count = 1;
 END;
 $$;
 
@@ -231,10 +246,12 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.claim_pending_zip_result_build() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.complete_zip_result_build(uuid,uuid,text,text,bigint,integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.insert_zip_result_artifact(uuid,uuid,text,text,bigint,integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.mark_zip_result_build_ready(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.fail_zip_result_build(uuid,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_pending_zip_result_build() TO coding_agent_worker;
-GRANT EXECUTE ON FUNCTION public.complete_zip_result_build(uuid,uuid,text,text,bigint,integer) TO coding_agent_worker;
+GRANT EXECUTE ON FUNCTION public.insert_zip_result_artifact(uuid,uuid,text,text,bigint,integer) TO coding_agent_worker;
+GRANT EXECUTE ON FUNCTION public.mark_zip_result_build_ready(uuid) TO coding_agent_worker;
 GRANT EXECUTE ON FUNCTION public.fail_zip_result_build(uuid,text,text) TO coding_agent_worker;
 
 COMMIT;
