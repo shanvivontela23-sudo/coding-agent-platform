@@ -19,10 +19,11 @@ function queue(overrides: Partial<ZipResultBuildQueue> = {}): ZipResultBuildQueu
 }
 
 describe("ZIP result build worker", () => {
-  it("attempts a failing build exactly once and persists ZIP_RESULT_FAILED", async () => {
+  it("attempts a failing build exactly once and never retries it on the next poll", async () => {
     const build = vi.fn(async () => { throw new Error("registry token=super-secret build exploded"); });
-    const q = queue();
+    const q = queue({ claimPending: vi.fn().mockResolvedValueOnce(job).mockResolvedValueOnce(null) });
 
+    await runZipResultBuildWorkerOnce({ queue: q, build });
     await runZipResultBuildWorkerOnce({ queue: q, build });
 
     expect(build).toHaveBeenCalledTimes(1);
