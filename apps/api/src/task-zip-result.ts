@@ -23,6 +23,7 @@ export type TaskZipResultArtifact = {
   readonly promotedVersionNumber: number | null;
 };
 export type ZipResultBuildStatus = "pending" | "building" | "ready" | "failed";
+export type ZipResultBuildCompletion = "inserted" | "existing" | "lost";
 export type TaskZipResultBuildState = {
   readonly status: ZipResultBuildStatus | null;
   readonly errorCode: string | null;
@@ -46,10 +47,9 @@ export interface TaskZipResultDatabase {
   getStatus(session: SessionIdentity, taskId: string): Promise<TaskZipResultBuildState>;
   getContext(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
   getArtifact(session: SessionIdentity, executionId: string): Promise<TaskZipResultArtifact | null>;
-  insertArtifact(session: SessionIdentity, input: TaskZipResultArtifact): Promise<boolean>;
+  completeBuild(session: SessionIdentity, input: TaskZipResultArtifact): Promise<ZipResultBuildCompletion>;
   acceptUnproven(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
   retryBuild(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
-  markReady(session: SessionIdentity, executionId: string): Promise<boolean>;
   markFailed(session: SessionIdentity, executionId: string, code: string, message: string): Promise<boolean>;
   promote(session: SessionIdentity, artifact: TaskZipResultArtifact): Promise<TaskZipResultArtifact>;
   auditDownload(session: SessionIdentity, artifact: TaskZipResultArtifact): Promise<void>;
@@ -116,27 +116,30 @@ type CleanupStorage = ProjectStorage & { deleteVersion?(storageKey: string): Pro
 export function createTaskZipResultService(options: { readonly database: TaskZipResultDatabase; readonly storage: CleanupStorage; readonly downloadTokens: ProjectDownloadTokenService; readonly limits: UploadArchiveLimits }) {
   async function contextFor(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null> { return await options.database.getContext(session, taskId); }
   async function buildClaimed(session: SessionIdentity, context: TaskZipResultContext): Promise<TaskZipResultArtifact | null> {
-    let storedKey: string | null = null;
+    let candidateStorageKey: string | null = null;
     try {
       const approvedZip = await options.storage.readVersion(context.sourceStorageKey);
       if (sha256(approvedZip) !== context.sourceSha256.toLowerCase()) mismatch("Stored approved ZIP digest does not match the approved project version; ZIP result refused.");
       const built = await buildVerifiedZipResult({ approvedZip, patch: context.resultPatch, verifiedFiles: context.verifiedFiles, changeDocument: context.changeDocument, limits: options.limits });
       const artifactVersionId = randomUUID();
       const stored = await options.storage.writeVersion({ organizationId: session.organizationId, projectId: context.projectId, versionId: artifactVersionId, bytes: built.bytes });
-      storedKey = stored.storageKey;
+      candidateStorageKey = stored.storageKey;
       const candidate: TaskZipResultArtifact = { executionId: context.executionId, taskId: context.taskId, projectId: context.projectId, sourceVersionId: context.sourceVersionId, artifactVersionId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount, promotedVersionId: null, promotedVersionNumber: null };
-      const inserted = await options.database.insertArtifact(session, candidate);
-      if (!inserted) {
-        if (!options.storage.deleteVersion) throw new Error("ZIP result artifact lost an insert race but storage cleanup is unavailable.");
-        await options.storage.deleteVersion(stored.storageKey); storedKey = null;
+      const completion = await options.database.completeBuild(session, candidate);
+      if (completion === "inserted") {
+        candidateStorageKey = null;
+        return candidate;
       }
-      const ready = await options.database.markReady(session, context.executionId);
-      if (!ready) throw new Error("ZIP result build state changed before completion.");
+      if (!options.storage.deleteVersion) throw new Error("ZIP result candidate storage cleanup is unavailable.");
+      await options.storage.deleteVersion(stored.storageKey);
+      candidateStorageKey = null;
+      if (completion === "lost") throw new Error("ZIP result build ownership was lost before completion.");
       return await options.database.getArtifact(session, context.executionId);
     } catch (error) {
-      if (storedKey && options.storage.deleteVersion) await options.storage.deleteVersion(storedKey).catch(() => undefined);
+      if (candidateStorageKey && options.storage.deleteVersion) await options.storage.deleteVersion(candidateStorageKey).catch(() => undefined);
       const raw = error instanceof Error ? error.message : "ZIP result build failed.";
-      const message = `ZIP result build failed: ${boundedDependencyInstallFailureDetail(raw, 2_000)}`;
+      const detail = boundedDependencyInstallFailureDetail(raw, 2_000);
+      const message = detail ? `ZIP result build failed: ${detail}` : "ZIP result build failed.";
       await options.database.markFailed(session, context.executionId, "ZIP_RESULT_FAILED", message);
       throw new AppError("ZIP_RESULT_FAILED", message, 409);
     }
