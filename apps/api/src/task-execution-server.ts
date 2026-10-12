@@ -18,11 +18,11 @@ async function handleZipResult(request: IncomingMessage, response: ServerRespons
   if (action === "download" && request.method === "GET") {
     const token = url.searchParams.get("token") ?? "";
     const result = await options.zipResultService.download(session, taskId, token);
-    response.statusCode = 200; response.setHeader("content-type", "application/zip"); response.setHeader("content-disposition", `attachment; filename="${result.filename}"`); response.end(Buffer.from(result.bytes)); return true;
+    response.statusCode = 200; response.setHeader("content-type", "application/zip"); response.setHeader("content-disposition", `attachment; filename="${result.filename}"`); response.setHeader("cache-control", "private, no-store"); response.end(Buffer.from(result.bytes)); return true;
   }
   if (action === "patch" && request.method === "GET") {
     const patch = await options.zipResultService.getPatch(session, taskId);
-    response.statusCode = 200; response.setHeader("content-type", "text/plain; charset=utf-8"); response.setHeader("content-disposition", `attachment; filename="dhara-${taskId}.patch"`); response.end(patch); return true;
+    response.statusCode = 200; response.setHeader("content-type", "text/plain; charset=utf-8"); response.setHeader("content-disposition", `attachment; filename="dhara-${taskId}.patch"`); response.setHeader("cache-control", "private, no-store"); response.end(patch); return true;
   }
   if (request.method !== "POST") return false;
   if (action === "accept-unproven") { json(response, 200, { zipResult: await options.zipResultService.acceptUnproven(session, taskId) }); return true; }
