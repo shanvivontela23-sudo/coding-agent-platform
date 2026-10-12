@@ -25,14 +25,15 @@ cp .env.example .env
 
 Fill the placeholders for:
 
-- `DEMO_DATABASE_ADMIN_URL` — administrator URL used only to verify/apply a fresh local schema.
+- `DEMO_DATABASE_ADMIN_URL` — administrator URL used only to verify/apply a fresh local schema and read the demo organization's recorded GitHub installation.
 - `DEMO_API_DATABASE_URL` — must authenticate as `coding_agent_api`.
 - `DEMO_WORKER_DATABASE_URL` — must authenticate as `coding_agent_worker`.
+- `DEMO_ORGANIZATION_ID` — optional; set it only when more than one connected GitHub installation exists in the demo database.
 - Supabase: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_FLOW_SECRET`.
 - Session/security: `SESSION_SIGNING_SECRET` and, optionally, `TASK_TICKET_ENCRYPTION_SECRET`.
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`.
 - E2B: `E2B_API_KEY`.
-- Model/gateway: `ANTHROPIC_API_KEY`, `LITELLM_MASTER_KEY`, `MODEL_GATEWAY_RUN_TOKEN_SECRET`, `TASK_MODEL_NAME`, `TASK_EXECUTION_MODEL`, `TASK_EXECUTION_CODEX_VERSION`.
+- Model/gateway: `ANTHROPIC_API_KEY`, `LITELLM_MASTER_KEY`, `MODEL_GATEWAY_RUN_TOKEN_SECRET`, `TASK_MODEL_NAME`, `TASK_EXECUTION_MODEL`, `TASK_EXECUTION_CODEX_VERSION`, and `HARNESS_MODEL_PRICES_JSON`. The price map must contain entries for the exact planning and execution model names using the format documented in `.env.example`.
 - ngrok: `NGROK_AUTHTOKEN`.
 - Local LiteLLM Postgres: `POSTGRES_PASSWORD`.
 
@@ -73,12 +74,14 @@ The launcher performs these steps in order:
 
 ### Expected preflight
 
-All eight checks should show ready:
+All ten checks should show ready:
 
 ```text
 ✓ database roles and migrations: ready
 ✓ Supabase: ready
 ✓ GitHub App Contents: Read and write: ready
+✓ planning model price: ready
+✓ execution model price: ready
 ✓ E2B authentication (list only): ready
 ✓ LiteLLM: ready
 ✓ ngrok gateway tunnel: ready
@@ -88,12 +91,13 @@ All eight checks should show ready:
 
 Important safety properties:
 
+- The GitHub permission check reads the installation recorded for the demo organization and verifies the permission that installation has actually accepted.
 - E2B preflight **lists at most one sandbox record; it does not create a sandbox**.
 - Worker claim preflight runs inside a transaction and rolls it back, so it cannot consume a queued execution.
 - The gateway tunnel check reaches the HTTP gateway without sending a model request.
 - GET/polling routes remain read-only.
 
-If a check fails, fix that named dependency and rerun `pnpm demo`. Do not bypass a failed Contents-write, database-role, or gateway check for the live demo.
+If a check fails, fix that named dependency and rerun `pnpm demo`. Do not bypass a failed Contents-write, model-price, database-role, or gateway check for the live demo.
 
 ## Demo 1 — Public GitHub repository
 
