@@ -47,7 +47,7 @@ beforeAll(async () => {
 afterAll(async () => { if (baseDatabaseUrl) await psql(baseDatabaseUrl, `DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`); }, 30_000);
 
 describe.skipIf(!baseDatabaseUrl)("B3 publication database boundary", () => {
-  it("allows tenant-scoped insert/update but not delete and enforces one row per execution", async () => {
+  it("allows tenant-scoped insert/update but not delete, duplicate rows, or downgrade after published", async () => {
     const url = databaseUrlFor(integrationDb);
     expect(await psql(url, `
       SET ROLE coding_agent_app;
@@ -57,6 +57,7 @@ describe.skipIf(!baseDatabaseUrl)("B3 publication database boundary", () => {
       UPDATE task_execution_publications SET status='published',base_moved_commits=3,pull_request_number=12,pull_request_url='https://github.com/acme/demo/pull/12' WHERE execution_id='${execution}';
       SELECT status||'|'||base_moved_commits||'|'||pull_request_number FROM task_execution_publications WHERE execution_id='${execution}';
     `)).toContain("published|3|12");
+    await expectPsqlFailure(url, `SET ROLE coding_agent_app; SELECT pg_catalog.set_config('app.organization_id','${org}',false); UPDATE task_execution_publications SET status='failed',failure_code='LATE_FAILURE' WHERE execution_id='${execution}';`);
     await expectPsqlFailure(url, `SET ROLE coding_agent_app; SELECT pg_catalog.set_config('app.organization_id','${org}',false); DELETE FROM task_execution_publications WHERE execution_id='${execution}';`);
     await expectPsqlFailure(url, `SET ROLE coding_agent_app; SELECT pg_catalog.set_config('app.organization_id','${org}',false); INSERT INTO task_execution_publications (organization_id,task_id,execution_id,requested_by_user_id,status,branch_name,approved_sha) VALUES ('${org}','${task}','${execution}','${user}','publishing','other','${commit}');`);
   });
