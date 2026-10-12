@@ -3,7 +3,9 @@ import type { DemoConfig } from "../src/config.js";
 import {
   assertDemoModelPrice,
   checkDemoGitHubContentsWrite,
+  checkLiteLLMHealth,
   runDemoPreflight,
+  workerClaimRollbackSql,
   type DemoPreflightDependencies,
 } from "../src/preflight.js";
 
@@ -73,6 +75,52 @@ describe("demo preflight", () => {
     const result = await runDemoPreflight(deps);
     expect(result.find((item) => item.name.startsWith("GitHub"))).toEqual({ name: "GitHub App Contents: Read and write", ok: false, message: "Contents permission is read" });
     expect(deps.checkWorkerClaimRollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a valid worker lease and keeps the dry-run inside BEGIN and ROLLBACK", () => {
+    const sql = workerClaimRollbackSql();
+    const match = sql.match(/claim_task_execution\('demo-preflight',(\d+)\)/);
+    expect(match).not.toBeNull();
+    const leaseSeconds = Number(match?.[1]);
+    expect(leaseSeconds).toBeGreaterThanOrEqual(5);
+    expect(leaseSeconds).toBeLessThanOrEqual(3600);
+    expect(leaseSeconds).toBe(30);
+    expect(sql).toMatch(/^BEGIN;/);
+    expect(sql).toMatch(/ROLLBACK;$/);
+  });
+
+  it("retries LiteLLM liveliness until it becomes healthy", async () => {
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(checkLiteLLMHealth({
+      fetchImpl: fetchImpl as typeof fetch,
+      sleep,
+      timeoutMs: 60_000,
+      retryDelayMs: 1,
+      now: (() => { let value = 0; return () => { value += 1_000; return value; }; })(),
+      headers: { authorization: "Bearer test" },
+    })).resolves.toBeUndefined();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports the operator-facing LiteLLM log hint after the retry window", async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error("fetch failed"); });
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(checkLiteLLMHealth({
+      fetchImpl: fetchImpl as typeof fetch,
+      sleep,
+      timeoutMs: 60_000,
+      retryDelayMs: 1,
+      now: (() => { let value = 0; return () => { value += 30_000; return value; }; })(),
+      headers: {},
+    })).rejects.toThrow("LiteLLM did not become healthy; see `docker logs http-gateway-litellm-1`");
   });
 
   it("requires a price for the planning model and names that model without echoing price JSON", () => {
