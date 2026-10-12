@@ -31,7 +31,7 @@ export function deterministicPublicationBranch(executionId: string): string {
 function safePlanPath(value: string): string | null {
   const trimmed = value.trim().replace(/^[`'"(]+|[`'"),.;:]+$/g, "");
   if (!trimmed || trimmed.startsWith("/") || trimmed.includes("\\") || trimmed.includes("..") || !trimmed.includes("/")) return null;
-  if (!/^[A-Za-z0-9._@+\/-]+$/.test(trimmed)) return null;
+  if (!/^[A-Za-z0-9._@+/-]+$/.test(trimmed)) return null;
   return trimmed;
 }
 
@@ -61,9 +61,7 @@ export class GitHubExecutionPublisher {
       : await this.client.compareCommits({ repositoryFullName: input.repositoryFullName, baseSha: input.approvedSha, headSha: current.sha });
     const protectedPaths = new Set(protectedPublicationPaths(input.approvedPlan, input.patch));
     const changedProtectedFiles = comparison.files.filter((path) => protectedPaths.has(path));
-    if (changedProtectedFiles.length > 0) {
-      return { status: "source_changed", branchName, baseMovedCommits: comparison.aheadBy, currentHeadSha: current.sha, changedProtectedFiles };
-    }
+    if (changedProtectedFiles.length > 0) return { status: "source_changed", branchName, baseMovedCommits: comparison.aheadBy, currentHeadSha: current.sha, changedProtectedFiles };
 
     const branch = await this.client.ensurePatchedBranch({ repositoryFullName: input.repositoryFullName, branchName, approvedSha: input.approvedSha, patch: input.patch });
     const existing = await this.client.findOpenPullRequest({ repositoryFullName: input.repositoryFullName, branchName, baseBranch: input.defaultBranch });
