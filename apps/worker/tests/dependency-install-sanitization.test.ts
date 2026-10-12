@@ -5,8 +5,9 @@ describe("dependency install failure sanitization", () => {
   it("bounds and redacts registry credentials, auth headers, and token patterns", () => {
     const githubToken = `ghp_${"a".repeat(36)}`;
     const npmToken = `npm_${"b".repeat(36)}`;
-    const raw = `${"prefix\n".repeat(500)}Authorization: Bearer super-secret-bearer\n` +
+    const raw = `${"prefix\n".repeat(500)}npm ERR! Authorization: Bearer super-secret-bearer\n` +
       `GET https://build-user:${githubToken}@registry.example.invalid/pkg?token=${npmToken}\n` +
+      `GET https://${npmToken}@packages.example.invalid/private\n` +
       `npm ERR! //registry.example.invalid/:_authToken=${npmToken}`;
 
     const detail = boundedDependencyInstallFailureDetail(raw);
