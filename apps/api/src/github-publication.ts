@@ -17,7 +17,7 @@ export type GitHubPublicationInput = {
 
 export interface GitHubPublicationClient {
   getDefaultBranchHead(input: { readonly repositoryFullName: string; readonly defaultBranch: string }): Promise<{ readonly sha: string }>;
-  compareCommits(input: { readonly repositoryFullName: string; readonly baseSha: string; readonly headSha: string }): Promise<{ readonly aheadBy: number; readonly files: readonly string[] }>;
+  compareCommits(input: { readonly repositoryFullName: string; readonly baseSha: string; readonly headSha: string; readonly protectedPaths: readonly string[] }): Promise<{ readonly aheadBy: number; readonly files: readonly string[] }>;
   ensurePatchedBranch(input: { readonly repositoryFullName: string; readonly branchName: string; readonly approvedSha: string; readonly patch: string }): Promise<{ readonly headSha: string }>;
   findOpenPullRequest(input: { readonly repositoryFullName: string; readonly branchName: string; readonly baseBranch: string }): Promise<{ readonly number: number; readonly url: string } | null>;
   createPullRequest(input: { readonly repositoryFullName: string; readonly branchName: string; readonly baseBranch: string; readonly title: string; readonly body: string }): Promise<{ readonly number: number; readonly url: string }>;
@@ -56,12 +56,13 @@ export class GitHubExecutionPublisher {
   async publish(input: GitHubPublicationInput): Promise<PublicationResult> {
     if (!/^[0-9a-f]{40}$/i.test(input.approvedSha)) throw new Error("approved SHA must be 40 hexadecimal characters");
     const branchName = deterministicPublicationBranch(input.executionId);
+    const protectedPaths = protectedPublicationPaths(input.approvedPlan, input.patch);
+    const protectedPathSet = new Set(protectedPaths);
     const current = await this.client.getDefaultBranchHead({ repositoryFullName: input.repositoryFullName, defaultBranch: input.defaultBranch });
     const comparison = current.sha.toLowerCase() === input.approvedSha.toLowerCase()
       ? { aheadBy: 0, files: [] as readonly string[] }
-      : await this.client.compareCommits({ repositoryFullName: input.repositoryFullName, baseSha: input.approvedSha, headSha: current.sha });
-    const protectedPaths = new Set(protectedPublicationPaths(input.approvedPlan, input.patch));
-    const changedProtectedFiles = comparison.files.filter((path) => protectedPaths.has(path));
+      : await this.client.compareCommits({ repositoryFullName: input.repositoryFullName, baseSha: input.approvedSha, headSha: current.sha, protectedPaths });
+    const changedProtectedFiles = comparison.files.filter((path) => protectedPathSet.has(path));
     if (changedProtectedFiles.length > 0) return { status: "source_changed", branchName, baseMovedCommits: comparison.aheadBy, currentHeadSha: current.sha, changedProtectedFiles };
 
     const branch = await this.client.ensurePatchedBranch({ repositoryFullName: input.repositoryFullName, branchName, approvedSha: input.approvedSha, patch: input.patch });
