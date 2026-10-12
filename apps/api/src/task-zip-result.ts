@@ -3,6 +3,7 @@ import type { SessionIdentity } from "./auth.js";
 import { AppError } from "./errors.js";
 import { applyUnifiedFilePatchBytes } from "./github-publication-client.js";
 import { parsePatchFiles } from "../../worker/src/patch-parser.js";
+import { boundedDependencyInstallFailureDetail } from "../../worker/src/change-document.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
 import type { ProjectDownloadTokenService } from "./project-download-token.js";
 import type { ProjectStorage } from "./project-storage.js";
@@ -21,6 +22,14 @@ export type TaskZipResultArtifact = {
   readonly promotedVersionId: string | null;
   readonly promotedVersionNumber: number | null;
 };
+export type ZipResultBuildStatus = "pending" | "building" | "ready" | "failed";
+export type ZipResultBuildCompletion = "inserted" | "existing" | "lost";
+export type TaskZipResultBuildState = {
+  readonly status: ZipResultBuildStatus | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly artifact: TaskZipResultArtifact | null;
+};
 export type TaskZipResultContext = {
   readonly executionId: string;
   readonly taskId: string;
@@ -35,9 +44,13 @@ export type TaskZipResultContext = {
   readonly role: "owner" | "developer" | "rep";
 };
 export interface TaskZipResultDatabase {
+  getStatus(session: SessionIdentity, taskId: string): Promise<TaskZipResultBuildState>;
   getContext(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
   getArtifact(session: SessionIdentity, executionId: string): Promise<TaskZipResultArtifact | null>;
-  saveArtifact(session: SessionIdentity, input: TaskZipResultArtifact): Promise<TaskZipResultArtifact>;
+  completeBuild(session: SessionIdentity, input: TaskZipResultArtifact): Promise<ZipResultBuildCompletion>;
+  acceptUnproven(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
+  retryBuild(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null>;
+  markFailed(session: SessionIdentity, executionId: string, code: string, message: string): Promise<boolean>;
   promote(session: SessionIdentity, artifact: TaskZipResultArtifact): Promise<TaskZipResultArtifact>;
   auditDownload(session: SessionIdentity, artifact: TaskZipResultArtifact): Promise<void>;
 }
@@ -99,25 +112,46 @@ export async function buildVerifiedZipResult(input: { readonly approvedZip: Uint
   return { bytes, sha256: sha256(bytes), sizeBytes: bytes.byteLength, fileCount: entries.size };
 }
 
-export function createTaskZipResultService(options: { readonly database: TaskZipResultDatabase; readonly storage: ProjectStorage; readonly downloadTokens: ProjectDownloadTokenService; readonly limits: UploadArchiveLimits }) {
+type CleanupStorage = ProjectStorage & { deleteVersion?(storageKey: string): Promise<void> };
+export function createTaskZipResultService(options: { readonly database: TaskZipResultDatabase; readonly storage: CleanupStorage; readonly downloadTokens: ProjectDownloadTokenService; readonly limits: UploadArchiveLimits }) {
   async function contextFor(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null> { return await options.database.getContext(session, taskId); }
-  async function getOrCreate(session: SessionIdentity, taskId: string, acceptUnproven = false): Promise<TaskZipResultArtifact | null> {
-    const context = await contextFor(session, taskId); if (!context) return null;
-    if (context.status === "fix_not_reproduced" && !acceptUnproven) return await options.database.getArtifact(session, context.executionId);
-    if (context.status === "fix_not_reproduced" && acceptUnproven && context.role !== "owner" && context.role !== "developer") throw new AppError("ZIP_UNPROVEN_ACCEPT_FORBIDDEN", "Only a developer or owner can accept an unproven ZIP result.", 403);
-    const existing = await options.database.getArtifact(session, context.executionId); if (existing) return existing;
-    const approvedZip = await options.storage.readVersion(context.sourceStorageKey);
-    if (sha256(approvedZip) !== context.sourceSha256.toLowerCase()) mismatch("Stored approved ZIP digest does not match the approved project version; ZIP result refused.");
-    const built = await buildVerifiedZipResult({ approvedZip, patch: context.resultPatch, verifiedFiles: context.verifiedFiles, changeDocument: context.changeDocument, limits: options.limits });
-    const artifactVersionId = randomUUID(); const stored = await options.storage.writeVersion({ organizationId: session.organizationId, projectId: context.projectId, versionId: artifactVersionId, bytes: built.bytes });
-    return await options.database.saveArtifact(session, { executionId: context.executionId, taskId: context.taskId, projectId: context.projectId, sourceVersionId: context.sourceVersionId, artifactVersionId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount, promotedVersionId: null, promotedVersionNumber: null });
+  async function buildClaimed(session: SessionIdentity, context: TaskZipResultContext): Promise<TaskZipResultArtifact | null> {
+    let candidateStorageKey: string | null = null;
+    try {
+      const approvedZip = await options.storage.readVersion(context.sourceStorageKey);
+      if (sha256(approvedZip) !== context.sourceSha256.toLowerCase()) mismatch("Stored approved ZIP digest does not match the approved project version; ZIP result refused.");
+      const built = await buildVerifiedZipResult({ approvedZip, patch: context.resultPatch, verifiedFiles: context.verifiedFiles, changeDocument: context.changeDocument, limits: options.limits });
+      const artifactVersionId = randomUUID();
+      const stored = await options.storage.writeVersion({ organizationId: session.organizationId, projectId: context.projectId, versionId: artifactVersionId, bytes: built.bytes });
+      candidateStorageKey = stored.storageKey;
+      const candidate: TaskZipResultArtifact = { executionId: context.executionId, taskId: context.taskId, projectId: context.projectId, sourceVersionId: context.sourceVersionId, artifactVersionId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount, promotedVersionId: null, promotedVersionNumber: null };
+      const completion = await options.database.completeBuild(session, candidate);
+      if (completion === "inserted") {
+        candidateStorageKey = null;
+        return candidate;
+      }
+      if (!options.storage.deleteVersion) throw new Error("ZIP result candidate storage cleanup is unavailable.");
+      await options.storage.deleteVersion(stored.storageKey);
+      candidateStorageKey = null;
+      if (completion === "lost") throw new Error("ZIP result build ownership was lost before completion.");
+      return await options.database.getArtifact(session, context.executionId);
+    } catch (error) {
+      if (candidateStorageKey && options.storage.deleteVersion) await options.storage.deleteVersion(candidateStorageKey).catch(() => undefined);
+      const raw = error instanceof Error ? error.message : "ZIP result build failed.";
+      const detail = boundedDependencyInstallFailureDetail(raw, 2_000);
+      const message = detail ? `ZIP result build failed: ${detail}` : "ZIP result build failed.";
+      await options.database.markFailed(session, context.executionId, "ZIP_RESULT_FAILED", message);
+      throw new AppError("ZIP_RESULT_FAILED", message, 409);
+    }
   }
   return {
-    getOrCreate,
+    async readStatus(session: SessionIdentity, taskId: string) { return await options.database.getStatus(session, taskId); },
+    async getOrCreate(session: SessionIdentity, taskId: string) { return (await options.database.getStatus(session, taskId)).artifact; },
     async getPatch(session: SessionIdentity, taskId: string) { const context = await contextFor(session, taskId); if (!context) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return context.resultPatch; },
-    async acceptUnproven(session: SessionIdentity, taskId: string) { return await getOrCreate(session, taskId, true); },
-    async promote(session: SessionIdentity, taskId: string) { const artifact = await getOrCreate(session, taskId, true); if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return await options.database.promote(session, artifact); },
-    async issueDownloadToken(session: SessionIdentity, taskId: string) { const artifact = await getOrCreate(session, taskId); if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return options.downloadTokens.issue({ organizationId: session.organizationId, userId: session.userId, projectId: artifact.projectId, projectVersionId: artifact.artifactVersionId }); },
-    async download(session: SessionIdentity, taskId: string, token: string) { let claims; try { claims = options.downloadTokens.verify(token); } catch { throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); } const artifact = await getOrCreate(session, taskId, false); if (!artifact || claims.organizationId !== session.organizationId || claims.userId !== session.userId || claims.projectId !== artifact.projectId || claims.projectVersionId !== artifact.artifactVersionId) throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); const bytes = await options.storage.readVersion(artifact.storageKey); await options.database.auditDownload(session, artifact); return { bytes, filename: `${artifact.projectId}-dhara-result.zip` }; },
+    async acceptUnproven(session: SessionIdentity, taskId: string) { const context = await options.database.acceptUnproven(session, taskId); return context ? await buildClaimed(session, context) : (await options.database.getStatus(session, taskId)).artifact; },
+    async retryBuild(session: SessionIdentity, taskId: string) { const context = await options.database.retryBuild(session, taskId); if (!context) throw new AppError("ZIP_RESULT_UNAVAILABLE", "ZIP result is not retryable.", 409); return await buildClaimed(session, context); },
+    async promote(session: SessionIdentity, taskId: string) { const artifact = (await options.database.getStatus(session, taskId)).artifact; if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return await options.database.promote(session, artifact); },
+    async issueDownloadToken(session: SessionIdentity, taskId: string) { const artifact = (await options.database.getStatus(session, taskId)).artifact; if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return options.downloadTokens.issue({ organizationId: session.organizationId, userId: session.userId, projectId: artifact.projectId, projectVersionId: artifact.artifactVersionId }); },
+    async download(session: SessionIdentity, taskId: string, token: string) { let claims; try { claims = options.downloadTokens.verify(token); } catch { throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); } const artifact = (await options.database.getStatus(session, taskId)).artifact; if (!artifact || claims.organizationId !== session.organizationId || claims.userId !== session.userId || claims.projectId !== artifact.projectId || claims.projectVersionId !== artifact.artifactVersionId) throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); const bytes = await options.storage.readVersion(artifact.storageKey); await options.database.auditDownload(session, artifact); return { bytes, filename: `${artifact.projectId}-dhara-result.zip` }; },
   };
 }
