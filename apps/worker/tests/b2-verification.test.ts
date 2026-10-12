@@ -36,7 +36,13 @@ class FakeSession implements SandboxSession {
   readonly writes: string[] = [];
   destroyed = false;
   constructor(readonly id: string, private readonly results: Readonly<Record<string, SandboxCommandResult>>) {}
-  async exec(request: SandboxCommand): Promise<SandboxCommandResult> { this.commands.push(request.command); if (request.command.startsWith("git apply")) return { exitCode: 0, stdout: "", stderr: "" }; return this.results[request.command] ?? { exitCode: 0, stdout: "", stderr: "" }; }
+  async exec(request: SandboxCommand): Promise<SandboxCommandResult> {
+    this.commands.push(request.command);
+    if (request.command.startsWith("git apply")) return { exitCode: 0, stdout: "", stderr: "" };
+    if (request.command.startsWith("git hash-object")) return { exitCode: 0, stdout: `${"d".repeat(40)}\n`, stderr: "" };
+    if (request.command.startsWith("if test -x")) return { exitCode: 0, stdout: "100644", stderr: "" };
+    return this.results[request.command] ?? { exitCode: 0, stdout: "", stderr: "" };
+  }
   async readFile(): Promise<string> { return ""; }
   async writeFile(path: string, data: string | ArrayBuffer): Promise<void> { this.writes.push(`${path}:${typeof data === "string" ? data : "binary"}`); }
   async setNetworkPhase(phase: SandboxNetworkPhase): Promise<void> { this.phases.push(phase); }
@@ -78,6 +84,7 @@ describe("B2 verification", () => {
     expect(result.reproduce).toMatchObject({ command: "pnpm test src/retry.test.ts", baselineExitCode: 1, patchedExitCode: 0, baselineClassification: "assertion_failure", patchedClassification: "passed", reproduced: true });
     expect(result.reproduce.baselineOutput).toContain("AssertionError");
     expect(result.complete).toBe(true);
+    expect(result.verifiedFiles.map((file) => file.path)).toEqual(["src/retry.test.ts", "src/retry.ts"]);
   });
 
   it("does not treat a missing-file or collection error as reproduce proof", async () => {
