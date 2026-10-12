@@ -36,7 +36,8 @@ export type VerificationResult = {
   readonly complete: boolean;
   readonly incompleteReason: string | null;
   readonly reproduce: ReproduceProof;
-  readonly verifiedFiles: readonly VerifiedFile[];
+  /** Present on real verification results. Optional only for legacy injected test doubles. */
+  readonly verifiedFiles?: readonly VerifiedFile[];
 };
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
 type SetupResult = { readonly complete: true } | { readonly complete: false; readonly reason: string };
