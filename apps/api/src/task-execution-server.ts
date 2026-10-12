@@ -2,6 +2,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { AppError, isSafeErrorCode } from "./errors.js";
 import { genericRequestFailureMessage, logRequestError, tenantSessionFromRequest } from "./http-request.js";
 import type { TaskExecutionService } from "./task-execution-service.js";
+import type { TaskPublicationService } from "./task-publication-service.js";
 
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.statusCode = status;
@@ -13,9 +14,10 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   readonly apiOrigin: string;
   readonly sessionSecret: string;
   readonly service: TaskExecutionService;
+  readonly publicationService?: TaskPublicationService;
 }): Promise<boolean> {
   const url = new URL(request.url ?? "/", options.apiOrigin);
-  const match = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)\/execution(?:\/(start|cancel))?$/i);
+  const match = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)\/execution(?:\/(start|cancel|publication))?$/i);
   if (!match) return false;
   const taskId = match[1]!;
   const action = match[2];
@@ -24,12 +26,22 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   try {
     const session = tenantSessionFromRequest(request, options.sessionSecret);
     if (!action) {
-      json(response, 200, { execution: await options.service.get(session, taskId) });
+      const [execution, readiness, publication] = await Promise.all([
+        options.service.get(session, taskId),
+        options.service.readiness(session, taskId),
+        options.publicationService?.get(session, taskId) ?? Promise.resolve(null),
+      ]);
+      json(response, 200, { execution, ...readiness, publication });
       return true;
     }
     if (action === "start") {
       const result = await options.service.start(session, taskId);
       json(response, result.created ? 201 : 200, result);
+      return true;
+    }
+    if (action === "publication") {
+      if (!options.publicationService) throw new AppError("TASK_PUBLICATION_UNAVAILABLE", "GitHub publication is unavailable.", 503);
+      json(response, 200, { publication: await options.publicationService.publish(session, taskId) });
       return true;
     }
     json(response, 200, { execution: await options.service.cancel(session, taskId) });
@@ -50,6 +62,7 @@ export function attachTaskExecutionRoutes(server: Server, options: {
   readonly apiOrigin: string;
   readonly sessionSecret: string;
   readonly service: TaskExecutionService;
+  readonly publicationService?: TaskPublicationService;
 }): Server {
   const existing = server.listeners("request") as Array<(request: IncomingMessage, response: ServerResponse) => void | Promise<void>>;
   if (existing.length !== 1) throw new Error("server must have exactly one request listener before execution routes are attached");
