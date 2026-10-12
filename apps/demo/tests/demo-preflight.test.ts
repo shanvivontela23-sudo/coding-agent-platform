@@ -90,6 +90,13 @@ describe("demo preflight", () => {
     expect(() => assertDemoModelPrice(prices, "execution-model", "execution")).toThrow("Execution model execution-model has no configured price.");
   });
 
+  it("rejects an all-zero configured price so demo cost cannot silently display zero", () => {
+    const prices = JSON.stringify({
+      "planning-model": { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0, defaultMaxOutputTokens: 4096 },
+    });
+    expect(() => assertDemoModelPrice(prices, "planning-model", "planning")).toThrow("Planning model planning-model has no configured price.");
+  });
+
   it("accepts valid prices for each configured model", () => {
     const prices = config().values.HARNESS_MODEL_PRICES_JSON!;
     expect(() => assertDemoModelPrice(prices, "planning-model", "planning")).not.toThrow();
