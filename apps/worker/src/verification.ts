@@ -1,7 +1,7 @@
 import type { SandboxCommandResult, SandboxProvider, SandboxSession } from "../../../evals/src/sandbox/types.js";
 import { boundedDependencyInstallFailureDetail } from "./change-document.js";
 import type { PreparedExecutionSource } from "./execution-source.js";
-import { testOnlyPatch } from "./patch-parser.js";
+import { parsePatchFiles, testOnlyPatch } from "./patch-parser.js";
 
 export type VerificationCheck = {
   readonly name: "test" | "build";
@@ -24,12 +24,19 @@ export type ReproduceProof = {
   readonly reproduced: boolean;
   readonly reason: string | null;
 };
+export type VerifiedFile = {
+  readonly path: string;
+  readonly blobSha: string | null;
+  readonly mode: "100644" | "100755" | null;
+  readonly deleted: boolean;
+};
 export type VerificationResult = {
   readonly checks: readonly VerificationCheck[];
   readonly hasNewFailures: boolean;
   readonly complete: boolean;
   readonly incompleteReason: string | null;
   readonly reproduce: ReproduceProof;
+  readonly verifiedFiles: readonly VerifiedFile[];
 };
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
 type SetupResult = { readonly complete: true } | { readonly complete: false; readonly reason: string };
@@ -41,7 +48,7 @@ function emptyReproduce(command: string | null, reason: string | null): Reproduc
   return { command, baselineExitCode: null, patchedExitCode: null, baselineOutput: "", patchedOutput: "", baselineClassification: "not_run", patchedClassification: "not_run", reproduced: false, reason };
 }
 function incomplete(reason: string, command: string | null): VerificationResult {
-  return { checks: [], hasNewFailures: false, complete: false, incompleteReason: reason, reproduce: emptyReproduce(command, "Reproduce-first proof was not run because verification could not establish a trusted baseline.") };
+  return { checks: [], hasNewFailures: false, complete: false, incompleteReason: reason, reproduce: emptyReproduce(command, "Reproduce-first proof was not run because verification could not establish a trusted baseline."), verifiedFiles: [] };
 }
 function classifyReproduction(result: SandboxCommandResult | null): ReproduceClassification {
   if (!result) return "not_run";
@@ -58,6 +65,32 @@ function failingTestNames(result: SandboxCommandResult): readonly string[] {
     for (const match of text.matchAll(pattern)) { const name = match[1]?.trim(); if (name) names.add(name); }
   }
   return [...names];
+}
+function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
+async function collectVerifiedFiles(session: SandboxSession, patch: string, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<readonly VerifiedFile[]> {
+  const files: VerifiedFile[] = [];
+  const seen = new Set<string>();
+  const add = (file: VerifiedFile) => {
+    if (seen.has(file.path)) throw new Error(`Verified patch path appears more than once: ${file.path}`);
+    seen.add(file.path);
+    files.push(file);
+  };
+  for (const parsed of parsePatchFiles(patch)) {
+    assertNotAborted(signal, timedOut());
+    if (parsed.oldPath && (parsed.newPath === null || parsed.oldPath !== parsed.newPath)) add({ path: parsed.oldPath, blobSha: null, mode: null, deleted: true });
+    if (!parsed.newPath) continue;
+    const quoted = shellQuote(parsed.newPath);
+    const hash = await session.exec({ command: `git hash-object -- ${quoted}`, cwd: session.workspacePath, timeoutMs: timeoutMs() });
+    assertNotAborted(signal, timedOut());
+    const blobSha = hash.stdout.trim().toLowerCase();
+    if (hash.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(blobSha)) throw new Error(`Could not record verified Git blob for ${parsed.newPath}`);
+    const modeResult = await session.exec({ command: `if test -x ${quoted}; then printf '100755'; else printf '100644'; fi`, cwd: session.workspacePath, timeoutMs: timeoutMs() });
+    assertNotAborted(signal, timedOut());
+    const mode = modeResult.stdout.trim();
+    if (modeResult.exitCode !== 0 || (mode !== "100644" && mode !== "100755")) throw new Error(`Could not record verified file mode for ${parsed.newPath}`);
+    add({ path: parsed.newPath, blobSha, mode, deleted: false });
+  }
+  return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 async function applyPatch(session: SandboxSession, patch: string, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<void> {
   assertNotAborted(signal, timedOut());
@@ -146,12 +179,14 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     let patchedChecks: GeneralRun | null = null;
     let patchedReproduction: SandboxCommandResult | null = null;
     let patchedSetup: SetupResult = { complete: false, reason: "Patched setup did not complete." };
+    let verifiedFiles: readonly VerifiedFile[] = [];
     await withAbortDestroy(patched, signal, async () => {
       patchedSetup = await prepareSession(patched, options.source, remainingMs, signal, timedOut);
       if (!patchedSetup.complete) return;
       await applyPatch(patched, options.patch, remainingMs, signal, timedOut);
       patchedChecks = await runGeneralChecks(patched, options.source, remainingMs, signal, timedOut);
       if (testPatch && options.reproductionCommand) patchedReproduction = await runReproduction(patched, options.reproductionCommand, remainingMs, signal, timedOut);
+      verifiedFiles = await collectVerifiedFiles(patched, options.patch, remainingMs, signal, timedOut);
     }, timedOut);
     if (!patchedSetup.complete) return incomplete(patchedSetup.reason, options.reproductionCommand);
 
@@ -187,6 +222,7 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
       complete,
       incompleteReason: complete ? null : "No test or build command completed successfully on the approved baseline.",
       reproduce: { command: options.reproductionCommand, baselineExitCode: baselineProof?.exitCode ?? null, patchedExitCode: patchedProof?.exitCode ?? null, baselineOutput: output(baselineProof), patchedOutput: output(patchedProof), baselineClassification, patchedClassification, reproduced, reason },
+      verifiedFiles,
     };
   } finally {
     clearTimeout(stageTimer);
