@@ -50,7 +50,8 @@ export function assertDemoModelPrice(pricesJson: string, model: string, kind: "p
   const label = kind === "planning" ? "Planning" : "Execution";
   try {
     const prices = parseModelListPrices(pricesJson);
-    if (!prices[model]) throw new Error("missing model");
+    const price = prices[model];
+    if (!price || (price.inputUsdPerMillionTokens === 0 && price.outputUsdPerMillionTokens === 0)) throw new Error("missing model");
   } catch {
     throw new Error(`${label} model ${model} has no configured price.`);
   }
