@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTaskPublicationService } from "../src/task-publication-service.js";
+import { createTaskPublicationService, type TaskPublishContext } from "../src/task-publication-service.js";
 
 const session = { userId: "10000000-0000-4000-8000-000000000601", organizationId: "00000000-0000-4000-8000-000000000601", expiresAtMs: Date.now() + 60_000 };
 const taskId = "40000000-0000-4000-8000-000000000601";
-const base = {
+const base: TaskPublishContext = {
   executionId: "50000000-0000-4000-8000-000000000601",
   executionStatus: "succeeded",
   currentUserRole: "developer",
@@ -15,8 +15,8 @@ const base = {
   changeDocument: "## What was asked\nFix retry",
 };
 
-function setup(overrides: Record<string, unknown> = {}) {
-  const context = { ...base, ...overrides };
+function setup(overrides: Partial<TaskPublishContext> = {}) {
+  const context: TaskPublishContext = { ...base, ...overrides };
   const database = {
     getPublishContext: vi.fn(async () => context),
     markPublishing: vi.fn(async () => undefined),
@@ -58,7 +58,6 @@ describe("task publication service", () => {
     publisher.publish.mockRejectedValueOnce(new Error("temporary GitHub failure"));
     await expect(service.publish(session, taskId)).rejects.toMatchObject({ code: "TASK_PUBLICATION_FAILED" });
     expect(database.markFailed).toHaveBeenCalledTimes(1);
-
     await expect(service.publish(session, taskId)).resolves.toBeDefined();
     expect(publisher.publish).toHaveBeenCalledTimes(2);
     expect(database.getPublishContext).toHaveBeenCalledTimes(2);
