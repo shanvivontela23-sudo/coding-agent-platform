@@ -19,6 +19,7 @@ export type ProjectReport = {
   readonly languages: ReadonlyArray<{ readonly name: string; readonly fileCount: number; readonly percentage: number }>;
   readonly frameworks: readonly string[];
   readonly packageManager: string | null;
+  readonly installCommand: string | null;
   readonly buildCommand: string | null;
   readonly testCommand: string | null;
   readonly workspaceCommands?: readonly WorkspaceCommand[];
@@ -161,6 +162,23 @@ function detectPackageManager(names: ReadonlySet<string>): string | null {
   if (names.has("Cargo.toml")) return "cargo";
   return names.has("package.json") ? "npm" : null;
 }
+function detectInstallCommand(names: ReadonlySet<string>, manager: string | null): string | null {
+  if (manager === "pnpm") return "pnpm install --frozen-lockfile";
+  if (manager === "yarn") return "yarn install --frozen-lockfile";
+  if (manager === "bun") return "bun install --frozen-lockfile";
+  if (manager === "npm") return names.has("package-lock.json") ? "npm ci" : "npm install";
+  if (manager === "uv") return "uv sync --frozen";
+  if (manager === "poetry") return "poetry install --no-interaction";
+  if (manager === "pipenv") return "pipenv sync";
+  if (names.has("requirements.txt")) return "python -m pip install -r requirements.txt";
+  if (names.has("pyproject.toml")) return "python -m pip install .";
+  if (names.has("pom.xml")) return "mvn -q -DskipTests dependency:go-offline";
+  if (names.has("build.gradle") || names.has("build.gradle.kts")) return names.has("gradlew") ? "./gradlew dependencies" : "gradle dependencies";
+  if (names.has("go.mod")) return "go mod download";
+  if (names.has("Cargo.toml")) return "cargo fetch";
+  if (names.has("Gemfile")) return "bundle install";
+  return null;
+}
 function workspacePatterns(value: unknown): string[] {
   const raw = Array.isArray(value) ? value : typeof value === "object" && value !== null && !Array.isArray(value) && Array.isArray((value as Record<string, unknown>).packages) ? (value as Record<string, unknown>).packages as unknown[] : [];
   return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
@@ -263,8 +281,8 @@ export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEnt
   }
   const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
   const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
-  return { languages, frameworks, packageManager, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
+  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const installCommand = detectInstallCommand(manifestNames, packageManager); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
+  return { languages, frameworks, packageManager, installCommand, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
 }
 
 export async function readRepositoryAnalysisEntries(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<readonly RepositoryAnalysisEntry[]> {
