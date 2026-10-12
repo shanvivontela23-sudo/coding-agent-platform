@@ -30,7 +30,7 @@ describe("Part B1 execution application contract", () => {
     expect(server).not.toMatch(/DATABASE_URL|GITHUB_APP_PRIVATE_KEY|LITELLM/i);
   });
 
-  it("runs only a fake coding runner in B1 and honors lease control", async () => {
+  it("keeps the local fake worker isolated from model providers and on the dedicated worker role", async () => {
     const worker = await source("apps/worker/src/task-execution-worker.ts");
     expect(worker).toContain("CodingRunner");
     expect(worker).toContain("heartbeat");
@@ -44,7 +44,7 @@ describe("Part B1 execution application contract", () => {
 
     const main = await source("apps/worker/src/main.ts");
     expect(main).toContain("TASK_EXECUTION_FAKE_RUNNER");
-    expect(main).toContain("coding_agent_api");
+    expect(main).toContain("coding_agent_worker");
     expect(main).toContain("runExecutionWorkerOnce");
     expect(main).not.toMatch(/e2b|anthropic|openai|litellm/i);
   });

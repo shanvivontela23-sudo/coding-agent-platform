@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeCodingRunner } from "../src/fake-coding-runner.js";
-import type { ClaimedExecution, ExecutionControlState, ExecutionQueue } from "../src/postgres-execution-queue.js";
-import { runExecutionWorkerOnce } from "../src/task-execution-worker.js";
+import type { ClaimedExecution, ExecutionControlState, ExecutionFinishStatus, ExecutionQueue } from "../src/postgres-execution-queue.js";
+import { runExecutionWorkerOnce, type CodingRunner } from "../src/task-execution-worker.js";
 
 const claimed: ClaimedExecution = {
   executionId: "50000000-0000-4000-8000-000000000121",
@@ -20,7 +20,7 @@ class FakeQueue implements ExecutionQueue {
   constructor(private readonly item: ClaimedExecution | null, private readonly controls: ExecutionControlState[] = ["running"]) {}
   async claim() { return this.item; }
   async heartbeat() { return this.controls.shift() ?? "running"; }
-  async finish(_executionId: string, _workerId: string, status: "succeeded" | "failed") { this.finished.push(status); return status; }
+  async finish(_executionId: string, _workerId: string, status: ExecutionFinishStatus) { this.finished.push(status); return status; }
 }
 
 describe("task execution worker", () => {
@@ -43,6 +43,14 @@ describe("task execution worker", () => {
     if (!result.worked) throw new Error("expected worker to claim an execution");
     expect(result.status).toBe("failed");
     expect(queue.finished).toEqual(["failed"]);
+  });
+
+  it.each(["verification_failed", "fix_not_reproduced"] as const)("propagates %s without rewriting it to success", async (terminalStatus) => {
+    const queue = new FakeQueue(claimed);
+    const runner: CodingRunner = { async run() { return { status: terminalStatus }; } };
+    const result = await runExecutionWorkerOnce({ queue, runner, workerId: "worker-1" });
+    expect(result).toEqual({ worked: true, executionId: claimed.executionId, status: terminalStatus });
+    expect(queue.finished).toEqual([terminalStatus]);
   });
 
   it.each(["cancelled", "timed_out"] as const)("lets %s beat a late runner success", async (control) => {

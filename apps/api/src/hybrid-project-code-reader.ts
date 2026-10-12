@@ -45,6 +45,6 @@ export class HybridProjectCodeReader implements ProjectCodeReader {
       sections.push(section); chars += section.length;
       if (sections.length >= 18) break;
     }
-    return { source: "upload", revision: version.sha256, text: sections.join("\n") };
+    return { source: "upload", revision: version.id, text: sections.join("\n") };
   }
 }
