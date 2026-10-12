@@ -7,6 +7,7 @@ import { PersistentModelGateway } from "../../../evals/src/gateway/model-gateway
 import { RunTokenService } from "../../../evals/src/gateway/run-token.js";
 import { createSupabaseAuthClient } from "./auth.js";
 import { assertRestrictedDatabaseUrl, createProductDatabase, type TenantPool } from "./database.js";
+import { resolveDemoBudgetCaps } from "./demo-budget-caps.js";
 import { createGitHubAppClient } from "./github-app.js";
 import { createGitHubInstallationPermissionReader } from "./github-installation-permissions.js";
 import { GitHubRestPublicationClient } from "./github-publication-client.js";
@@ -55,6 +56,9 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("PORT 
 const apiOrigin = process.env.API_ORIGIN ?? `http://localhost:${port}`;
 const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 const sessionSecret = required("SESSION_SIGNING_SECRET");
+const demoBudgetCaps = process.env.DEMO_MODE === "1" ? resolveDemoBudgetCaps(process.env) : null;
+const executionBudgetUsd = demoBudgetCaps?.executionUsd ?? positiveNumber("TASK_EXECUTION_BUDGET_USD", 2);
+const planningBudgetUsd = demoBudgetCaps?.planningUsd ?? positiveNumber("TASK_MODEL_BUDGET_USD", 0.5);
 
 const databaseUrl = assertRestrictedDatabaseUrl(required("DATABASE_URL"));
 const pool = new Pool({ connectionString: databaseUrl });
@@ -103,7 +107,7 @@ const taskExecutionService = createTaskExecutionService({
   database: createTaskExecutionDatabase(tenantPool),
   readinessReader: createTaskExecutionReadinessReader(tenantPool),
   githubApp: githubPermissions,
-  budgetUsd: positiveNumber("TASK_EXECUTION_BUDGET_USD", 2),
+  budgetUsd: executionBudgetUsd,
   timeoutSeconds: positiveInteger("TASK_EXECUTION_TIMEOUT_SECONDS", 20 * 60),
 });
 const taskPublicationService = createTaskPublicationService({
@@ -139,7 +143,7 @@ if (taskGatewayAdminToken) {
     codeReader: new HybridProjectCodeReader({ uploadDatabase, storage: projectStorage, githubReader, limits: uploadLimits }),
     gateway: taskModelGateway,
     cipher: taskCipher,
-    modelBudgetUsd: positiveNumber("TASK_MODEL_BUDGET_USD", 0.5),
+    modelBudgetUsd: planningBudgetUsd,
   });
 }
 
@@ -155,7 +159,7 @@ const productServer = createApiServer({
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
 const taskServer = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
-const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService });
+const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService, demoBudgetCaps });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };

@@ -17,6 +17,7 @@
     "evals/tests/**/*.ts",
     "apps/api/**/*.ts",
     "apps/worker/**/*.ts",
+    "apps/demo/**/*.ts",
     "apps/**/tests/**/*.ts",
     "packages/**/*.ts",
     "eslint.config.mjs"

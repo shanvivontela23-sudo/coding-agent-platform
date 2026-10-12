@@ -15,7 +15,8 @@
     "dataset:validate": "tsx evals/src/dataset/cli.ts",
     "protocol:record": "tsx evals/src/gateway/http/recorder-cli.ts",
     "smoke:http-gateway": "tsx evals/smoke/http-gateway-smoke.ts",
-    "smoke:e2b-network": "tsx evals/smoke/e2b-network-smoke.ts"
+    "smoke:e2b-network": "tsx evals/smoke/e2b-network-smoke.ts",
+    "demo": "tsx apps/demo/src/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

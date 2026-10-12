@@ -1,4 +1,5 @@
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import type { DemoBudgetCaps } from "./demo-budget-caps.js";
 import { AppError, isSafeErrorCode } from "./errors.js";
 import { genericRequestFailureMessage, logRequestError, tenantSessionFromRequest } from "./http-request.js";
 import type { TaskExecutionService } from "./task-execution-service.js";
@@ -35,13 +36,16 @@ async function handleZipResult(request: IncomingMessage, response: ServerRespons
   return false;
 }
 
-async function handle(request: IncomingMessage, response: ServerResponse, options: {
+type ExecutionRouteOptions = {
   readonly apiOrigin: string;
   readonly sessionSecret: string;
   readonly service: TaskExecutionService;
   readonly publicationService?: TaskPublicationService;
   readonly zipResultService?: TaskZipResultService;
-}): Promise<boolean> {
+  readonly demoBudgetCaps?: DemoBudgetCaps | null;
+};
+
+async function handle(request: IncomingMessage, response: ServerResponse, options: ExecutionRouteOptions): Promise<boolean> {
   const url = new URL(request.url ?? "/", options.apiOrigin);
   const zipMatch = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)\/execution\/zip-result\/(accept-unproven|retry|promote|download-token|download|patch)$/i);
   if (zipMatch) {
@@ -70,8 +74,8 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
         options.publicationService?.get(session, taskId) ?? Promise.resolve(null),
         options.zipResultService?.readStatus(session, taskId) ?? Promise.resolve(null),
       ]);
-      if (!options.publicationService && !options.zipResultService && readiness.implementationBlocker === null) json(response, 200, { execution });
-      else json(response, 200, { execution, ...readiness, publication, zipResult: zipState?.artifact ?? null, zipResultBuild: zipState ? { status: zipState.status, errorCode: zipState.errorCode, errorMessage: zipState.errorMessage } : null });
+      if (!options.publicationService && !options.zipResultService && readiness.implementationBlocker === null && !options.demoBudgetCaps) json(response, 200, { execution });
+      else json(response, 200, { execution, ...readiness, publication, zipResult: zipState?.artifact ?? null, zipResultBuild: zipState ? { status: zipState.status, errorCode: zipState.errorCode, errorMessage: zipState.errorMessage } : null, demoBudgetCaps: options.demoBudgetCaps ?? null });
       return true;
     }
     if (action === "start") {
@@ -102,13 +106,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   }
 }
 
-export function attachTaskExecutionRoutes(server: Server, options: {
-  readonly apiOrigin: string;
-  readonly sessionSecret: string;
-  readonly service: TaskExecutionService;
-  readonly publicationService?: TaskPublicationService;
-  readonly zipResultService?: TaskZipResultService;
-}): Server {
+export function attachTaskExecutionRoutes(server: Server, options: ExecutionRouteOptions): Server {
   const existing = server.listeners("request") as Array<(request: IncomingMessage, response: ServerResponse) => void | Promise<void>>;
   if (existing.length !== 1) throw new Error("server must have exactly one request listener before execution routes are attached");
   const previous = existing[0]!;
