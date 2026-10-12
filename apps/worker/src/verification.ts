@@ -186,9 +186,9 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
       patchedSetup = await prepareSession(patched, options.source, remainingMs, signal, timedOut);
       if (!patchedSetup.complete) return;
       await applyPatch(patched, options.patch, remainingMs, signal, timedOut);
+      verifiedFiles = await collectVerifiedFiles(patched, options.patch, remainingMs, signal, timedOut);
       patchedChecks = await runGeneralChecks(patched, options.source, remainingMs, signal, timedOut);
       if (testPatch && options.reproductionCommand) patchedReproduction = await runReproduction(patched, options.reproductionCommand, remainingMs, signal, timedOut);
-      verifiedFiles = await collectVerifiedFiles(patched, options.patch, remainingMs, signal, timedOut);
     }, timedOut);
     if (!patchedSetup.complete) return incomplete(patchedSetup.reason, options.reproductionCommand);
 
