@@ -1,22 +1,52 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TaskExecutionDatabase, TaskExecutionRecord } from "../src/task-execution-database.js";
 import { createTaskExecutionService } from "../src/task-execution-service.js";
 
 const session = { userId: "10000000-0000-4000-8000-000000000401", organizationId: "00000000-0000-4000-8000-000000000401", expiresAtMs: Date.now() + 60_000 };
 const taskId = "40000000-0000-4000-8000-000000000401";
-const execution = { id: "50000000-0000-4000-8000-000000000401", taskId, projectId: "20000000-0000-4000-8000-000000000401", attempt: 1, status: "queued" };
+const execution: TaskExecutionRecord = {
+  id: "50000000-0000-4000-8000-000000000401",
+  taskId,
+  projectId: "20000000-0000-4000-8000-000000000401",
+  attempt: 1,
+  status: "queued",
+  startedByUserId: session.userId,
+  sourceCommitSha: "a".repeat(40),
+  sourceVersionId: null,
+  budgetUsd: 1,
+  timeoutSeconds: 600,
+  cancelRequestedAt: null,
+  queuedAt: new Date().toISOString(),
+  startedAt: null,
+  finishedAt: null,
+  failureCode: null,
+  failureMessage: null,
+  sourcePreparedAt: null,
+  codingStartedAt: null,
+  codingFinishedAt: null,
+  patchExportedAt: null,
+  verifiedAt: null,
+  resultPatch: null,
+  changeDocument: null,
+  resultMetadata: {},
+  costUsd: null,
+};
 
-function database(readiness: { reportHasInstallCommand: boolean; githubInstallationId: number | null }) {
+type StartReadiness = { readonly reportHasInstallCommand: boolean; readonly githubInstallationId: number | null };
+type B3Database = TaskExecutionDatabase & { getStartReadiness(sessionValue: typeof session, taskIdValue: string): Promise<StartReadiness> };
+
+function database(readiness: StartReadiness): B3Database & { readonly start: ReturnType<typeof vi.fn> } {
   const start = vi.fn(async () => ({ execution, created: true }));
   return {
     getLatest: async () => null,
     cancel: async () => execution,
     start,
     getStartReadiness: async () => readiness,
-  } as any;
+  };
 }
 
 function github(contents: "read" | "write") {
-  return { getInstallationPermissions: vi.fn(async () => ({ contents })) } as any;
+  return { getInstallationPermissions: vi.fn(async () => ({ contents })) };
 }
 
 describe("B3 execution start preflight", () => {
