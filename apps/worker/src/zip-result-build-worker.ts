@@ -15,7 +15,6 @@ export type ZipResultBuildJob = {
 
 export interface ZipResultBuildQueue {
   claimPending(): Promise<ZipResultBuildJob | null>;
-  markReady(executionId: string): Promise<boolean>;
   markFailed(executionId: string, code: "ZIP_RESULT_FAILED" | "ZIP_RESULT_INTERRUPTED", message: string): Promise<boolean>;
 }
 
@@ -29,13 +28,11 @@ export function sanitizeZipResultBuildFailure(error: unknown): string {
 
 export async function processClaimedZipResultBuild(options: {
   readonly job: ZipResultBuildJob;
-  readonly queue: Pick<ZipResultBuildQueue, "markReady" | "markFailed">;
+  readonly queue: Pick<ZipResultBuildQueue, "markFailed">;
   readonly build: ZipResultBuild;
 }): Promise<void> {
   try {
     await options.build(options.job);
-    const ready = await options.queue.markReady(options.job.executionId);
-    if (!ready) throw new Error("ZIP result build ownership was lost before completion.");
   } catch (error) {
     await options.queue.markFailed(options.job.executionId, "ZIP_RESULT_FAILED", sanitizeZipResultBuildFailure(error));
   }
