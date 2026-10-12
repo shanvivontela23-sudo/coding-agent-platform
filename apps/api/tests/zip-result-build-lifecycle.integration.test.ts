@@ -32,6 +32,19 @@ function urlFor(name: string, username?: string, password?: string): string {
   const url = new URL(baseDatabaseUrl!); url.pathname = `/${name}`; if (username) url.username = username; if (password) url.password = password; return url.toString();
 }
 
+async function waitForDatabaseBackendsToClose(pool: Pool, name: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()",
+      [name],
+    );
+    if (result.rows[0]?.count === "0") return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`database ${name} still has active test connections after pool shutdown`);
+}
+
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
   rootPool = new Pool({ connectionString: baseDatabaseUrl });
@@ -66,7 +79,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await workerPool?.end(); await apiPool?.end(); await adminPool?.end();
-  if (rootPool) { await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`); await rootPool.end(); }
+  if (rootPool) {
+    await waitForDatabaseBackendsToClose(rootPool, databaseName);
+    await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
+    await rootPool.end();
+  }
 }, 30_000);
 
 describe.skipIf(!baseDatabaseUrl)("ZIP result build lifecycle", () => {
