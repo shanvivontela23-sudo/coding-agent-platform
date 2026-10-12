@@ -20,7 +20,7 @@ describe("ZIP result polling", () => {
     const writeVersion = vi.fn();
     const insertArtifact = vi.fn(async () => { throw new Error("must not save during GET"); });
     const database: TaskZipResultDatabase = {
-      getStatus: vi.fn(async () => ({ status: "pending", errorCode: null, errorMessage: null, artifact: null })),
+      getStatus: vi.fn(async () => ({ status: "pending" as const, errorCode: null, errorMessage: null, artifact: null })),
       getContext: vi.fn(async () => null),
       getArtifact: vi.fn(async () => null),
       insertArtifact,
