@@ -45,6 +45,7 @@ type ZipResultBuild = {
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
 };
+type DemoBudgetCaps = { readonly planningUsd: number; readonly executionUsd: number };
 type Props = {
   readonly taskId: string;
   readonly taskStatus: "draft" | "waiting_for_answers" | "plan_ready" | "approved";
@@ -90,6 +91,8 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
   const [publication, setPublication] = useState<Publication | null>(null);
   const [zipResult, setZipResult] = useState<ZipResult | null>(null);
   const [zipResultBuild, setZipResultBuild] = useState<ZipResultBuild | null>(null);
+  const [demoBudgetCaps, setDemoBudgetCaps] = useState<DemoBudgetCaps | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [zipSourceChanged, setZipSourceChanged] = useState(false);
   const [implementationBlocker, setImplementationBlocker] = useState<string | null>(initialBlocker);
   const [error, setError] = useState<string | null>(null);
@@ -102,8 +105,8 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
   const load = useCallback(async () => {
     const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, { cache: "no-store" });
     if (!response.ok) return;
-    const payload = await response.json() as { readonly execution: Execution | null; readonly implementationBlocker?: string | null; readonly publication?: Publication | null; readonly zipResult?: ZipResult | null; readonly zipResultBuild?: ZipResultBuild | null };
-    setExecution(payload.execution); setPublication(payload.publication ?? null); setZipResult(payload.zipResult ?? null); setZipResultBuild(payload.zipResultBuild ?? null); setImplementationBlocker(payload.implementationBlocker ?? initialBlocker);
+    const payload = await response.json() as { readonly execution: Execution | null; readonly implementationBlocker?: string | null; readonly publication?: Publication | null; readonly zipResult?: ZipResult | null; readonly zipResultBuild?: ZipResultBuild | null; readonly demoBudgetCaps?: DemoBudgetCaps | null };
+    setExecution(payload.execution); setPublication(payload.publication ?? null); setZipResult(payload.zipResult ?? null); setZipResultBuild(payload.zipResultBuild ?? null); setDemoBudgetCaps(payload.demoBudgetCaps ?? null); setImplementationBlocker(payload.implementationBlocker ?? initialBlocker); setLoaded(true);
   }, [taskId, initialBlocker]);
 
   useEffect(() => { void load(); }, [load]);
@@ -134,6 +137,7 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
       <CardHeader><CardTitle>Implementation</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        {demoBudgetCaps ? <section className="rounded-md border p-4" aria-label="Demo spend caps"><p className="text-sm font-medium">Demo spend caps</p><div className="mt-2 grid gap-2 text-sm sm:grid-cols-2"><p><span className="text-muted-foreground">Planning cap</span> · ${demoBudgetCaps.planningUsd.toFixed(2)} per planning run</p><p><span className="text-muted-foreground">Implementation cap</span> · ${demoBudgetCaps.executionUsd.toFixed(2)} per execution</p></div><p className="mt-2 text-xs text-muted-foreground">These are maximums, not estimates. Actual usage may be lower.</p></section> : null}
         {zipResultBuild?.status === "failed" ? <Alert variant="destructive"><AlertDescription>{zipResultBuild.errorMessage || "ZIP result build failed. Retry building the ZIP."}{canPublish ? <Button type="button" variant="outline" className="ml-3" disabled={busy} onClick={() => void act("retryZip")}>Retry building the ZIP</Button> : null}</AlertDescription></Alert> : null}
         {zipResultBuild?.status === "pending" || zipResultBuild?.status === "building" ? <Alert><AlertDescription>{zipResultBuild.status === "pending" ? "Updated ZIP is waiting for a worker." : "Building updated ZIP…"}</AlertDescription></Alert> : null}
         {implementationBlocker ? <Alert variant="destructive"><AlertDescription>{implementationBlocker === "Re-analyse this project before implementation" ? "Re-analyse this project before implementation" : implementationBlocker}</AlertDescription></Alert> : null}
@@ -149,7 +153,7 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
         {publication?.status === "source_changed" ? <Alert variant="destructive"><AlertDescription>Source changed in a file named by the approved plan or patch. Re-plan before publishing.</AlertDescription></Alert> : null}
         {publication?.status === "failed" ? <Alert variant="destructive"><AlertDescription>{publication.failureMessage || "GitHub publication failed. Retry publication without starting a new implementation attempt."}</AlertDescription></Alert> : null}
         {canControl && taskStatus !== "approved" && !execution ? <p className="text-sm text-muted-foreground">Approve the plan before starting implementation.</p> : null}
-        {canControl && taskStatus === "approved" && !active(execution) && !implementationBlocker ? <Button type="button" disabled={busy} onClick={() => void act("start")}>{busy ? "Starting…" : "Start implementation"}</Button> : null}
+        {canControl && loaded && taskStatus === "approved" && !active(execution) && !implementationBlocker ? <Button type="button" disabled={busy} onClick={() => void act("start")}>{busy ? "Starting…" : "Start implementation"}</Button> : null}
         {canControl && active(execution) ? <Button type="button" variant="outline" disabled={busy || Boolean(execution?.cancelRequestedAt)} onClick={() => void act("cancel")}>{busy ? "Cancelling…" : "Cancel implementation"}</Button> : null}
         {canPublish && publishable && publication?.status !== "published" && publication?.status !== "source_changed" ? <Button type="button" disabled={busy || publication?.status === "publishing"} onClick={() => void act("publish")}>{publication?.status === "publishing" ? "Publishing…" : publishLabel}</Button> : null}
       </CardContent>
