@@ -61,7 +61,8 @@ async function latestExecutionId(database: DatabaseClient, organizationId: strin
       WHERE e.organization_id=$1 AND e.task_id=$2 AND e.status IN ('succeeded','fix_not_reproduced')
       ORDER BY e.attempt DESC LIMIT 1`, [organizationId, taskId, userId],
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  return row ? { executionId: row.execution_id, role: row.role, status: row.status } : null;
 }
 function requireBuilderRole(role: "owner" | "developer" | "rep"): void {
   if (role !== "owner" && role !== "developer") throw new AppError("ZIP_UNPROVEN_ACCEPT_FORBIDDEN", "Only a developer or owner can build an updated ZIP.", 403);
