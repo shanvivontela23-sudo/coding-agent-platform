@@ -5,7 +5,7 @@ import type { TaskZipResultArtifact, TaskZipResultContext, TaskZipResultDatabase
 
 type ContextRow = {
   execution_id: string; task_id: string; project_id: string; status: "succeeded" | "fix_not_reproduced"; source_version_id: string;
-  source_storage_key: string; result_patch: string; change_document: string; result_metadata: Record<string, unknown>; role: "owner" | "developer" | "rep";
+  source_storage_key: string; source_sha256: string; result_patch: string; change_document: string; result_metadata: Record<string, unknown>; role: "owner" | "developer" | "rep";
 };
 type ArtifactRow = { execution_id: string; task_id: string; project_id: string; storage_key: string; sha256: string; size_bytes: string | number; metadata: Record<string, unknown> };
 
@@ -39,7 +39,7 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
       assertUuid(taskId, "taskId");
       return await withTenant(pool, session, async (database) => {
         const result = await database.query<ContextRow>(
-          `SELECT e.id AS execution_id,e.task_id,e.project_id,e.status,e.source_version_id,pv.storage_key AS source_storage_key,
+          `SELECT e.id AS execution_id,e.task_id,e.project_id,e.status,e.source_version_id,pv.storage_key AS source_storage_key,pv.sha256 AS source_sha256,
                   e.result_patch,e.change_document,e.result_metadata,m.role
              FROM task_executions e
              JOIN repositories r ON r.organization_id=e.organization_id AND r.project_id=e.project_id AND r.provider='upload'
@@ -51,7 +51,7 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
           [session.organizationId, taskId, session.userId],
         );
         const row = result.rows[0]; if (!row) return null;
-        return { executionId: row.execution_id, taskId: row.task_id, projectId: row.project_id, status: row.status, sourceVersionId: row.source_version_id, sourceStorageKey: row.source_storage_key, resultPatch: row.result_patch, changeDocument: row.change_document, verifiedFiles: verifiedFiles(row.result_metadata ?? {}), role: row.role } satisfies TaskZipResultContext;
+        return { executionId: row.execution_id, taskId: row.task_id, projectId: row.project_id, status: row.status, sourceVersionId: row.source_version_id, sourceStorageKey: row.source_storage_key, sourceSha256: row.source_sha256, resultPatch: row.result_patch, changeDocument: row.change_document, verifiedFiles: verifiedFiles(row.result_metadata ?? {}), role: row.role } satisfies TaskZipResultContext;
       });
     },
 
@@ -91,7 +91,6 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
         if (version.id !== input.sourceVersionId) throw new AppError("SOURCE_CHANGED", "Project source changed since this implementation was approved. Re-plan before promoting.", 409);
         const next = version.version_number + 1;
         await database.query(`INSERT INTO project_versions (id,organization_id,project_id,version_number,storage_key,size_bytes,file_count,sha256,uploaded_by_user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [input.artifactVersionId, session.organizationId, input.projectId, next, input.storageKey, input.sizeBytes, input.fileCount, input.sha256, session.userId]);
-        await database.query(`UPDATE project_reports SET analysed_commit=NULL,analysed_version_id=$3,analysed_at=now() WHERE organization_id=$1 AND project_id=$2`, [session.organizationId, input.projectId, input.artifactVersionId]);
         const updated = await database.query<ArtifactRow>(`UPDATE task_execution_artifacts a SET metadata=a.metadata || $3::jsonb WHERE a.organization_id=$1 AND a.execution_id=$2 AND a.kind='zip_result' RETURNING a.execution_id,a.task_id,(SELECT project_id FROM task_executions e WHERE e.organization_id=a.organization_id AND e.id=a.execution_id) AS project_id,a.storage_key,a.sha256,a.size_bytes,a.metadata`, [session.organizationId, input.executionId, JSON.stringify({ promotedVersionId: input.artifactVersionId, promotedVersionNumber: next })]);
         await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'project_version_promoted',jsonb_build_object('execution_id',$4::text,'project_id',$5::text,'source_version_id',$6::text,'version_id',$7::text,'version_number',$8::int))`, [session.organizationId, session.userId, input.taskId, input.executionId, input.projectId, input.sourceVersionId, input.artifactVersionId, next]);
         if (!updated.rows[0]) throw new Error("ZIP result promotion did not update artifact");
