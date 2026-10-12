@@ -5,8 +5,12 @@ export type GitHubInstallationPermissions = {
   readonly contents: "none" | "read" | "write";
 };
 
+export type GitHubInstallationPermissionReadOptions = {
+  readonly bypassCache?: boolean;
+};
+
 export interface GitHubInstallationPermissionReader {
-  getInstallationPermissions(installationId: number): Promise<GitHubInstallationPermissions>;
+  getInstallationPermissions(installationId: number, options?: GitHubInstallationPermissionReadOptions): Promise<GitHubInstallationPermissions>;
 }
 
 function encodeJson(value: unknown): string {
@@ -32,14 +36,23 @@ export function createGitHubInstallationPermissionReader(options: {
   readonly fetchImpl?: typeof fetch;
   readonly nowMs?: () => number;
   readonly createAppJwt?: () => string;
+  readonly cacheTtlMs?: number;
 }): GitHubInstallationPermissionReader {
   const fetchImpl = options.fetchImpl ?? fetch;
   const apiVersion = options.apiVersion ?? "2026-03-10";
   const now = options.nowMs ?? Date.now;
   const jwt = options.createAppJwt ?? (() => createJwt(options.appId, options.privateKey, now()));
+  const cacheTtlMs = options.cacheTtlMs ?? 5 * 60_000;
+  if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs <= 0) throw new Error("GitHub permission cache TTL must be a positive integer");
+  const cache = new Map<number, { readonly expiresAt: number; readonly value: GitHubInstallationPermissions }>();
+
   return {
-    async getInstallationPermissions(installationId) {
+    async getInstallationPermissions(installationId, readOptions = {}) {
       if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new AppError("GITHUB_INSTALLATION_DISCONNECTED", "GitHub installation is disconnected.", 409);
+      const nowMs = now();
+      const cached = cache.get(installationId);
+      if (!readOptions.bypassCache && cached && cached.expiresAt > nowMs) return cached.value;
+
       const response = await fetchImpl(`https://api.github.com/app/installations/${installationId}`, {
         headers: {
           accept: "application/vnd.github+json",
@@ -47,14 +60,19 @@ export function createGitHubInstallationPermissionReader(options: {
           "x-github-api-version": apiVersion,
         },
       });
-      if ([401, 403, 404, 410].includes(response.status)) throw new AppError("GITHUB_INSTALLATION_DISCONNECTED", "GitHub installation is disconnected.", 409);
+      if ([401, 403, 404, 410].includes(response.status)) {
+        cache.delete(installationId);
+        throw new AppError("GITHUB_INSTALLATION_DISCONNECTED", "GitHub installation is disconnected.", 409);
+      }
       if (!response.ok) throw new AppError("GITHUB_FORBIDDEN", "GitHub installation permissions could not be read.", 502);
       const payload = await response.json() as { readonly permissions?: unknown };
       const permissions = typeof payload.permissions === "object" && payload.permissions !== null && !Array.isArray(payload.permissions)
         ? payload.permissions as Record<string, unknown>
         : null;
       const contents = permissions?.contents;
-      return { contents: contents === "write" ? "write" : contents === "read" ? "read" : "none" };
+      const value: GitHubInstallationPermissions = { contents: contents === "write" ? "write" : contents === "read" ? "read" : "none" };
+      cache.set(installationId, { expiresAt: nowMs + cacheTtlMs, value });
+      return value;
     },
   };
 }
