@@ -1,7 +1,7 @@
 import { assertUuid, type TenantPool, withTenant } from "./database.js";
 import { AppError } from "./errors.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
-import type { TaskZipResultArtifact, TaskZipResultBuildState, TaskZipResultContext, TaskZipResultDatabase, ZipResultBuildStatus } from "./task-zip-result.js";
+import type { TaskZipResultArtifact, TaskZipResultBuildState, TaskZipResultContext, TaskZipResultDatabase, ZipResultBuildCompletion, ZipResultBuildStatus } from "./task-zip-result.js";
 
 type ContextRow = {
   execution_id: string; task_id: string; project_id: string; status: "succeeded" | "fix_not_reproduced"; source_version_id: string;
@@ -9,7 +9,6 @@ type ContextRow = {
 };
 type ArtifactRow = { execution_id: string; task_id: string; project_id: string; storage_key: string; sha256: string; size_bytes: string | number; metadata: Record<string, unknown> };
 type StatusRow = { execution_id: string; zip_build_status: ZipResultBuildStatus | null; zip_build_started_at: string | null; zip_build_error_code: string | null; zip_build_error_message: string | null };
-
 type DatabaseClient = Parameters<Parameters<typeof withTenant>[2]>[0];
 
 function verifiedFiles(metadata: Record<string, unknown>): readonly VerifiedFile[] {
@@ -104,16 +103,35 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
       });
     },
 
-    async insertArtifact(session, input) {
+    async completeBuild(session, input) {
       assertUuid(input.executionId, "executionId"); assertUuid(input.artifactVersionId, "artifactVersionId");
       return await withTenant(pool, session, async (database) => {
-        const result = await database.query<{ id: string }>(
-          `INSERT INTO task_execution_artifacts (id,organization_id,task_id,execution_id,kind,storage_key,sha256,size_bytes,metadata)
-           VALUES ($1,$2,$3,$4,'zip_result',$5,$6,$7,$8::jsonb)
-           ON CONFLICT DO NOTHING RETURNING id`,
-          [input.artifactVersionId, session.organizationId, input.taskId, input.executionId, input.storageKey, input.sha256, input.sizeBytes, JSON.stringify({ sourceVersionId: input.sourceVersionId, artifactVersionId: input.artifactVersionId, fileCount: input.fileCount })],
+        const result = await database.query<{ completion: ZipResultBuildCompletion }>(
+          `WITH locked AS MATERIALIZED (
+             SELECT e.organization_id,e.task_id,e.project_id,e.source_version_id
+               FROM task_executions e
+              WHERE e.organization_id=$1 AND e.id=$2 AND e.zip_build_status='building'
+              FOR UPDATE
+           ), inserted AS (
+             INSERT INTO task_execution_artifacts (id,organization_id,task_id,execution_id,kind,storage_key,sha256,size_bytes,metadata)
+             SELECT $3,l.organization_id,l.task_id,$2,'zip_result',$4,$5,$6,
+                    jsonb_build_object('sourceVersionId',l.source_version_id::text,'artifactVersionId',$3::text,'fileCount',$7::int)
+               FROM locked l
+             ON CONFLICT DO NOTHING
+             RETURNING id
+           ), updated AS (
+             UPDATE task_executions e
+                SET zip_build_status='ready',zip_build_started_at=NULL,zip_build_error_code=NULL,zip_build_error_message=NULL,updated_at=clock_timestamp()
+               FROM locked l
+              WHERE e.organization_id=$1 AND e.id=$2 AND e.zip_build_status='building'
+             RETURNING e.id
+           )
+           SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'lost'
+                       WHEN EXISTS (SELECT 1 FROM inserted) THEN 'inserted'
+                       ELSE 'existing' END AS completion`,
+          [session.organizationId, input.executionId, input.artifactVersionId, input.storageKey, input.sha256, input.sizeBytes, input.fileCount],
         );
-        return result.rows.length === 1;
+        return result.rows[0]?.completion ?? "lost";
       });
     },
 
@@ -138,10 +156,6 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
         const claimed = await database.query<{ id: string }>(`UPDATE task_executions SET zip_build_status='building',zip_build_started_at=clock_timestamp(),zip_build_error_code=NULL,zip_build_error_message=NULL,updated_at=clock_timestamp() WHERE organization_id=$1 AND id=$2 AND zip_build_status='failed' RETURNING id`, [session.organizationId, latest.executionId]);
         return claimed.rows[0] ? await contextByExecution(database, session.organizationId, session.userId, latest.executionId) : null;
       });
-    },
-
-    async markReady(session, executionId) {
-      return await withTenant(pool, session, async (database) => (await database.query<{ id: string }>(`UPDATE task_executions SET zip_build_status='ready',zip_build_started_at=NULL,zip_build_error_code=NULL,zip_build_error_message=NULL,updated_at=clock_timestamp() WHERE organization_id=$1 AND id=$2 AND zip_build_status='building' RETURNING id`, [session.organizationId, executionId])).rows.length === 1);
     },
 
     async markFailed(session, executionId, code, message) {
