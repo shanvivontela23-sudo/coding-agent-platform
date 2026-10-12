@@ -96,15 +96,18 @@ export class ProductExecutionOrchestrator implements CodingRunner {
     const verification = await verify({ sandboxProvider: this.options.verificationSandboxProvider, taskId: execution.taskId, source, patch, reproductionCommand, timeoutMs: verificationTimeoutMs, signal: runOptions.signal });
 
     const bugTask = source.jobType === "bug_fix";
-    const status: CodingRunResult["status"] = verification.hasNewFailures ? "verification_failed" : bugTask && !verification.reproduce.reproduced ? "fix_not_reproduced" : "succeeded";
+    const verificationComplete = verification.complete !== false;
+    const status: CodingRunResult["status"] = !verificationComplete ? "verification_incomplete" : verification.hasNewFailures ? "verification_failed" : bugTask && !verification.reproduce.reproduced ? "fix_not_reproduced" : "succeeded";
     const unverifiedPreExisting = verification.checks.some((check) => check.status === "pre_existing_unverified");
     const reproduceProof = verification.reproduce.reproduced
       ? `Fail-before/pass-after proof: ${verification.reproduce.command ?? "reproduction check"}. Baseline classification: ${verification.reproduce.baselineClassification}; patched classification: ${verification.reproduce.patchedClassification}.`
       : bugTask ? `Fix not reproduced: ${verification.reproduce.reason ?? "no valid fail-before/pass-after proof was produced."}` : "Not required for this task type.";
     const reviewFocus = unverifiedPreExisting ? `${source.reviewFocus} Pre-existing failures could not be compared by test name; those checks remain unverified.` : source.reviewFocus;
-    const changeDocument = buildChangeDocument({ asked: source.requirement, changed: codingSummary, files: safety.files, checks: verification.checks.map((check) => ({ name: check.name, status: check.status })), reproduceProof, costUsd, reviewFocus });
+    const verificationStatus = verificationComplete ? "Verification completed with at least one passing baseline test or build." : `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}`;
+    const changeDocument = buildChangeDocument({ asked: source.requirement, changed: codingSummary, files: safety.files, checks: verification.checks.map((check) => ({ name: check.name, status: check.status })), verificationStatus, reproduceProof, costUsd, reviewFocus });
     await this.options.store.saveVerification(execution, { verification, changeDocument, costUsd });
 
+    if (status === "verification_incomplete") return { status, failureCode: "VERIFICATION_INCOMPLETE", failureMessage: `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}` };
     if (status === "verification_failed") return { status, failureCode: "VERIFICATION_FAILED", failureMessage: "New failures were found on the clean patched copy." };
     if (status === "fix_not_reproduced") return { status, failureCode: "FIX_NOT_REPRODUCED", failureMessage: "The patch is available for review, but the reported bug was not proven with a valid fail-before/pass-after test." };
     return { status };

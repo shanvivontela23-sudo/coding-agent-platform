@@ -14,6 +14,7 @@ const report: ProjectReport = {
   languages: [{ name: "TypeScript", fileCount: 3, percentage: 100 }],
   frameworks: ["Next.js", "React"],
   packageManager: "pnpm",
+  installCommand: "pnpm install --frozen-lockfile",
   buildCommand: "pnpm build",
   testCommand: "pnpm test",
   stackSkill: "typescript-node",

@@ -10,7 +10,7 @@ export type ClaimedExecution = {
   readonly timeoutSeconds: number;
 };
 
-export type ExecutionFinishStatus = "succeeded" | "failed" | "verification_failed" | "fix_not_reproduced";
+export type ExecutionFinishStatus = "succeeded" | "failed" | "verification_failed" | "verification_incomplete" | "fix_not_reproduced";
 export type ExecutionControlState = "running" | "cancelled" | "timed_out" | "lost" | ExecutionFinishStatus;
 
 export interface ExecutionQueue {

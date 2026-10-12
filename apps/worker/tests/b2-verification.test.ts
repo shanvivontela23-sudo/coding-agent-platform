@@ -8,7 +8,7 @@ const source: PreparedExecutionSource = {
   jobType: "bug_fix",
   requirement: "Retry should recover after save failure",
   plan: "Preserve state and add a regression test",
-  commands: { install: null, test: "pnpm test", build: null },
+  commands: { install: "pnpm install --frozen-lockfile", test: "pnpm test", build: null },
   reviewFocus: "Retry state transition",
 };
 
@@ -62,7 +62,7 @@ const ok = (stdout = ""): SandboxCommandResult => ({ exitCode: 0, stdout, stderr
 const fail = (stderr: string, stdout = ""): SandboxCommandResult => ({ exitCode: 1, stdout, stderr });
 
 async function verifyWith(baselineRepro: SandboxCommandResult, patchedRepro: SandboxCommandResult, baselineTest = ok(), patchedTest = ok()) {
-  const provider = new FakeProvider({ "pnpm test": baselineTest, "pnpm test src/retry.test.ts": baselineRepro }, { "pnpm test": patchedTest, "pnpm test src/retry.test.ts": patchedRepro });
+  const provider = new FakeProvider({ "pnpm install --frozen-lockfile": ok(), "pnpm test": baselineTest, "pnpm test src/retry.test.ts": baselineRepro }, { "pnpm install --frozen-lockfile": ok(), "pnpm test": patchedTest, "pnpm test src/retry.test.ts": patchedRepro });
   const result = await verifyExecution({ sandboxProvider: provider, taskId: "40000000-0000-4000-8000-000000000231", source, patch, reproductionCommand: "pnpm test src/retry.test.ts", timeoutMs: 20_000, signal: new AbortController().signal });
   return { provider, result };
 }
@@ -77,6 +77,7 @@ describe("B2 verification", () => {
     expect(provider.sessions[1]!.writes.join("\n")).toContain("src/retry.ts");
     expect(result.reproduce).toMatchObject({ command: "pnpm test src/retry.test.ts", baselineExitCode: 1, patchedExitCode: 0, baselineClassification: "assertion_failure", patchedClassification: "passed", reproduced: true });
     expect(result.reproduce.baselineOutput).toContain("AssertionError");
+    expect(result.complete).toBe(true);
   });
 
   it("does not treat a missing-file or collection error as reproduce proof", async () => {
@@ -92,7 +93,7 @@ describe("B2 verification", () => {
   });
 
   it("marks a bug fix with no test-file hunks as not reproduced", async () => {
-    const provider = new FakeProvider({ "pnpm test": ok() }, { "pnpm test": ok() });
+    const provider = new FakeProvider({ "pnpm install --frozen-lockfile": ok(), "pnpm test": ok() }, { "pnpm install --frozen-lockfile": ok(), "pnpm test": ok() });
     const noTestPatch = "diff --git a/src/retry.ts b/src/retry.ts\n--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1 +1 @@\n-old\n+new\n";
     const result = await verifyExecution({ sandboxProvider: provider, taskId: "40000000-0000-4000-8000-000000000232", source, patch: noTestPatch, reproductionCommand: null, timeoutMs: 20_000, signal: new AbortController().signal });
     expect(result.reproduce.reproduced).toBe(false);
@@ -103,14 +104,26 @@ describe("B2 verification", () => {
     const named = await verifyWith(fail("AssertionError: expected false to be true\nFAIL src/retry.test.ts > retry recovers"), ok("PASS src/retry.test.ts"), fail("FAIL src/known.test.ts > known failure"), fail("FAIL src/known.test.ts > known failure\nFAIL src/new.test.ts > new failure"));
     expect(named.result.checks[0]?.status).toBe("failed");
     expect(named.result.hasNewFailures).toBe(true);
+    expect(named.result.complete).toBe(false);
     const unknown = await verifyWith(fail("AssertionError: expected false to be true\nFAIL src/retry.test.ts > retry recovers"), ok("PASS src/retry.test.ts"), fail("test command exited 1"), fail("test command exited 1"));
     expect(unknown.result.checks[0]?.status).toBe("pre_existing_unverified");
     expect(unknown.result.hasNewFailures).toBe(false);
+    expect(unknown.result.complete).toBe(false);
+  });
+
+  it("marks a Python project with no install command verification incomplete", async () => {
+    const pythonSource: PreparedExecutionSource = { ...source, jobType: "feature", commands: { install: null, test: "pytest", build: null } };
+    const provider = new FakeProvider({ "pytest": ok() }, { "pytest": ok() });
+    const result = await verifyExecution({ sandboxProvider: provider, taskId: "40000000-0000-4000-8000-000000000234", source: pythonSource, patch, reproductionCommand: null, timeoutMs: 20_000, signal: new AbortController().signal });
+    expect(result.complete).toBe(false);
+    expect(result.incompleteReason).toMatch(/install command/i);
+    expect(provider.sessions).toHaveLength(1);
+    expect(provider.sessions[0]!.commands).not.toContain("pytest");
   });
 
   it("destroys verification sandboxes promptly when aborted", async () => {
     const controller = new AbortController();
-    const provider = new FakeProvider({ "pnpm test": ok() }, { "pnpm test": ok() });
+    const provider = new FakeProvider({ "pnpm install --frozen-lockfile": ok(), "pnpm test": ok() }, { "pnpm install --frozen-lockfile": ok(), "pnpm test": ok() });
     controller.abort();
     await expect(verifyExecution({ sandboxProvider: provider, taskId: "40000000-0000-4000-8000-000000000233", source, patch, reproductionCommand: "pnpm test src/retry.test.ts", timeoutMs: 20_000, signal: controller.signal })).rejects.toThrow(/abort/i);
     expect(provider.sessions.every((session) => session.destroyed)).toBe(true);

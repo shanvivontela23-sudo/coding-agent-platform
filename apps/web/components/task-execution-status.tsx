@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
-export type ExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "verification_failed" | "fix_not_reproduced";
+export type ExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "verification_failed" | "verification_incomplete" | "fix_not_reproduced";
 type Execution = {
   readonly id: string;
   readonly attempt: number;
@@ -37,6 +37,7 @@ function statusText(execution: Execution): string {
   if (execution.status === "running") return "Implementation in progress.";
   if (execution.status === "succeeded") return "Implementation completed.";
   if (execution.status === "verification_failed") return "Verification failed. New failures were found on the clean patched copy.";
+  if (execution.status === "verification_incomplete") return "Verification incomplete. Dhara could not establish a passing baseline test or build, so this attempt is not marked successful.";
   if (execution.status === "fix_not_reproduced") return "Fix not reproduced. Review the patch, but Dhara did not prove the bug with a valid fail-before/pass-after test.";
   if (execution.status === "cancelled") return "Implementation cancelled. No changes were published.";
   if (execution.status === "timed_out") return "Implementation timed out. No changes were published.";

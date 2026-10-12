@@ -104,16 +104,6 @@ function zipToTarGz(zip: Uint8Array, limits: UploadArchiveLimits): Uint8Array {
   return gzipSync(Buffer.concat(chunks));
 }
 
-function installCommand(report: ProjectReport): string | null {
-  switch (report.packageManager?.toLowerCase()) {
-    case "pnpm": return "pnpm install --frozen-lockfile";
-    case "npm": return "npm ci";
-    case "yarn": return "yarn install --frozen-lockfile";
-    case "bun": return "bun install --frozen-lockfile";
-    default: return null;
-  }
-}
-
 export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
   constructor(private readonly options: {
     readonly pool: TenantPool;
@@ -166,7 +156,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
       jobType: row.job_type,
       requirement: row.confirmed_requirement,
       plan: row.confirmed_plan,
-      commands: { install: installCommand(row.report), test: row.report.testCommand, build: row.report.buildCommand },
+      commands: { install: row.report.installCommand ?? null, test: row.report.testCommand, build: row.report.buildCommand },
       reviewFocus: "Review the generated patch against the approved plan, verification evidence, dependency changes, and any unverified pre-existing failures.",
     };
   }

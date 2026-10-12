@@ -33,7 +33,7 @@ function poolFor(versionSha: string): TenantPool {
       confirmed_requirement: "Fix retry",
       confirmed_plan: "Add regression coverage",
       job_type: "bug_fix",
-      report: { languages: [], frameworks: [], packageManager: "pnpm", buildCommand: "pnpm build", testCommand: "pnpm test", stackSkill: "typescript-node", manifests: [] },
+      report: { languages: [], frameworks: [], packageManager: "pnpm", installCommand: "pnpm install --frozen-lockfile", buildCommand: "pnpm build", testCommand: "pnpm test", stackSkill: "typescript-node", manifests: [] },
       repository_full_name: null,
       installation_id: null,
       version_id: versionId,

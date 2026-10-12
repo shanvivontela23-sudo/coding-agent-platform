@@ -2,7 +2,7 @@ import type { SessionIdentity } from "./auth.js";
 import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./database.js";
 import { AppError } from "./errors.js";
 
-export type TaskExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "verification_failed" | "fix_not_reproduced";
+export type TaskExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "verification_failed" | "verification_incomplete" | "fix_not_reproduced";
 
 export type TaskExecutionRecord = {
   readonly id: string;

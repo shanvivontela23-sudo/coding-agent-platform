@@ -53,12 +53,12 @@ beforeAll(async () => {
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
   adminPool = new Pool({ connectionString: databaseUrlFor(integrationDb) });
-  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql"]) {
+  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql"]) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
   await adminPool.query(`ALTER ROLE coding_agent_worker PASSWORD '${workerPassword}'`);
-  const report = JSON.stringify({ languages: [], frameworks: [], packageManager: null, buildCommand: null, testCommand: "pnpm test", stackSkill: "typescript-node", manifests: [] });
+  const report = JSON.stringify({ languages: [], frameworks: [], packageManager: "pnpm", installCommand: "pnpm install --frozen-lockfile", buildCommand: null, testCommand: "pnpm test", stackSkill: "typescript-node", manifests: ["package.json", "pnpm-lock.yaml"] });
   await adminPool.query(`
     INSERT INTO organizations (id,name) VALUES ('${organizationId}','Execution HTTP');
     INSERT INTO users (id,supabase_user_id,email) VALUES
@@ -165,7 +165,7 @@ function fakeRealConfig(): RealWorkerConfig {
     runTokenSecret: "a".repeat(32),
     gatewayStoreDir: "/tmp/not-used-gateway",
     harnessCallStoreDir: "/tmp/not-used-calls",
-    litellmGatewayUrl: "http://fake-litellm",
+    litellmGatewayUrl: "http://fake-litllm",
     litellmAdminToken: "fake-admin",
     githubAppId: "12345",
     githubAppPrivateKey: "fake-key",

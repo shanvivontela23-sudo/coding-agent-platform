@@ -31,6 +31,8 @@ const coding: ProductCodingResult = { patch, reproductionCommand: "pnpm test src
 const verification: VerificationResult = {
   checks: [{ name: "test", command: "pnpm test", baselineExitCode: 0, patchedExitCode: 0, status: "passed", baselineFailingTests: [], patchedFailingTests: [] }],
   hasNewFailures: false,
+  complete: true,
+  incompleteReason: null,
   reproduce: { command: "pnpm test src/retry.test.ts", baselineExitCode: 1, patchedExitCode: 0, baselineOutput: "AssertionError", patchedOutput: "PASS", baselineClassification: "assertion_failure", patchedClassification: "passed", reproduced: true, reason: null },
 };
 

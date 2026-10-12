@@ -23,12 +23,26 @@ export type ReproduceProof = {
   readonly reproduced: boolean;
   readonly reason: string | null;
 };
-export type VerificationResult = { readonly checks: readonly VerificationCheck[]; readonly hasNewFailures: boolean; readonly reproduce: ReproduceProof };
+export type VerificationResult = {
+  readonly checks: readonly VerificationCheck[];
+  readonly hasNewFailures: boolean;
+  readonly complete: boolean;
+  readonly incompleteReason: string | null;
+  readonly reproduce: ReproduceProof;
+};
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
+
+type SetupResult = { readonly complete: true } | { readonly complete: false; readonly reason: string };
 
 function abortError(timedOut = false): Error { return new Error(timedOut ? "verification stage timed out" : "execution aborted"); }
 function assertNotAborted(signal: AbortSignal, timedOut = false): void { if (signal.aborted) throw abortError(timedOut); }
 function output(result: SandboxCommandResult | null): string { return result ? [result.stdout, result.stderr, result.error].filter(Boolean).join("\n").trim() : ""; }
+function emptyReproduce(command: string | null, reason: string | null): ReproduceProof {
+  return { command, baselineExitCode: null, patchedExitCode: null, baselineOutput: "", patchedOutput: "", baselineClassification: "not_run", patchedClassification: "not_run", reproduced: false, reason };
+}
+function incomplete(reason: string, command: string | null): VerificationResult {
+  return { checks: [], hasNewFailures: false, complete: false, incompleteReason: reason, reproduce: emptyReproduce(command, "Reproduce-first proof was not run because verification could not establish a trusted baseline.") };
+}
 function classifyReproduction(result: SandboxCommandResult | null): ReproduceClassification {
   if (!result) return "not_run";
   if (result.exitCode === 0) return "passed";
@@ -53,17 +67,23 @@ async function applyPatch(session: SandboxSession, patch: string, timeoutMs: () 
   assertNotAborted(signal, timedOut());
   if (applied.exitCode !== 0) throw new Error("Exported patch does not apply cleanly to approved source");
 }
-async function prepareSession(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<void> {
+async function prepareSession(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<SetupResult> {
   assertNotAborted(signal, timedOut());
   await session.setNetworkPhase("dependency-setup");
   assertNotAborted(signal, timedOut());
-  if (source.commands.install) {
-    const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: timeoutMs() });
-    assertNotAborted(signal, timedOut());
-    if (install.exitCode !== 0) throw new Error("Verification dependency setup failed");
+  if (!source.commands.install) {
+    await session.setNetworkPhase("offline");
+    return { complete: false, reason: "Project analysis did not provide a dependency install command for this stack." };
   }
+  const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: timeoutMs() });
+  assertNotAborted(signal, timedOut());
   await session.setNetworkPhase("offline");
   assertNotAborted(signal, timedOut());
+  if (install.exitCode !== 0) {
+    const detail = output(install);
+    return { complete: false, reason: detail ? `Dependency installation failed before verification: ${detail}` : "Dependency installation failed before verification." };
+  }
+  return { complete: true };
 }
 async function runGeneralChecks(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<GeneralRun> {
   const checks = new Map<string, SandboxCommandResult>();
@@ -91,6 +111,7 @@ async function withAbortDestroy<T>(session: SandboxSession, signal: AbortSignal,
 export async function verifyExecution(options: { readonly sandboxProvider: SandboxProvider; readonly taskId: string; readonly source: PreparedExecutionSource; readonly patch: string; readonly reproductionCommand: string | null; readonly timeoutMs: number; readonly signal: AbortSignal }): Promise<VerificationResult> {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("verification timeout must be positive");
   if (options.signal.aborted) throw abortError(false);
+  if (!options.source.commands.test && !options.source.commands.build) return incomplete("Project analysis did not provide a test or build command, so no baseline check could run.", options.reproductionCommand);
   const deadline = Date.now() + options.timeoutMs;
   const stageController = new AbortController();
   let stageTimedOut = false;
@@ -108,25 +129,31 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: remainingMs() });
     let baselineChecks: GeneralRun | null = null;
     let baselineReproduction: SandboxCommandResult | null = null;
+    let baselineSetup: SetupResult = { complete: false, reason: "Baseline setup did not complete." };
     await withAbortDestroy(baseline, signal, async () => {
-      await prepareSession(baseline, options.source, remainingMs, signal, timedOut);
+      baselineSetup = await prepareSession(baseline, options.source, remainingMs, signal, timedOut);
+      if (!baselineSetup.complete) return;
       baselineChecks = await runGeneralChecks(baseline, options.source, remainingMs, signal, timedOut);
       if (testPatch && options.reproductionCommand) {
         await applyPatch(baseline, testPatch, remainingMs, signal, timedOut);
         baselineReproduction = await runReproduction(baseline, options.reproductionCommand, remainingMs, signal, timedOut);
       }
     }, timedOut);
+    if (!baselineSetup.complete) return incomplete(baselineSetup.reason, options.reproductionCommand);
 
     assertNotAborted(signal, timedOut());
     const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: remainingMs() });
     let patchedChecks: GeneralRun | null = null;
     let patchedReproduction: SandboxCommandResult | null = null;
+    let patchedSetup: SetupResult = { complete: false, reason: "Patched setup did not complete." };
     await withAbortDestroy(patched, signal, async () => {
-      await prepareSession(patched, options.source, remainingMs, signal, timedOut);
+      patchedSetup = await prepareSession(patched, options.source, remainingMs, signal, timedOut);
+      if (!patchedSetup.complete) return;
       await applyPatch(patched, options.patch, remainingMs, signal, timedOut);
       patchedChecks = await runGeneralChecks(patched, options.source, remainingMs, signal, timedOut);
       if (testPatch && options.reproductionCommand) patchedReproduction = await runReproduction(patched, options.reproductionCommand, remainingMs, signal, timedOut);
     }, timedOut);
+    if (!patchedSetup.complete) return incomplete(patchedSetup.reason, options.reproductionCommand);
 
     const baselineRun = baselineChecks as GeneralRun | null;
     const patchedRun = patchedChecks as GeneralRun | null;
@@ -153,9 +180,12 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     const patchedClassification = classifyReproduction(patchedProof);
     const reproduced = Boolean(testPatch && options.reproductionCommand && baselineClassification === "assertion_failure" && patchedClassification === "passed");
     const reason = reproduced ? null : !testPatch ? "Patch contains no test-file hunks for reproduce-first proof." : !options.reproductionCommand ? "No focused reproduction command could be derived from the added test." : baselineClassification !== "assertion_failure" ? "Baseline did not fail with an assertion failure." : "Patched reproduction test did not pass.";
+    const complete = checks.some((check) => check.baselineExitCode === 0);
     return {
       checks,
       hasNewFailures: checks.some((check) => check.status === "failed"),
+      complete,
+      incompleteReason: complete ? null : "No test or build command completed successfully on the approved baseline.",
       reproduce: { command: options.reproductionCommand, baselineExitCode: baselineProof?.exitCode ?? null, patchedExitCode: patchedProof?.exitCode ?? null, baselineOutput: output(baselineProof), patchedOutput: output(patchedProof), baselineClassification, patchedClassification, reproduced, reason },
     };
   } finally {
