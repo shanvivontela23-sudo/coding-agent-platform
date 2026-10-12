@@ -12,7 +12,6 @@ const job: ZipResultBuildJob = {
 function queue(overrides: Partial<ZipResultBuildQueue> = {}): ZipResultBuildQueue {
   return {
     claimPending: vi.fn(async () => job),
-    markReady: vi.fn(async () => true),
     markFailed: vi.fn(async () => true),
     ...overrides,
   };
@@ -39,6 +38,6 @@ describe("ZIP result build worker", () => {
     await runZipResultBuildWorkerOnce({ queue: q, build });
 
     expect(build).toHaveBeenCalledTimes(1);
-    expect(q.markReady).toHaveBeenCalledTimes(1);
+    expect(q.markFailed).not.toHaveBeenCalled();
   });
 });
