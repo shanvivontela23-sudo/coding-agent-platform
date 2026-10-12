@@ -96,18 +96,23 @@ export function parsePatchFiles(patch: string): readonly ParsedPatchFile[] {
     const end = index + 1 < matches.length ? matches[index + 1]!.index! : patch.length;
     const raw = patch.slice(start, end);
     const [leftRaw, rightRaw] = parseHeaderTokens(match[1]!);
-    const oldPath = normalizePatchPath(leftRaw);
-    const newPath = normalizePatchPath(rightRaw);
-    if (oldPath === null && newPath === null) throw new Error("Patch file cannot have /dev/null on both sides");
+    const headerOldPath = normalizePatchPath(leftRaw);
+    const headerNewPath = normalizePatchPath(rightRaw);
+    if (headerOldPath === null && headerNewPath === null) throw new Error("Patch file cannot have /dev/null on both sides");
 
     const oldMarkerMatch = raw.match(/^--- (.*)$/m);
     const newMarkerMatch = raw.match(/^\+\+\+ (.*)$/m);
     if (Boolean(oldMarkerMatch) !== Boolean(newMarkerMatch)) throw new Error("Patch old/new file markers are incomplete");
+    let oldPath = headerOldPath;
+    let newPath = headerNewPath;
     if (oldMarkerMatch && newMarkerMatch) {
       const markerOld = parseFileMarker(oldMarkerMatch[1]!);
       const markerNew = parseFileMarker(newMarkerMatch[1]!);
-      if (markerOld !== null && markerOld !== oldPath) throw new Error("Patch old file marker does not match diff header");
-      if (markerNew !== null && markerNew !== newPath) throw new Error("Patch new file marker does not match diff header");
+      if (markerOld !== null && markerOld !== headerOldPath) throw new Error("Patch old file marker does not match diff header");
+      if (markerNew !== null && markerNew !== headerNewPath) throw new Error("Patch new file marker does not match diff header");
+      if (markerOld === null) oldPath = null;
+      if (markerNew === null) newPath = null;
+      if (oldPath === null && newPath === null) throw new Error("Patch file cannot have /dev/null on both sides");
     }
     files.push({ oldPath, newPath, raw });
   }
