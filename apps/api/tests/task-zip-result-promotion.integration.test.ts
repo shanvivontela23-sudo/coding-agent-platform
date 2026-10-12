@@ -59,7 +59,8 @@ beforeAll(async () => {
     INSERT INTO tasks(id,organization_id,project_id,repository_id,requested_by_user_id,status,requirement,task_model_budget_usd) VALUES
       ('${task}','${org}','${project}','${repository}','${developer}','draft','change a',0.5),
       ('${driftTask}','${org}','${driftProject}','${driftRepository}','${developer}','draft','change b',0.5);
-    UPDATE tasks SET status='plan_ready',what_i_understand='change',proposed_approach='change file' WHERE id IN ('${task}','${driftTask}');
+    UPDATE tasks SET status='plan_ready',what_i_understand='change',proposed_approach='change file',planned_source_version_id='${sourceVersion}' WHERE id='${task}';
+    UPDATE tasks SET status='plan_ready',what_i_understand='change',proposed_approach='change file',planned_source_version_id='${driftSource}' WHERE id='${driftTask}';
     UPDATE tasks SET status='approved',confirmed_requirement='change',confirmed_plan='change file',approved_at=now() WHERE id IN ('${task}','${driftTask}');
     INSERT INTO task_executions(id,organization_id,task_id,project_id,attempt,started_by_user_id,source_version_id,budget_usd,timeout_seconds,status,finished_at,result_patch,change_document,result_metadata) VALUES
       ('${execution}','${org}','${task}','${project}',1,'${developer}','${sourceVersion}',1,600,'succeeded',now(),'diff --git a/a b/a','note','{}'::jsonb),
