@@ -25,6 +25,9 @@ function config() {
     POSTGRES_PASSWORD: secret,
     ANTHROPIC_API_KEY: secret,
     TASK_MODEL_NAME: "anthropic/demo",
+    HARNESS_MODEL_PRICES_JSON: JSON.stringify({
+      "anthropic/demo": { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 2, defaultMaxOutputTokens: 4096 },
+    }),
     NGROK_AUTHTOKEN: secret,
   });
   if (!result.ok) throw new Error(result.message);
