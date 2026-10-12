@@ -22,6 +22,15 @@ const patch = [
   "+echo new",
   "",
 ].join("\n");
+const deletePatch = [
+  "diff --git a/src/obsolete.ts b/src/obsolete.ts",
+  "deleted file mode 100644",
+  "--- a/src/obsolete.ts",
+  "+++ /dev/null",
+  "@@ -1 +0,0 @@",
+  "-obsolete();",
+  "",
+].join("\n");
 
 class Session implements SandboxSession {
   readonly workspacePath = "/workspace/repo";
@@ -29,7 +38,7 @@ class Session implements SandboxSession {
   constructor(readonly id: string) {}
   async exec(request: SandboxCommand): Promise<SandboxCommandResult> {
     if (request.command.startsWith("git hash-object")) return { exitCode: 0, stdout: `${"c".repeat(40)}\n`, stderr: "" };
-    if (request.command.startsWith("test -x")) return { exitCode: 0, stdout: "100755\n", stderr: "" };
+    if (request.command.startsWith("if test -x")) return { exitCode: 0, stdout: "100755\n", stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   }
   async readFile(): Promise<string> { return ""; }
@@ -48,5 +57,10 @@ describe("B3 verified file manifest", () => {
   it("records git blob identity and executable mode from the patched verification sandbox", async () => {
     const result = await verifyExecution({ sandboxProvider: new Provider(), taskId: "40000000-0000-4000-8000-000000000731", source, patch, reproductionCommand: null, timeoutMs: 20_000, signal: new AbortController().signal });
     expect(result.verifiedFiles).toEqual([{ path: "src/tool.sh", blobSha: "c".repeat(40), mode: "100755", deleted: false }]);
+  });
+
+  it("records deletions explicitly without a blob or mode", async () => {
+    const result = await verifyExecution({ sandboxProvider: new Provider(), taskId: "40000000-0000-4000-8000-000000000732", source, patch: deletePatch, reproductionCommand: null, timeoutMs: 20_000, signal: new AbortController().signal });
+    expect(result.verifiedFiles).toEqual([{ path: "src/obsolete.ts", blobSha: null, mode: null, deleted: true }]);
   });
 });
