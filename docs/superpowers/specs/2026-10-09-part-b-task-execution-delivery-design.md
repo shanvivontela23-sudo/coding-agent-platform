@@ -1,108 +1,138 @@
-# Part B — Task Execution and Delivery
+# Part B — Task Execution and Delivery Design
 
-## Goal
+## Purpose
 
-Turn an approved Dhara task into a controlled implementation attempt that runs against the exact approved source, verifies the resulting patch independently, and hands a developer a reviewable result without ever merging automatically.
+Part B turns an approved Dhara task into a verified implementation result and then delivers that result through the project's source channel. Execution must preserve the Phase 0 cost/security boundaries while adding durable product state, user controls, verification evidence, and developer handoff.
 
-## Product flow
+## Product boundary
 
-A support rep creates and clarifies a task, reviews Dhara's plain-language plan, and approves it. When the plan becomes `plan_ready`, Dhara pins the exact source the planner actually read: a GitHub commit SHA or an immutable ZIP project-version id. After approval, the task-owning rep, a developer, or an owner can start implementation. Start is idempotent and there is at most one active execution per task.
+Implementation is a separate paid attempt after planning approval. Dhara executes only the source identity pinned when the approved plan became ready. The execution result is never merged automatically. GitHub publication and ZIP result promotion happen only after implementation/verification and remain explicit developer/owner actions.
 
-Every implementation is a separate execution attempt with its own snapshotted budget and wall-clock timeout. Failed, cancelled, interrupted, or timed-out attempts are never automatically rerun. A later user-initiated attempt is a new record. Publication is separate from execution so publication-only failures can be retried without paying to rerun coding.
+## Core execution flow
 
-## Execution architecture
+1. A permitted user starts one execution attempt for an approved task.
+2. The API snapshots budget, timeout, approved source identity, and queues the attempt in PostgreSQL.
+3. A restricted worker claims the attempt with a lease.
+4. The worker prepares exactly the approved source, then runs the coding harness through the execution-scoped model gateway and sandbox boundary.
+5. The patch is exported and checked for safety before it can become a product artifact.
+6. Dhara independently verifies the exported patch in fresh model-free sandboxes.
+7. Verification evidence, patch metadata, cost, and a sanitized change document are persisted.
+8. A developer reviews the result. GitHub publication or ZIP result promotion is a separate post-execution action.
 
-Product execution reuses the Phase 0 sandbox, model-gateway, and harness contracts behind a product orchestrator rather than creating a second execution stack. `CodingRunner` is the product-facing adapter over `HarnessRunner`. Automated tests and CI use fakes only: no paid model calls and no live E2B calls.
+## Execution invariants
 
-The execution queue is PostgreSQL-backed. Workers claim eligible rows with a lease using `FOR UPDATE SKIP LOCKED`. The API continues to use restricted `coding_agent_api`; workers connect as a separate `coding_agent_worker` role. Both are `NOSUPERUSER NOBYPASSRLS NOINHERIT`. `coding_agent_worker` has no direct table privileges. Queue claim/heartbeat/finish functions are `SECURITY DEFINER`, PUBLIC execute is revoked, execute is granted only to `coding_agent_worker`, and `coding_agent_api` is explicitly revoked. After a claim returns an organization id, worker tenant reads/writes use the existing `withTenant()` boundary for only that claimed organization.
+- One active execution per task. Repeated Start while active is idempotent.
+- Every paid coding attempt is a separate durable execution. No automatic paid rerun occurs after a worker interruption or failed attempt.
+- Durable progress records at least source prepared, coding started, coding finished, patch exported, and verified.
+- A reclaimed lease may repeat only safe/model-free work. If `coding_started` exists without `coding_finished`, fail `WORKER_INTERRUPTED`; a user must start a new attempt.
+- Worker terminal transitions are audited in the same transaction as status changes.
+- Cancellation and wall-clock timeout can terminate work, and their state is visible to the worker.
+- Execution history is append/update-only to the application role; result rows are not user-deletable.
 
-The worker has a real entrypoint (`pnpm --filter @coding-agent/worker dev`) that reads `DATABASE_URL` and a worker id, refuses a non-`coding_agent_worker` URL, and shuts down cleanly on SIGINT/SIGTERM.
+## Source pinning
 
-Execution cancellation is user-controlled from the task page. Queued work can be cancelled immediately; running work records a cancellation request and the worker stops at the next control check. The wall-clock timeout is snapshotted with the execution budget and enforced independently of model/provider timeouts. A queued execution that has not been claimed for 60 seconds is shown as **Waiting for a worker** rather than looking healthy indefinitely.
+The task must pin the exact source the planner actually read, not merely an earlier project-report SHA/version. For GitHub, planner reads return the current default-branch commit and that exact commit is stored with the plan. For ZIP projects, the immutable project version read by planning is pinned.
 
-## Durable progress and lease reclaim
+Execution prepares exactly that pinned source. It does not silently move to a later default-branch head or ZIP version.
 
-An execution records durable milestones: `source_prepared`, `coding_started`, `coding_finished`, `patch_exported`, and `verified`. Milestones only move forward.
+## Worker/security boundary
 
-Lease reclaim must never cause an automatic paid model rerun. A reclaimed execution may repeat only a step known to be safe and free of model spend. If `coding_started` is present without `coding_finished`, the reclaim path marks the attempt terminal `failed` with failure code `WORKER_INTERRUPTED`; the user must explicitly start a new attempt. If coding finished, later deterministic/offline preparation, patch handling, and verification work may resume from the persisted milestone when safe.
+- PostgreSQL queue lease operations are exposed only to the dedicated `coding_agent_worker` role.
+- `coding_agent_worker` is `NOSUPERUSER NOBYPASSRLS NOINHERIT` and has no direct tenant-table privileges.
+- After a claim returns an organization id, the worker explicitly enters the application tenant role through `withTenant()` for that organization only.
+- The API role cannot claim, heartbeat, or finish worker jobs.
+- Sandbox dependency setup may use the configured dependency-network phase; coding follows the approved gateway/sandbox network phase; verification is offline/model-free.
+- Publication credentials never enter a coding or verification sandbox.
 
-Every worker-created terminal transition (`succeeded`, `failed`, worker-observed `cancelled`, `timed_out`) writes an append-only audit event in the same database transaction as the status change. The audit payload includes the execution id and failure code when one exists.
+## Coding runner
 
-## Source pinning and drift
+`CodingRunner` is the product orchestration boundary. The product implementation wraps the Phase 0 `SandboxProvider` and `HarnessRunner` contracts rather than inventing a second harness architecture.
 
-Source is pinned when the plan becomes `plan_ready`, because the plan is meaningful only for the source Dhara inspected. The pin must come from the same `ProjectCodeContext` that supplied repository text to the planner; it must not be inferred later from a possibly stale `project_reports` row.
+A coding run receives only the approved requirement/plan and prepared source. It returns a patch, focused reproduction command when derivable, coding summary, and reconciled cost. The product runner persists cost even when the harness exits with a non-completed state such as limit-hit.
 
-For ZIP projects the pin is the immutable project-version id returned with the planner context. Before execution or delivery, if the project's current version differs from that approved version, the result is `source_changed`.
+## Verification
 
-For GitHub projects the pin is the exact commit SHA whose tree/blobs were read into the planner context. A moving default branch does not itself block execution: Dhara runs on the approved SHA and later creates the delivery branch from it. At publication time Dhara records how many commits the default branch moved. It blocks with `source_changed` only if a file named in the approved plan changed between the approved SHA and the current head.
+Verification happens on clean copies of the approved source, not inside the model's coding sandbox.
 
-## Sandbox and network trust boundary
+### Baseline verification
 
-Treat every coding sandbox as compromised. Do not place GitHub App private keys, installation tokens, Supabase secrets, LiteLLM administrator credentials, database credentials, customer secrets, or other server credentials in it. The sandbox receives only source material, the approved task context, an execution-scoped model route/token when needed, and non-secret execution metadata.
+Run the project report's dependency install command, then its test/build commands on the clean approved source before judging the patch. Pre-existing baseline failures do not automatically make the patch fail. A patched check is a new failure only when the clean baseline passed or when failing-test comparison proves a new failing test.
 
-Reuse the Phase 0 one-way network phases. Model access is present only during the coding phase. Verification runs in a separate fresh sandbox with no model access.
+Verification must fail closed when Dhara cannot establish at least one passing baseline test or build. Missing commands, missing dependency setup for the recorded stack, failed dependency installation, or an all-failing/pre-existing baseline finish as `verification_incomplete`, never `succeeded`.
 
-## Baseline and clean-copy verification
+Project reports persist the dependency install command derived during repository analysis for the detected stack. Workers consume that persisted command rather than guessing from package-manager names. Legacy reports that do not contain the `installCommand` field are blocked before implementation spend and the task page says **Re-analyse this project before implementation**.
 
-Before judging a patch, Dhara runs the project's reported test and build commands on a clean copy of the approved source. Failures already present on that baseline are recorded as pre-existing and do not make the execution `verification_failed`.
+Dependency-install failure detail is treated as potentially secret-bearing. Before it can enter an execution failure message or change document, Dhara reuses the change-note sanitizer, redacts credential-bearing URLs, authorization headers and token patterns, and bounds the sanitized detail to the last 2,000 characters.
 
-The coding sandbox exports a patch; it is not the verification environment. Dhara creates a second fresh sandbox from the approved source, applies only the exported patch, and runs verification there. A check fails the execution only when it is a new failure relative to baseline.
+### Reproduce-first bug fixes
 
-## Reproduce-first proof for bug tasks
+For a bug-fix task, the coding runner must add a regression test when it claims a proven fix. Dhara applies only the exported test hunk(s) to a clean approved source and runs the focused reproduction command. A proven fix requires a genuine assertion-style fail-before result and pass-after result on the fully patched clean copy. If that proof is absent, finish `fix_not_reproduced`; do not represent the result as proven.
 
-For a bug task, the coding runner must add a test that captures the reported bug. Dhara itself—not the coding agent—runs that test on clean approved source and on clean patched source. The first run must fail and the second must pass. Both results are stored as execution proof.
+### Clean patched verification
 
-If no such failing test can be produced, the execution is explicitly marked **fix not reproduced**. The patch may still be shown for review, but Dhara must not present it as a proven fix.
+Create a second fresh sandbox, install dependencies from the project report, apply only the persisted exported patch, and run the configured checks. No model or gateway token is available in this sandbox.
 
-## Patch boundary and safety
+## Patch safety
 
-Before a patch is accepted, stored for download, or published, Dhara enforces snapshotted limits for maximum changed files and total patch bytes, rejects paths outside the repository root, rejects symlinks, and refuses changes to `.github/workflows` or other configured CI files. Lockfile and dependency-manifest changes are allowed only as flagged review items in the result. A secret scan runs over the patch before any publication or downloadable storage.
+Before persisting a patch as usable output, enforce configured maximum file count and patch bytes, reject paths outside the repository root and symlink changes, reject CI/workflow configuration changes, scan patch text for secrets, and flag dependency/lockfile changes for developer review.
 
-Execution history is append-and-update only. `coding_agent_app` may not DELETE `task_executions`, `task_execution_checks`, or `task_execution_artifacts`.
-
-## Checks, artifacts, and cost
-
-Execution attempts own structured check records and artifact metadata. Model calls can link to the execution that incurred them while planning calls remain task-level. B1 establishes these durable records; B2 fills them with baseline checks, clean patched checks, reproduce proof, sanitized patch metadata, change-document metadata, and total execution cost.
+Unsafe patches do not become publishable/downloadable result artifacts.
 
 ## Change document
 
-Every successful execution stores one sanitized plain-language change document containing: what was asked, what changed and why, files touched, checks and results, reproduce-first proof (or `fix not reproduced`), total execution cost, and what a developer should inspect. It must not include the raw ticket, PII, transcripts, credentials, or secrets.
+Every verified attempt stores a sanitized plain-language change document containing:
 
-The same change document is shown on the task page, becomes the GitHub PR body, and is included as a file in a ZIP result.
+- what was asked;
+- what changed and why;
+- files touched;
+- checks/results and verification completeness;
+- reproduce-first proof when applicable;
+- execution cost;
+- developer review focus.
 
-## Delivery
+The document must not contain raw ticket text, PII, conversation transcripts, publication credentials, or secrets. The same stored document is the GitHub PR body and accompanies ZIP delivery.
 
-GitHub delivery is server-only. Dhara creates a deterministic branch from the approved SHA, opens an idempotent PR, and can adopt that existing branch/PR after restart. Dhara never merges. The required GitHub App write permission is added only in B3 after the exact permission is stated to the owner and reviewed before it is needed.
+## Source drift
 
-ZIP delivery creates a new immutable project version. It is downloadable and has an in-app diff because there is no GitHub PR. B2 shows an in-app diff for ZIP execution results; B4 performs immutable ZIP version creation/promotion. Only developers and owners can publish a GitHub PR or promote a ZIP result.
+### GitHub
 
-## Roles
+Execution and publication remain anchored to the approved SHA. Movement of the default branch alone does not invalidate the result. At publication time Dhara compares the approved SHA with the current default-branch head and records how many commits the base moved.
 
-The support rep who owns the task, developers, and owners may start or cancel an execution. Other reps may view tenant-visible status but cannot control it. Only developers and owners may publish a GitHub PR or promote a ZIP result.
+Block with `source_changed` only when a file named in the approved plan or a file touched by the persisted patch changed between the approved SHA and current head. Otherwise branch from the approved SHA and allow the pull request even when the default branch advanced.
 
-## User-visible terminal and blocking states
+### ZIP
 
-- `cancelled`: implementation was cancelled; nothing was published.
-- `timed_out`: the execution exceeded its snapshotted wall-clock limit; nothing was published.
-- `failed`: the coding/execution layer failed, including `WORKER_INTERRUPTED`; nothing is automatically rerun.
-- `verification_failed`: one or more checks newly fail on the clean patched copy.
-- `fix_not_reproduced`: Dhara could not prove the bug with a fail-before/pass-after test and labels the result accordingly.
-- `source_changed`: delivery is blocked only under the ZIP/current-version rule or GitHub approved-plan-file drift rule above.
-- publication failure: the execution result remains intact and publication alone can be retried.
+If the project's current ZIP version no longer matches the task's approved version, delivery blocks with `source_changed`. ZIP output itself is created as a new immutable version rather than mutating the approved input.
 
-## PR boundaries
+## Publication/delivery roles
 
-### B1 — execution foundation
+The task-owning rep, developers, and owners may start/cancel implementation. Only developers and owners may publish a GitHub result or promote a ZIP result.
 
-Pin source at `plan_ready`; add migration `0006` for task executions, checks, artifacts, execution/model-cost linkage and queue leases; add idempotent start, cancellation, timeout, fake-runner worker flow, task-page Start implementation control, and polled execution status.
+A `succeeded` GitHub execution may be published explicitly. A `fix_not_reproduced` execution may be published only when a developer or owner explicitly chooses the unproven publication path; the PR is visibly labelled unproven. `verification_failed` and `verification_incomplete` are never publishable.
 
-### B2 — real orchestration and verification
+## GitHub publication
+
+GitHub publication runs only in the API/control plane after execution; the worker/sandbox never receives GitHub write credentials.
+
+Before a paid GitHub implementation run is queued, Dhara checks the repository installation. The required GitHub App repository permission is **Contents: Read and write**. If the installation lacks Contents write, Start is blocked before an execution row/model spend and tells the owner exactly which permission to add.
+
+Publication uses one deterministic branch per execution, created from the approved SHA. Retries and process restarts create-or-adopt that exact branch and open-or-adopt one pull request. Dhara never force-pushes and never merges.
+
+The PR body is the already stored sanitized change document. Publication errors are stored as retryable publication failures and can be retried without a new paid execution. Publication never substitutes raw ticket text, transcripts, or model conversation into the PR.
+
+## Part split
+
+### B1 — Execution foundation
+
+Add migration `0006`, API start/get/cancel, PostgreSQL queue lease contract, restricted roles/permissions foundation, worker loop with a fake runner in CI, task-page controls, and durable execution records. Stop before real sandbox/model orchestration.
+
+### B2 — Orchestration, verification, safety, evidence
 
 Add migration `0007` for the dedicated worker role, durable milestones, terminal audit behavior, append/update-only execution history, and B1 review corrections. Wire the real sandbox/gateway/harness contracts behind `CodingRunner` while faking them in CI. Add baseline checks, clean-copy verification, reproduce-first proof, patch limits, CI-path refusal, dependency/lockfile flags, secret scan, change document, ZIP diff view, execution cost display, the runnable worker command, and the 60-second waiting-for-worker state. Add an owner-run live smoke script behind explicit environment flags; do not run it automatically.
 
 ### B3 — GitHub publication
 
-Add pre-spend permission check, deterministic branch, idempotent PR creation/adoption after restart, publication-only retry, approved-SHA branching, commit-distance recording, and approved-plan-file drift blocking. State the exact GitHub App permission the owner must add and stop before it is needed.
+Add pre-spend Contents-write and legacy-report readiness checks, migration `0009` publication state, deterministic approved-SHA branches, idempotent PR creation/adoption after restart, publication-only retry, commit-distance recording, approved-plan/patch-file drift blocking, and control-plane publication UX. GitHub CI uses fakes only; no live publication write is required to review B3.
 
 ### B4 — ZIP delivery
 
@@ -110,11 +140,11 @@ Create the execution result as a new immutable ZIP project version, expose downl
 
 ## Security invariants
 
-- Applied migrations `0001`–`0006` are immutable. B2 adds `0007` and only its checksum.
+- Applied migrations `0001`–`0008` are immutable. B3 adds `0009` and only its checksum.
 - Tenant-owned relationships keep composite `(organization_id, id)` foreign-key boundaries.
 - `audit_events` remains append-only for the application role.
 - `coding_agent_api` cannot claim/heartbeat/finish worker jobs after `0007`.
 - `coding_agent_worker` has no direct tenant-table privileges and enters tenant data only through `withTenant()` after claiming an organization through the narrow queue functions.
 - No runtime API or worker process connects as postgres/superuser.
-- CI never makes paid model calls or live E2B calls.
-- No automatic merge, no automatic paid rerun, and no publication secret enters a coding sandbox.
+- CI never makes paid model calls, live E2B calls, or live product GitHub publication writes.
+- No automatic merge, no force-push, no automatic paid rerun, and no publication secret enters a coding sandbox.
