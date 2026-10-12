@@ -1,11 +1,13 @@
 import { createSign } from "node:crypto";
 import { E2B } from "e2b";
+import { parseModelListPrices } from "../../../evals/src/gateway/http/cost-estimator.js";
 import { RunTokenService } from "../../../evals/src/gateway/run-token.js";
 import type { DemoConfig } from "./config.js";
-import { ensureDemoMigrations, runCommand } from "./migrations.js";
+import { ensureDemoMigrations, runCommand, type CommandResult } from "./migrations.js";
 
 export type DemoPreflightDependencies = {
   readonly checkDatabase: () => Promise<void>;
+  readonly checkModelPrices: () => Promise<void>;
   readonly checkSupabase: () => Promise<void>;
   readonly checkGitHubContentsWrite: () => Promise<void>;
   readonly checkE2BListOnly: () => Promise<void>;
@@ -18,6 +20,7 @@ export type DemoPreflightResult = { readonly name: string; readonly ok: boolean;
 
 const checks: readonly [string, keyof DemoPreflightDependencies][] = [
   ["database roles and migrations", "checkDatabase"],
+  ["model list prices", "checkModelPrices"],
   ["Supabase", "checkSupabase"],
   ["GitHub App Contents: Read and write", "checkGitHubContentsWrite"],
   ["E2B authentication (list only)", "checkE2BListOnly"],
@@ -48,15 +51,68 @@ async function fetchReady(url: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+type RunCommandImpl = (command: string, args: readonly string[], options?: { readonly env?: NodeJS.ProcessEnv; readonly input?: string }) => Promise<CommandResult>;
+
+export async function readDemoInstallationId(input: {
+  readonly databaseUrl: string;
+  readonly organizationId: string;
+  readonly runCommandImpl?: RunCommandImpl;
+}): Promise<number> {
+  if (!uuidPattern.test(input.organizationId)) throw new Error("DEMO_ORGANIZATION_ID must be a UUID");
+  const run = input.runCommandImpl ?? runCommand;
+  const sql = `SELECT installation_id FROM public.github_installations WHERE organization_id = '${input.organizationId}'::uuid AND status = 'connected';`;
+  const result = await run("psql", [input.databaseUrl, "-v", "ON_ERROR_STOP=1", "-At", "-c", sql]);
+  const rows = result.stdout.split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+  if (rows.length !== 1 || !/^\d+$/.test(rows[0] ?? "")) throw new Error("The demo organization must have exactly one connected GitHub App installation recorded in Dhara.");
+  const installationId = Number(rows[0]);
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("The recorded GitHub App installation id is invalid.");
+  return installationId;
+}
+
+export async function checkInstallationContentsWrite(input: {
+  readonly installationId: number;
+  readonly appJwt: string;
+  readonly fetchImpl?: typeof fetch;
+}): Promise<void> {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const response = await fetchImpl(`https://api.github.com/app/installations/${input.installationId}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.appJwt}`,
+      "x-github-api-version": "2026-03-10",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`GitHub installation permission check failed with HTTP ${response.status}`);
+  const body = await response.json() as { readonly permissions?: { readonly contents?: string } };
+  if (body.permissions?.contents !== "write") {
+    throw new Error("Accept the new Contents permission on the dhara-coding-agent installation (GitHub → Settings → Applications → Installed GitHub Apps).");
+  }
+}
+
+export function assertDemoModelPrices(raw: string | undefined, executionModel: string, planningModel: string): void {
+  if (!raw?.trim()) throw new Error("HARNESS_MODEL_PRICES_JSON is required for demo cost accounting.");
+  const prices = parseModelListPrices(raw.trim());
+  for (const model of new Set([executionModel.trim(), planningModel.trim()])) {
+    if (!model) throw new Error("TASK_EXECUTION_MODEL and TASK_MODEL_NAME are required for demo cost accounting.");
+    const price = prices[model];
+    if (!price) throw new Error(`HARNESS_MODEL_PRICES_JSON must include a price for configured model ${model}.`);
+    if (price.inputUsdPerMillionTokens === 0 && price.outputUsdPerMillionTokens === 0) {
+      throw new Error(`HARNESS_MODEL_PRICES_JSON price for ${model} cannot have both input and output prices set to zero.`);
+    }
+  }
+}
+
 export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): DemoPreflightDependencies {
   const value = (name: string): string => config.values[name] ?? "";
   return {
     checkDatabase: async () => { await ensureDemoMigrations(value("DEMO_DATABASE_ADMIN_URL")); },
+    checkModelPrices: async () => { assertDemoModelPrices(value("HARNESS_MODEL_PRICES_JSON"), value("TASK_EXECUTION_MODEL"), value("TASK_MODEL_NAME")); },
     checkSupabase: async () => { await fetchReady(`${value("SUPABASE_URL").replace(/\/$/, "")}/auth/v1/settings`, { headers: { apikey: value("SUPABASE_ANON_KEY") } }); },
     checkGitHubContentsWrite: async () => {
-      const response = await fetchReady("https://api.github.com/app", { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${githubAppJwt(value("GITHUB_APP_ID"), value("GITHUB_APP_PRIVATE_KEY"))}`, "x-github-api-version": "2026-03-10" } });
-      const body = await response.json() as { readonly permissions?: { readonly contents?: string } };
-      if (body.permissions?.contents !== "write") throw new Error("GitHub App → Repository permissions → Contents: Read and write is required");
+      const installationId = await readDemoInstallationId({ databaseUrl: value("DEMO_DATABASE_ADMIN_URL"), organizationId: value("DEMO_ORGANIZATION_ID") });
+      await checkInstallationContentsWrite({ installationId, appJwt: githubAppJwt(value("GITHUB_APP_ID"), value("GITHUB_APP_PRIVATE_KEY")) });
     },
     checkE2BListOnly: async () => {
       const client = new E2B({ apiKey: value("E2B_API_KEY") });

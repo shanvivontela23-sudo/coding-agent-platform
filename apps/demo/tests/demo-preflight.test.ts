@@ -4,6 +4,7 @@ import { runDemoPreflight, type DemoPreflightDependencies } from "../src/preflig
 function dependencies(): DemoPreflightDependencies {
   return {
     checkDatabase: vi.fn(async () => undefined),
+    checkModelPrices: vi.fn(async () => undefined),
     checkSupabase: vi.fn(async () => undefined),
     checkGitHubContentsWrite: vi.fn(async () => undefined),
     checkE2BListOnly: vi.fn(async () => undefined),
@@ -20,6 +21,7 @@ describe("demo preflight", () => {
     const result = await runDemoPreflight(deps);
     expect(result.map((item) => item.name)).toEqual([
       "database roles and migrations",
+      "model list prices",
       "Supabase",
       "GitHub App Contents: Read and write",
       "E2B authentication (list only)",

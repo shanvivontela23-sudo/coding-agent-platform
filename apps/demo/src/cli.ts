@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { loadDemoEnvironment, publicDemoSummary, readRootDotEnv, redactDemoSecrets, type DemoConfig } from "./config.js";
 import { createDemoLaunchPlan, type DemoProcessPlan } from "./launcher.js";
 import { ensureDemoMigrations, runCommand } from "./migrations.js";
-import { createLiveDemoPreflight, runDemoPreflight } from "./preflight.js";
+import { assertDemoModelPrices, createLiveDemoPreflight, runDemoPreflight } from "./preflight.js";
 
 function cleanEnv(env: Readonly<Record<string, string | undefined>>): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
@@ -61,6 +61,7 @@ async function main(): Promise<void> {
   const loaded = loadDemoEnvironment({ ...process.env, ...dotenv });
   if (!loaded.ok) throw new Error(loaded.message);
   const config = loaded.config;
+  assertDemoModelPrices(config.values.HARNESS_MODEL_PRICES_JSON, config.values.TASK_EXECUTION_MODEL ?? "", config.values.TASK_MODEL_NAME ?? "");
   process.stdout.write(`${publicDemoSummary(config)}\n`);
 
   await Promise.all([
