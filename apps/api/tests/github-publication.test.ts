@@ -22,38 +22,29 @@ const input = {
   repositoryFullName: "acme/demo",
   defaultBranch: "main",
   approvedSha,
-  approvedPlan: "Update `src/retry.ts` and add regression coverage.",
+  approvedPlan: "Update `src/retry.ts` and package.json, then add regression coverage.",
   patch,
   changeDocument,
   unproven: false,
 };
 
 describe("B3 GitHub execution publication", () => {
-  it("uses one deterministic branch per execution and protects plan + patch paths", () => {
+  it("uses one deterministic branch per execution and protects plan + patch paths including root-level files", () => {
     expect(deterministicPublicationBranch(executionId)).toBe(`dhara/execution-${executionId}`);
-    expect(protectedPublicationPaths(input.approvedPlan, patch)).toEqual(["src/retry.ts"]);
+    expect(protectedPublicationPaths(input.approvedPlan, patch)).toEqual(["package.json", "src/retry.ts"]);
   });
 
   it("branches from the approved SHA, tolerates unrelated base movement, records distance, and uses the stored change note as PR body", async () => {
     const fake = client({ changedFiles: ["README.md", "docs/ops.md"] });
     const publisher = new GitHubExecutionPublisher(fake);
     const result = await publisher.publish(input);
-
     expect(result).toMatchObject({ status: "published", baseMovedCommits: 4, pullRequestNumber: 42 });
-    expect(fake.ensurePatchedBranch).toHaveBeenCalledWith(expect.objectContaining({
-      branchName: deterministicPublicationBranch(executionId),
-      approvedSha,
-      patch,
-    }));
-    expect(fake.createPullRequest).toHaveBeenCalledWith(expect.objectContaining({
-      branchName: deterministicPublicationBranch(executionId),
-      baseBranch: "main",
-      body: changeDocument,
-    }));
+    expect(fake.ensurePatchedBranch).toHaveBeenCalledWith(expect.objectContaining({ branchName: deterministicPublicationBranch(executionId), approvedSha, patch }));
+    expect(fake.createPullRequest).toHaveBeenCalledWith(expect.objectContaining({ branchName: deterministicPublicationBranch(executionId), baseBranch: "main", body: changeDocument }));
   });
 
-  it("blocks source_changed only when a plan or patch file moved", async () => {
-    const fake = client({ changedFiles: ["src/retry.ts"] });
+  it.each(["src/retry.ts", "package.json"])("blocks source_changed when protected file %s moved", async (changedFile) => {
+    const fake = client({ changedFiles: [changedFile] });
     const result = await new GitHubExecutionPublisher(fake).publish(input);
     expect(result).toMatchObject({ status: "source_changed", baseMovedCommits: 4 });
     expect(fake.ensurePatchedBranch).not.toHaveBeenCalled();
@@ -71,9 +62,6 @@ describe("B3 GitHub execution publication", () => {
   it("labels an explicitly published fix_not_reproduced result as unproven without changing the stored PR body", async () => {
     const fake = client();
     await new GitHubExecutionPublisher(fake).publish({ ...input, unproven: true });
-    expect(fake.createPullRequest).toHaveBeenCalledWith(expect.objectContaining({
-      title: expect.stringContaining("UNPROVEN"),
-      body: changeDocument,
-    }));
+    expect(fake.createPullRequest).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("UNPROVEN"), body: changeDocument }));
   });
 });
