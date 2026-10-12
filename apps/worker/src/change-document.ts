@@ -3,6 +3,7 @@ export type ChangeDocumentInput = {
   readonly changed: string;
   readonly files: readonly string[];
   readonly checks: readonly { readonly name: string; readonly status: string }[];
+  readonly verificationStatus?: string;
   readonly reproduceProof: string;
   readonly costUsd: number | null;
   readonly reviewFocus: string;
@@ -35,6 +36,9 @@ export function buildChangeDocument(input: ChangeDocumentInput): string {
     "",
     "## Checks and results",
     checks,
+    "",
+    "## Verification status",
+    sanitize(input.verificationStatus ?? "Verification completed."),
     "",
     "## Reproduce proof",
     sanitize(input.reproduceProof),
