@@ -6,7 +6,7 @@ import { parsePatchFiles } from "../../worker/src/patch-parser.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
 import type { ProjectDownloadTokenService } from "./project-download-token.js";
 import type { ProjectStorage } from "./project-storage.js";
-import { readNormalizedZipFiles, type UploadArchiveLimits } from "./upload-archive.js";
+import { readStoredNormalizedZipFiles, type UploadArchiveLimits } from "./upload-archive.js";
 
 export type TaskZipResultArtifact = {
   readonly executionId: string;
@@ -28,6 +28,7 @@ export type TaskZipResultContext = {
   readonly status: "succeeded" | "fix_not_reproduced";
   readonly sourceVersionId: string;
   readonly sourceStorageKey: string;
+  readonly sourceSha256: string;
   readonly resultPatch: string;
   readonly changeDocument: string;
   readonly verifiedFiles: readonly VerifiedFile[];
@@ -43,6 +44,7 @@ export interface TaskZipResultDatabase {
 
 function mismatch(message: string): never { throw new AppError("PUBLISHED_CONTENT_MISMATCH", message, 409); }
 function gitBlobSha(bytes: Uint8Array): string { return createHash("sha1").update(Buffer.from(`blob ${bytes.byteLength}\0`, "utf8")).update(bytes).digest("hex"); }
+function sha256(bytes: Uint8Array): string { return createHash("sha256").update(bytes).digest("hex"); }
 function crc32(input: Uint8Array): number { let crc = 0xffffffff; for (const byte of input) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
 type ZipEntry = { readonly path: string; readonly bytes: Buffer; readonly unixMode: number };
 function writeZip(entries: readonly ZipEntry[]): Uint8Array {
@@ -71,7 +73,7 @@ export async function buildVerifiedZipResult(input: { readonly approvedZip: Uint
   const patchPaths = new Set<string>();
   for (const file of parsedFiles) { if (file.oldPath && (file.newPath === null || file.oldPath !== file.newPath)) patchPaths.add(file.oldPath); if (file.newPath) patchPaths.add(file.newPath); }
   if (patchPaths.size !== verified.size || [...patchPaths].some((path) => !verified.has(path)) || [...verified.keys()].some((path) => !patchPaths.has(path))) mismatch("Verified files do not exactly match patch paths; ZIP result refused.");
-  const base = readNormalizedZipFiles(input.approvedZip, input.limits);
+  const base = readStoredNormalizedZipFiles(input.approvedZip, input.limits);
   const entries = new Map<string, ZipEntry>(base.map((file) => [file.path, { path: file.path, bytes: Buffer.from(file.bytes), unixMode: 0o100600 }]));
   for (const file of parsedFiles) {
     if (file.oldPath && (file.newPath === null || file.oldPath !== file.newPath)) {
@@ -94,7 +96,7 @@ export async function buildVerifiedZipResult(input: { readonly approvedZip: Uint
   let total = 0; for (const entry of entries.values()) { if (entry.bytes.length > input.limits.maxFileBytes) throw new AppError("UPLOAD_TOO_LARGE", "A ZIP result entry exceeds the per-file limit.", 413); total += entry.bytes.length; }
   if (total > input.limits.maxUncompressedBytes) throw new AppError("UPLOAD_TOO_LARGE", "ZIP result expands beyond the configured limit.", 413);
   const bytes = writeZip([...entries.values()]); if (bytes.byteLength > input.limits.maxCompressedBytes) throw new AppError("UPLOAD_TOO_LARGE", "ZIP result exceeds the configured storage limit.", 413);
-  return { bytes, sha256: createHash("sha256").update(bytes).digest("hex"), sizeBytes: bytes.byteLength, fileCount: entries.size };
+  return { bytes, sha256: sha256(bytes), sizeBytes: bytes.byteLength, fileCount: entries.size };
 }
 
 export function createTaskZipResultService(options: { readonly database: TaskZipResultDatabase; readonly storage: ProjectStorage; readonly downloadTokens: ProjectDownloadTokenService; readonly limits: UploadArchiveLimits }) {
@@ -105,6 +107,7 @@ export function createTaskZipResultService(options: { readonly database: TaskZip
     if (context.status === "fix_not_reproduced" && acceptUnproven && context.role !== "owner" && context.role !== "developer") throw new AppError("ZIP_UNPROVEN_ACCEPT_FORBIDDEN", "Only a developer or owner can accept an unproven ZIP result.", 403);
     const existing = await options.database.getArtifact(session, context.executionId); if (existing) return existing;
     const approvedZip = await options.storage.readVersion(context.sourceStorageKey);
+    if (sha256(approvedZip) !== context.sourceSha256.toLowerCase()) mismatch("Stored approved ZIP digest does not match the approved project version; ZIP result refused.");
     const built = await buildVerifiedZipResult({ approvedZip, patch: context.resultPatch, verifiedFiles: context.verifiedFiles, changeDocument: context.changeDocument, limits: options.limits });
     const artifactVersionId = randomUUID(); const stored = await options.storage.writeVersion({ organizationId: session.organizationId, projectId: context.projectId, versionId: artifactVersionId, bytes: built.bytes });
     return await options.database.saveArtifact(session, { executionId: context.executionId, taskId: context.taskId, projectId: context.projectId, sourceVersionId: context.sourceVersionId, artifactVersionId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount, promotedVersionId: null, promotedVersionNumber: null });
