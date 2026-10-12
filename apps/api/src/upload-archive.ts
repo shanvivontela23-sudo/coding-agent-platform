@@ -111,6 +111,10 @@ export function readNormalizedZipFiles(input: Uint8Array, limits: UploadArchiveL
   return stripOneRoot(decodeZipEntries(input, limits));
 }
 
+export function readStoredNormalizedZipFiles(input: Uint8Array, limits: UploadArchiveLimits): ReadonlyArray<{ readonly path: string; readonly bytes: Uint8Array }> {
+  return decodeZipEntries(input, limits).sort((a, b) => a.path.localeCompare(b.path));
+}
+
 export async function validateAndNormalizeZip(input: Uint8Array, limits: UploadArchiveLimits): Promise<ValidatedUploadArchive> {
   const entries = stripOneRoot(decodeZipEntries(input, limits)); inspectNestedArchives(entries, limits);
   const normalizedZip = writeZip(entries); const sha256 = createHash("sha256").update(normalizedZip).digest("hex");
