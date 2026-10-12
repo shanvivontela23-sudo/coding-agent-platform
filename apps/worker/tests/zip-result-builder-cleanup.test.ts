@@ -78,34 +78,69 @@ const patch = [
   "",
 ].join("\n");
 
+async function preparedSource(storage: LocalProjectStorage) {
+  const approved = await validateAndNormalizeZip(zip("repo/src/a.txt", "old\n"), limits);
+  const source = await storage.writeVersion({
+    organizationId: job.organizationId,
+    projectId: job.projectId,
+    versionId: job.sourceVersionId,
+    bytes: approved.normalizedZip,
+  });
+  return { approved, source };
+}
+
+function buildInput(sourceStorageKey: string, sourceSha256: string) {
+  return {
+    ...job,
+    sourceStorageKey,
+    sourceSha256,
+    resultPatch: patch,
+    changeDocument: "note",
+    resultMetadata: {
+      verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644" as const, deleted: false }],
+    },
+  };
+}
+
 describe("ZIP result storage cleanup", () => {
   it("deletes a real stored candidate when interrupted completion returns lost", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "dhara-zip-result-"));
     try {
       const storage = new LocalProjectStorage({ rootDir });
-      const approved = await validateAndNormalizeZip(zip("repo/src/a.txt", "old\n"), limits);
-      const source = await storage.writeVersion({
-        organizationId: job.organizationId,
-        projectId: job.projectId,
-        versionId: job.sourceVersionId,
-        bytes: approved.normalizedZip,
-      });
+      const { approved, source } = await preparedSource(storage);
       const complete = vi.fn(async () => "lost" as const);
       const build = createZipResultBuilder({ storage, artifacts: { complete }, limits });
 
-      await expect(build({
-        ...job,
-        sourceStorageKey: source.storageKey,
-        sourceSha256: approved.sha256,
-        resultPatch: patch,
-        changeDocument: "note",
-        resultMetadata: {
-          verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644", deleted: false }],
-        },
-      })).rejects.toThrow("ownership was lost");
+      await expect(build(buildInput(source.storageKey, approved.sha256))).rejects.toThrow("ownership was lost");
 
       expect(complete).toHaveBeenCalledTimes(1);
       expect(await readdir(join(rootDir, job.organizationId, job.projectId))).toEqual([`${job.sourceVersionId}.zip`]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns once with only the execution id when cleanup of a lost build fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "dhara-zip-result-warning-"));
+    try {
+      const storage = new LocalProjectStorage({ rootDir });
+      const { approved, source } = await preparedSource(storage);
+      const deleteVersion = vi.spyOn(storage, "deleteVersion").mockRejectedValue(new Error("storage-key=secret cleanup failure"));
+      const warn = vi.fn();
+      const build = createZipResultBuilder({
+        storage,
+        artifacts: { complete: vi.fn(async () => "lost" as const) },
+        limits,
+        warn,
+      });
+
+      await expect(build(buildInput(source.storageKey, approved.sha256))).rejects.toThrow("ownership was lost");
+
+      expect(deleteVersion).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(`ZIP result cleanup failed for execution ${job.executionId}.`);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("storage-key");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
