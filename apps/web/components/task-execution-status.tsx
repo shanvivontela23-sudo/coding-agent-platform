@@ -40,6 +40,11 @@ type ZipResult = {
   readonly promotedVersionId: string | null;
   readonly promotedVersionNumber: number | null;
 };
+type ZipResultBuild = {
+  readonly status: "pending" | "building" | "ready" | "failed" | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+};
 type Props = {
   readonly taskId: string;
   readonly taskStatus: "draft" | "waiting_for_answers" | "plan_ready" | "approved";
@@ -84,7 +89,7 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
   const [execution, setExecution] = useState<Execution | null>(null);
   const [publication, setPublication] = useState<Publication | null>(null);
   const [zipResult, setZipResult] = useState<ZipResult | null>(null);
-  const [zipResultError, setZipResultError] = useState<string | null>(null);
+  const [zipResultBuild, setZipResultBuild] = useState<ZipResultBuild | null>(null);
   const [zipSourceChanged, setZipSourceChanged] = useState(false);
   const [implementationBlocker, setImplementationBlocker] = useState<string | null>(initialBlocker);
   const [error, setError] = useState<string | null>(null);
@@ -97,25 +102,26 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
   const load = useCallback(async () => {
     const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, { cache: "no-store" });
     if (!response.ok) return;
-    const payload = await response.json() as { readonly execution: Execution | null; readonly implementationBlocker?: string | null; readonly publication?: Publication | null; readonly zipResult?: ZipResult | null; readonly zipResultError?: { readonly error?: string } | null };
-    setExecution(payload.execution); setPublication(payload.publication ?? null); setZipResult(payload.zipResult ?? null); setZipResultError(payload.zipResultError?.error ?? null); setImplementationBlocker(payload.implementationBlocker ?? initialBlocker);
+    const payload = await response.json() as { readonly execution: Execution | null; readonly implementationBlocker?: string | null; readonly publication?: Publication | null; readonly zipResult?: ZipResult | null; readonly zipResultBuild?: ZipResultBuild | null };
+    setExecution(payload.execution); setPublication(payload.publication ?? null); setZipResult(payload.zipResult ?? null); setZipResultBuild(payload.zipResultBuild ?? null); setImplementationBlocker(payload.implementationBlocker ?? initialBlocker);
   }, [taskId, initialBlocker]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!active(execution) && publication?.status !== "publishing") return;
+    const zipBusy = zipResultBuild?.status === "pending" || zipResultBuild?.status === "building";
+    if (!active(execution) && publication?.status !== "publishing" && !zipBusy) return;
     const timer = setInterval(() => { void load(); }, 2_000);
     return () => clearInterval(timer);
-  }, [execution, publication, load]);
+  }, [execution, publication, zipResultBuild, load]);
 
-  async function act(action: "start" | "cancel" | "publish" | "acceptZip" | "promoteZip") {
+  async function act(action: "start" | "cancel" | "publish" | "acceptZip" | "retryZip" | "promoteZip") {
     setBusy(true); setError(null); setZipSourceChanged(false);
     try {
       const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
       const payload = await response.json() as { readonly execution?: Execution; readonly publication?: Publication; readonly zipResult?: ZipResult; readonly code?: string; readonly error?: string };
       if (!response.ok) { if (payload.code === "SOURCE_CHANGED") setZipSourceChanged(true); setError(payload.error || "Unable to update implementation."); return; }
       if (payload.execution) setExecution(payload.execution); if (payload.publication) setPublication(payload.publication); if (payload.zipResult) setZipResult(payload.zipResult);
-      if (!payload.execution && !payload.publication && !payload.zipResult) await load();
+      await load();
     } catch { setError("Unable to update implementation."); }
     finally { setBusy(false); }
   }
@@ -128,7 +134,8 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
       <CardHeader><CardTitle>Implementation</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-        {zipResultError ? <Alert variant="destructive"><AlertDescription>{zipResultError}</AlertDescription></Alert> : null}
+        {zipResultBuild?.status === "failed" ? <Alert variant="destructive"><AlertDescription>{zipResultBuild.errorMessage || "ZIP result build failed. Retry building the ZIP."}{canPublish ? <Button type="button" variant="outline" className="ml-3" disabled={busy} onClick={() => void act("retryZip")}>Retry building the ZIP</Button> : null}</AlertDescription></Alert> : null}
+        {zipResultBuild?.status === "pending" || zipResultBuild?.status === "building" ? <Alert><AlertDescription>{zipResultBuild.status === "pending" ? "Updated ZIP is waiting for a worker." : "Building updated ZIP…"}</AlertDescription></Alert> : null}
         {implementationBlocker ? <Alert variant="destructive"><AlertDescription>{implementationBlocker === "Re-analyse this project before implementation" ? "Re-analyse this project before implementation" : implementationBlocker}</AlertDescription></Alert> : null}
         {execution ? <div className="space-y-1"><p className="text-sm font-medium">Attempt {execution.attempt}</p><p className="text-sm text-muted-foreground">{statusText(execution)}</p></div> : <p className="text-sm text-muted-foreground">No implementation attempt yet.</p>}
         {execution ? <div><p className="text-xs text-muted-foreground">Execution cost</p><p className="text-sm font-medium">{execution.costUsd === null ? "Cost unavailable" : `$${execution.costUsd.toFixed(2)}`}</p></div> : null}
@@ -136,7 +143,7 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
         {execution?.changeDocument ? <section className="space-y-2"><p className="text-sm font-medium">Change note</p><pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-4 text-xs leading-5">{execution.changeDocument}</pre></section> : null}
         {sections.length > 0 && execution?.sourceVersionId ? <section className="space-y-3"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">Result diff</p>{largeDiff ? <a className="text-sm font-medium underline" href={`${apiOrigin}/api/tasks/${encodeURIComponent(taskId)}/execution/zip-result/patch`}>Download full patch</a> : null}</div>{sections.map((section) => <details key={`${section.path}-${section.added}-${section.removed}`} className="rounded-md border"><summary className="cursor-pointer px-4 py-3 text-sm font-medium">{section.path} · +{section.added} added · −{section.removed} removed</summary><pre className="max-h-[32rem] overflow-auto whitespace-pre border-t bg-muted/30 p-4 text-xs leading-5">{section.text}{section.truncated ? "\n… diff truncated" : ""}</pre></details>)}</section> : null}
         {zipResult ? <section className="space-y-3 rounded-md border p-4"><div><p className="text-sm font-medium">Updated ZIP</p><p className="text-xs text-muted-foreground">{zipResult.fileCount} files · {(zipResult.sizeBytes / 1024).toFixed(1)} KB{zipResult.promotedVersionNumber ? ` · promoted as version ${zipResult.promotedVersionNumber}` : " · not promoted"}</p></div><div className="flex flex-wrap gap-2"><form action={`${apiOrigin}/api/tasks/${encodeURIComponent(taskId)}/execution/zip-result/download-token`} method="post"><Button type="submit" variant="outline">Download updated ZIP</Button></form><form action={`${apiOrigin}/projects/${encodeURIComponent(zipResult.projectId)}/versions/${encodeURIComponent(zipResult.sourceVersionId)}/download-token`} method="post"><Button type="submit" variant="outline">Download approved source ZIP</Button></form>{canPublish && !zipResult.promotedVersionId ? <Button type="button" disabled={busy || zipSourceChanged} onClick={() => void act("promoteZip")}>Promote to current version</Button> : null}</div></section> : null}
-        {!zipResult && execution?.status === "fix_not_reproduced" && canPublish ? <Button type="button" variant="outline" disabled={busy} onClick={() => void act("acceptZip")}>Accept unproven ZIP result</Button> : null}
+        {!zipResult && execution?.status === "fix_not_reproduced" && canPublish && !zipResultBuild?.status ? <Button type="button" variant="outline" disabled={busy} onClick={() => void act("acceptZip")}>Accept unproven ZIP result</Button> : null}
         {zipSourceChanged ? <Alert variant="destructive"><AlertDescription>source_changed: the project current version changed since this execution was approved. Re-plan before promoting.</AlertDescription></Alert> : null}
         {publication?.status === "published" && publication.pullRequestUrl ? <Alert><AlertDescription><a className="font-medium underline" href={publication.pullRequestUrl} target="_blank" rel="noreferrer">Pull request #{publication.pullRequestNumber}</a>{publication.baseMovedCommits !== null ? ` · base moved ${publication.baseMovedCommits} commit${publication.baseMovedCommits === 1 ? "" : "s"}` : ""}{publication.unproven ? " · unproven fix" : ""}</AlertDescription></Alert> : null}
         {publication?.status === "source_changed" ? <Alert variant="destructive"><AlertDescription>Source changed in a file named by the approved plan or patch. Re-plan before publishing.</AlertDescription></Alert> : null}
