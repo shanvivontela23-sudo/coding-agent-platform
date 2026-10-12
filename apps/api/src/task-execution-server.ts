@@ -31,7 +31,8 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
         options.service.readiness(session, taskId),
         options.publicationService?.get(session, taskId) ?? Promise.resolve(null),
       ]);
-      json(response, 200, { execution, ...readiness, publication });
+      if (!options.publicationService && readiness.implementationBlocker === null) json(response, 200, { execution });
+      else json(response, 200, { execution, ...readiness, publication });
       return true;
     }
     if (action === "start") {
