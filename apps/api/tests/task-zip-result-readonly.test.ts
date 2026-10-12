@@ -11,15 +11,18 @@ const session = {
 describe("ZIP result polling", () => {
   it("keeps ten concurrent reads storage-write free", async () => {
     const writeVersion = vi.fn();
+    const insertArtifact = vi.fn(async () => { throw new Error("must not save during GET"); });
     const database: TaskZipResultDatabase = {
       getStatus: vi.fn(async () => ({ status: "pending", errorCode: null, errorMessage: null, artifact: null })),
       getContext: vi.fn(async () => null),
       getArtifact: vi.fn(async () => null),
-      saveArtifact: vi.fn(async () => { throw new Error("must not save during GET"); }),
+      insertArtifact,
+      acceptUnproven: vi.fn(async () => null),
+      retryBuild: vi.fn(async () => null),
+      markReady: vi.fn(async () => false),
+      markFailed: vi.fn(async () => false),
       promote: vi.fn(async () => { throw new Error("not used"); }),
       auditDownload: vi.fn(async () => undefined),
-      acceptUnproven: vi.fn(async () => false),
-      retryBuild: vi.fn(async () => false),
     };
     const storage = { readVersion: vi.fn(), writeVersion, deleteVersion: vi.fn(), deleteProject: vi.fn() } as unknown as ProjectStorage;
     const service = createTaskZipResultService({ database, storage, downloadTokens: {} as never, limits: { maxCompressedBytes: 1024, maxUncompressedBytes: 2048, maxFiles: 20, maxFileBytes: 1024, maxNestedArchiveDepth: 1 } });
@@ -28,6 +31,6 @@ describe("ZIP result polling", () => {
 
     expect(results).toHaveLength(10);
     expect(writeVersion).not.toHaveBeenCalled();
-    expect(database.saveArtifact).not.toHaveBeenCalled();
+    expect(insertArtifact).not.toHaveBeenCalled();
   });
 });
