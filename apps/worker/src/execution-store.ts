@@ -130,7 +130,7 @@ export class PostgresExecutionStore implements ExecutionStore {
       );
       await database.query(
         `UPDATE task_executions SET verified_at=COALESCE(verified_at,now()),change_document=$4,result_metadata=result_metadata || $5::jsonb,cost_usd=$6,updated_at=now() WHERE organization_id=$1 AND id=$2 AND task_id=$3`,
-        [execution.organizationId, execution.executionId, execution.taskId, input.changeDocument, JSON.stringify({ verification: input.verification, ...(input.costUsd === null ? { costUnavailable: true } : { costUsd: input.costUsd, costUnavailable: false }) }), input.costUsd],
+        [execution.organizationId, execution.executionId, execution.taskId, input.changeDocument, JSON.stringify({ verification: input.verification, verifiedFiles: input.verification.verifiedFiles, ...(input.costUsd === null ? { costUnavailable: true } : { costUsd: input.costUsd, costUnavailable: false }) }), input.costUsd],
       );
       await database.query(
         `INSERT INTO task_execution_artifacts (id,organization_id,task_id,execution_id,kind,storage_key,sha256,size_bytes,metadata)
