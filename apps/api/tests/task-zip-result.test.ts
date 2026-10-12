@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ProjectStorage } from "../src/project-storage.js";
-import { buildVerifiedZipResult, createTaskZipResultService } from "../src/task-zip-result.js";
+import { buildVerifiedZipResult } from "../src/task-zip-result.js";
 import { readStoredNormalizedZipFiles, validateAndNormalizeZip } from "../src/upload-archive.js";
+import { createZipResultBuilder } from "../../worker/src/zip-result-builder.js";
 
 const limits = { maxCompressedBytes: 1024 * 1024, maxUncompressedBytes: 2 * 1024 * 1024, maxFiles: 100, maxFileBytes: 256 * 1024, maxNestedArchiveDepth: 1 } as const;
 function crc32(input: Uint8Array): number { let crc = 0xffffffff; for (const byte of input) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
@@ -21,10 +22,19 @@ const patch = ["diff --git a/src/a.txt b/src/a.txt","--- a/src/a.txt","+++ b/src
 
 class FakeStorage implements ProjectStorage {
   readonly values = new Map<string, Uint8Array>();
-  async writeVersion(input: { organizationId: string; projectId: string; versionId: string; bytes: Uint8Array }) { const storageKey = `${input.organizationId}/${input.projectId}/${input.versionId}.zip`; this.values.set(storageKey, input.bytes); return { storageKey }; }
+  readonly writeVersion = vi.fn(async (input: { organizationId: string; projectId: string; versionId: string; bytes: Uint8Array }) => { const storageKey = `${input.organizationId}/${input.projectId}/${input.versionId}.zip`; this.values.set(storageKey, input.bytes); return { storageKey }; });
   async readVersion(storageKey: string) { const value = this.values.get(storageKey); if (!value) throw new Error("missing fake object"); return value; }
+  async deleteVersion(storageKey: string) { this.values.delete(storageKey); }
   async deleteProject() {}
 }
+
+const job = {
+  executionId: "50000000-0000-4000-8000-000000000801",
+  organizationId: "00000000-0000-4000-8000-000000000801",
+  taskId: "40000000-0000-4000-8000-000000000801",
+  projectId: "20000000-0000-4000-8000-000000000801",
+  sourceVersionId: "60000000-0000-4000-8000-000000000801",
+};
 
 describe("B4 ZIP result", () => {
   it("builds from the exact approved normalized ZIP, verifies changed bytes, and adds DHARA_CHANGES.md", async () => {
@@ -48,27 +58,35 @@ describe("B4 ZIP result", () => {
     await expect(buildVerifiedZipResult({ approvedZip: approved.normalizedZip, patch, verifiedFiles: [{ path: "src/a.txt", blobSha: "d".repeat(40), mode: "100644", deleted: false }], changeDocument: "note", limits })).rejects.toMatchObject({ code: "PUBLISHED_CONTENT_MISMATCH" });
   });
 
-  it("reads the exact approved version from storage and persists only a result artifact before promotion", async () => {
+  it("worker builder reads the exact approved version and persists one result artifact", async () => {
     const storage = new FakeStorage();
     const approved = await validateAndNormalizeZip(zip([{ name: "repo/src/a.txt", contents: "old\n" }, { name: "repo/package.json", contents: "{}\n" }]), limits);
     storage.values.set("approved.zip", approved.normalizedZip);
-    const saved: unknown[] = [];
-    const service = createTaskZipResultService({
-      storage, limits, downloadTokens: { issue: () => "signed", verify: () => { throw new Error("not used"); } } as never,
-      database: {
-        async getContext() { return { executionId: "50000000-0000-4000-8000-000000000801", taskId: "40000000-0000-4000-8000-000000000801", projectId: "20000000-0000-4000-8000-000000000801", status: "succeeded" as const, sourceVersionId: "60000000-0000-4000-8000-000000000801", sourceStorageKey: "approved.zip", sourceSha256: approved.sha256, resultPatch: patch, changeDocument: "note", verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644" as const, deleted: false }], role: "developer" as const }; },
-        async getArtifact() { return null; }, async saveArtifact(_session: unknown, input: unknown) { saved.push(input); return input as never; }, async promote() { throw new Error("not used"); }, async auditDownload() {},
-      },
-    });
-    await service.getOrCreate({ organizationId: "00000000-0000-4000-8000-000000000801", userId: "10000000-0000-4000-8000-000000000801", expiresAtMs: Date.now() + 1_000 }, "40000000-0000-4000-8000-000000000801");
-    expect(saved).toHaveLength(1);
+    const insert = vi.fn(async () => true);
+    const build = createZipResultBuilder({ storage, artifacts: { insert }, limits });
+    await build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: approved.sha256, resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644", deleted: false }] } });
+    expect(storage.writeVersion).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a stored source whose digest no longer matches the approved version", async () => {
+  it("worker builder refuses a stored source whose digest no longer matches the approved version", async () => {
     const storage = new FakeStorage();
     storage.values.set("approved.zip", zip([{ name: "src/a.txt", contents: "old\n" }]));
-    const service = createTaskZipResultService({ storage, limits, downloadTokens: {} as never, database: { async getContext() { return { executionId: "50000000-0000-4000-8000-000000000802", taskId: "40000000-0000-4000-8000-000000000802", projectId: "20000000-0000-4000-8000-000000000802", status: "succeeded" as const, sourceVersionId: "60000000-0000-4000-8000-000000000802", sourceStorageKey: "approved.zip", sourceSha256: "f".repeat(64), resultPatch: patch, changeDocument: "note", verifiedFiles: [], role: "developer" as const }; }, async getArtifact() { return null; }, async saveArtifact() { throw new Error("must not save"); }, async promote() { throw new Error("not used"); }, async auditDownload() {} } });
-    await expect(service.getOrCreate({ organizationId: "00000000-0000-4000-8000-000000000802", userId: "10000000-0000-4000-8000-000000000802", expiresAtMs: Date.now() + 1_000 }, "40000000-0000-4000-8000-000000000802")).rejects.toMatchObject({ code: "PUBLISHED_CONTENT_MISMATCH" });
+    const insert = vi.fn(async () => true);
+    const build = createZipResultBuilder({ storage, artifacts: { insert }, limits });
+    await expect(build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: "f".repeat(64), resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [] } })).rejects.toThrow("digest");
+    expect(storage.writeVersion).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
     expect(sha256(storage.values.get("approved.zip")!)).not.toBe("f".repeat(64));
+  });
+
+  it("removes a candidate storage object when the artifact insert loses a race", async () => {
+    const storage = new FakeStorage();
+    const approved = await validateAndNormalizeZip(zip([{ name: "repo/src/a.txt", contents: "old\n" }, { name: "repo/package.json", contents: "{}\n" }]), limits);
+    storage.values.set("approved.zip", approved.normalizedZip);
+    const build = createZipResultBuilder({ storage, artifacts: { insert: vi.fn(async () => false) }, limits });
+    await build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: approved.sha256, resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644", deleted: false }] } });
+    expect(storage.writeVersion).toHaveBeenCalledTimes(1);
+    expect([...storage.values.keys()]).toEqual(["approved.zip"]);
   });
 });
