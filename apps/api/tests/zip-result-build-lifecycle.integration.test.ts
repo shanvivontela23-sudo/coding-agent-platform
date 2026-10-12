@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTaskZipResultDatabase } from "../src/task-zip-result-database.js";
 import type { TenantPool } from "../src/database.js";
 import { PostgresExecutionQueue, type RestrictedQueryPool } from "../../worker/src/postgres-execution-queue.js";
-import { PostgresZipResultBuildQueue } from "../../worker/src/postgres-zip-result-build-queue.js";
+import { PostgresZipResultArtifactStore, PostgresZipResultBuildQueue } from "../../worker/src/postgres-zip-result-build-queue.js";
 import { runZipResultBuildWorkerOnce } from "../../worker/src/zip-result-build-worker.js";
 
 const baseDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -76,9 +76,14 @@ describe.skipIf(!baseDatabaseUrl)("ZIP result build lifecycle", () => {
     const pending = await adminPool!.query<{ zip_build_status: string }>(`SELECT zip_build_status FROM task_executions WHERE id=$1`, [execution]);
     expect(pending.rows[0]!.zip_build_status).toBe("pending");
 
-    const queue = new PostgresZipResultBuildQueue(workerPool! as unknown as RestrictedQueryPool);
+    const restricted = workerPool! as unknown as RestrictedQueryPool;
+    const queue = new PostgresZipResultBuildQueue(restricted);
+    const artifacts = new PostgresZipResultArtifactStore(restricted);
     const storageWrite = vi.fn(async () => undefined);
-    const build = vi.fn(async () => { await storageWrite(); });
+    const build = vi.fn(async () => {
+      await storageWrite();
+      await expect(artifacts.complete({ executionId: execution, artifactId: "70000000-0000-4000-8000-000000000931", storageKey: "result.zip", sha256: "c".repeat(64), sizeBytes: 200, fileCount: 3 })).resolves.toBe("inserted");
+    });
     await runZipResultBuildWorkerOnce({ queue, build });
     await runZipResultBuildWorkerOnce({ queue, build });
 
@@ -86,6 +91,8 @@ describe.skipIf(!baseDatabaseUrl)("ZIP result build lifecycle", () => {
     expect(storageWrite).toHaveBeenCalledTimes(1);
     const ready = await adminPool!.query<{ zip_build_status: string }>(`SELECT zip_build_status FROM task_executions WHERE id=$1`, [execution]);
     expect(ready.rows[0]!.zip_build_status).toBe("ready");
+    const artifactsCount = await adminPool!.query<{ count: string }>(`SELECT count(*)::text AS count FROM task_execution_artifacts WHERE execution_id=$1 AND kind='zip_result'`, [execution]);
+    expect(artifactsCount.rows[0]!.count).toBe("1");
   });
 
   it("a retry POST racing the worker has only one builder claimant", async () => {
