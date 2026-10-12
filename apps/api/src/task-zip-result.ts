@@ -98,9 +98,11 @@ export async function buildVerifiedZipResult(input: { readonly approvedZip: Uint
 }
 
 export function createTaskZipResultService(options: { readonly database: TaskZipResultDatabase; readonly storage: ProjectStorage; readonly downloadTokens: ProjectDownloadTokenService; readonly limits: UploadArchiveLimits }) {
+  async function contextFor(session: SessionIdentity, taskId: string): Promise<TaskZipResultContext | null> { return await options.database.getContext(session, taskId); }
   async function getOrCreate(session: SessionIdentity, taskId: string, acceptUnproven = false): Promise<TaskZipResultArtifact | null> {
-    const context = await options.database.getContext(session, taskId); if (!context) return null;
+    const context = await contextFor(session, taskId); if (!context) return null;
     if (context.status === "fix_not_reproduced" && !acceptUnproven) return await options.database.getArtifact(session, context.executionId);
+    if (context.status === "fix_not_reproduced" && acceptUnproven && context.role !== "owner" && context.role !== "developer") throw new AppError("ZIP_UNPROVEN_ACCEPT_FORBIDDEN", "Only a developer or owner can accept an unproven ZIP result.", 403);
     const existing = await options.database.getArtifact(session, context.executionId); if (existing) return existing;
     const approvedZip = await options.storage.readVersion(context.sourceStorageKey);
     const built = await buildVerifiedZipResult({ approvedZip, patch: context.resultPatch, verifiedFiles: context.verifiedFiles, changeDocument: context.changeDocument, limits: options.limits });
@@ -109,9 +111,10 @@ export function createTaskZipResultService(options: { readonly database: TaskZip
   }
   return {
     getOrCreate,
+    async getPatch(session: SessionIdentity, taskId: string) { const context = await contextFor(session, taskId); if (!context) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return context.resultPatch; },
     async acceptUnproven(session: SessionIdentity, taskId: string) { return await getOrCreate(session, taskId, true); },
     async promote(session: SessionIdentity, taskId: string) { const artifact = await getOrCreate(session, taskId, true); if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return await options.database.promote(session, artifact); },
     async issueDownloadToken(session: SessionIdentity, taskId: string) { const artifact = await getOrCreate(session, taskId); if (!artifact) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP is unavailable.", 409); return options.downloadTokens.issue({ organizationId: session.organizationId, userId: session.userId, projectId: artifact.projectId, projectVersionId: artifact.artifactVersionId }); },
-    async download(session: SessionIdentity, taskId: string, token: string) { let claims; try { claims = options.downloadTokens.verify(token); } catch { throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); } const artifact = await getOrCreate(session, taskId, true); if (!artifact || claims.organizationId !== session.organizationId || claims.userId !== session.userId || claims.projectId !== artifact.projectId || claims.projectVersionId !== artifact.artifactVersionId) throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); const bytes = await options.storage.readVersion(artifact.storageKey); await options.database.auditDownload(session, artifact); return { bytes, filename: `${artifact.projectId}-dhara-result.zip` }; },
+    async download(session: SessionIdentity, taskId: string, token: string) { let claims; try { claims = options.downloadTokens.verify(token); } catch { throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); } const artifact = await getOrCreate(session, taskId, false); if (!artifact || claims.organizationId !== session.organizationId || claims.userId !== session.userId || claims.projectId !== artifact.projectId || claims.projectVersionId !== artifact.artifactVersionId) throw new AppError("PROJECT_DOWNLOAD_INVALID", "Download link is invalid or expired.", 403); const bytes = await options.storage.readVersion(artifact.storageKey); await options.database.auditDownload(session, artifact); return { bytes, filename: `${artifact.projectId}-dhara-result.zip` }; },
   };
 }
