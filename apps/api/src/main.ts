@@ -28,6 +28,8 @@ import { createTaskPublicationDatabase } from "./task-publication-database.js";
 import { createTaskPublicationService } from "./task-publication-service.js";
 import { attachTaskRoutes } from "./task-server.js";
 import { createTaskPlanningService, createTaskReadService, type TaskPlanningService } from "./task-service.js";
+import { createTaskZipResultDatabase } from "./task-zip-result-database.js";
+import { createTaskZipResultService } from "./task-zip-result.js";
 import { createTicketCipher } from "./ticket-crypto.js";
 import { createUploadProjectDatabase } from "./upload-project-database.js";
 import type { UploadArchiveLimits } from "./upload-archive.js";
@@ -84,12 +86,13 @@ const uploadLimits: UploadArchiveLimits = {
 };
 const uploadDatabase = createUploadProjectDatabase(tenantPool);
 const projectStorage = new LocalProjectStorage({ rootDir: process.env.PROJECT_STORAGE_ROOT?.trim() || join(homedir(), ".dhara", "storage") });
+const projectDownloadTokens = new ProjectDownloadTokenService({ secret: process.env.PROJECT_DOWNLOAD_TOKEN_SECRET?.trim() || sessionSecret });
 const product07Service = createProduct07Service({
   database: uploadDatabase,
   productDatabase: database,
   storage: projectStorage,
   githubApp,
-  downloadTokens: new ProjectDownloadTokenService({ secret: process.env.PROJECT_DOWNLOAD_TOKEN_SECRET?.trim() || sessionSecret }),
+  downloadTokens: projectDownloadTokens,
   limits: uploadLimits,
 });
 
@@ -107,6 +110,12 @@ const taskPublicationService = createTaskPublicationService({
   database: createTaskPublicationDatabase(tenantPool),
   publisher: new GitHubExecutionPublisher(githubPublicationClient),
   githubApp: githubPermissions,
+});
+const taskZipResultService = createTaskZipResultService({
+  database: createTaskZipResultDatabase(tenantPool),
+  storage: projectStorage,
+  downloadTokens: projectDownloadTokens,
+  limits: uploadLimits,
 });
 let taskPlanningService: TaskPlanningService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
@@ -146,7 +155,7 @@ const productServer = createApiServer({
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
 const taskServer = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
-const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService });
+const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };
