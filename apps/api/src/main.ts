@@ -106,6 +106,7 @@ const taskExecutionService = createTaskExecutionService({
 const taskPublicationService = createTaskPublicationService({
   database: createTaskPublicationDatabase(tenantPool),
   publisher: new GitHubExecutionPublisher(githubPublicationClient),
+  githubApp: githubPermissions,
 });
 let taskPlanningService: TaskPlanningService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
