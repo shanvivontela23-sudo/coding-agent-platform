@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SandboxCommand, SandboxCommandResult, SandboxCreateRequest, SandboxNetworkPhase, SandboxPatch, SandboxProvider, SandboxSession, SandboxSnapshot } from "../../../evals/src/sandbox/types.js";
+import type { SandboxCommand, SandboxCommandResult, SandboxPatch, SandboxProvider, SandboxSession, SandboxSnapshot } from "../../../evals/src/sandbox/types.js";
 import type { PreparedExecutionSource } from "../src/execution-source.js";
 import { verifyExecution } from "../src/verification.js";
 
@@ -34,14 +34,14 @@ class Session implements SandboxSession {
   }
   async readFile(): Promise<string> { return ""; }
   async writeFile(): Promise<void> {}
-  async setNetworkPhase(_phase: SandboxNetworkPhase): Promise<void> {}
+  async setNetworkPhase(): Promise<void> {}
   async exportPatch(): Promise<SandboxPatch> { return { patch: "", status: "" }; }
   async snapshot(): Promise<SandboxSnapshot> { return { id: `${this.id}-snapshot` }; }
   async destroy(): Promise<void> {}
 }
 class Provider implements SandboxProvider {
   count = 0;
-  async create(_request: SandboxCreateRequest): Promise<SandboxSession> { this.count += 1; return new Session(this.count === 1 ? "baseline" : "patched"); }
+  async create(): Promise<SandboxSession> { this.count += 1; return new Session(this.count === 1 ? "baseline" : "patched"); }
 }
 
 describe("B3 verified file manifest", () => {
