@@ -24,33 +24,41 @@ function crc32(input: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function zip(name: string, contents: string): Uint8Array {
-  const filename = Buffer.from(name);
-  const data = Buffer.from(contents);
-  const crc = crc32(data);
-  const local = Buffer.alloc(30);
-  local.writeUInt32LE(0x04034b50, 0);
-  local.writeUInt16LE(20, 4);
-  local.writeUInt32LE(crc, 14);
-  local.writeUInt32LE(data.length, 18);
-  local.writeUInt32LE(data.length, 22);
-  local.writeUInt16LE(filename.length, 26);
-  const directory = Buffer.alloc(46);
-  directory.writeUInt32LE(0x02014b50, 0);
-  directory.writeUInt16LE((3 << 8) | 20, 4);
-  directory.writeUInt16LE(20, 6);
-  directory.writeUInt32LE(crc, 16);
-  directory.writeUInt32LE(data.length, 20);
-  directory.writeUInt32LE(data.length, 24);
-  directory.writeUInt16LE(filename.length, 28);
-  directory.writeUInt32LE((0o100644 << 16) >>> 0, 38);
-  directory.writeUInt32LE(0, 42);
-  const localBytes = Buffer.concat([local, filename, data]);
-  const centralBytes = Buffer.concat([directory, filename]);
+function zip(entries: readonly { readonly name: string; readonly contents: string }[]): Uint8Array {
+  const locals: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const data = Buffer.from(entry.contents);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, data);
+    const directory = Buffer.alloc(46);
+    directory.writeUInt32LE(0x02014b50, 0);
+    directory.writeUInt16LE((3 << 8) | 20, 4);
+    directory.writeUInt16LE(20, 6);
+    directory.writeUInt32LE(crc, 16);
+    directory.writeUInt32LE(data.length, 20);
+    directory.writeUInt32LE(data.length, 24);
+    directory.writeUInt16LE(name.length, 28);
+    directory.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    directory.writeUInt32LE(offset, 42);
+    central.push(directory, name);
+    offset += local.length + name.length + data.length;
+  }
+  const localBytes = Buffer.concat(locals);
+  const centralBytes = Buffer.concat(central);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(1, 8);
-  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(centralBytes.length, 12);
   eocd.writeUInt32LE(localBytes.length, 16);
   return Buffer.concat([localBytes, centralBytes, eocd]);
@@ -79,7 +87,10 @@ const patch = [
 ].join("\n");
 
 async function preparedSource(storage: LocalProjectStorage) {
-  const approved = await validateAndNormalizeZip(zip("repo/src/a.txt", "old\n"), limits);
+  const approved = await validateAndNormalizeZip(zip([
+    { name: "repo/src/a.txt", contents: "old\n" },
+    { name: "repo/package.json", contents: "{}\n" },
+  ]), limits);
   const source = await storage.writeVersion({
     organizationId: job.organizationId,
     projectId: job.projectId,
