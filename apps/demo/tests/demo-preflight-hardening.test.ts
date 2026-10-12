@@ -20,7 +20,7 @@ describe("demo preflight hardening", () => {
   });
 
   it("checks the accepted installation permission endpoint, not GET /app", async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify({ permissions: { contents: "write" } }), { status: 200 }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ permissions: { contents: "write" } }), { status: 200 }));
     await checkInstallationContentsWrite({ installationId: 456789, appJwt: "jwt", fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(String(fetchImpl.mock.calls[0]?.[0])).toBe("https://api.github.com/app/installations/456789");
