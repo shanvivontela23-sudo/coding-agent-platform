@@ -41,6 +41,8 @@ export class LocalProjectStorage implements ProjectStorage {
 
   async readVersion(storageKey: string): Promise<Uint8Array> { return await readFile(storageKeyPath(this.rootDir, storageKey)); }
 
+  async deleteVersion(storageKey: string): Promise<void> { await rm(storageKeyPath(this.rootDir, storageKey), { force: true }); }
+
   async deleteProject(organizationIdValue: string, projectIdValue: string): Promise<void> {
     const organizationId = safeSegment(organizationIdValue, "organizationId"); const projectId = safeSegment(projectIdValue, "projectId");
     const target = resolve(this.rootDir, organizationId, projectId); const rel = relative(this.rootDir, target);
