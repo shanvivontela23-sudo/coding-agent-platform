@@ -4,9 +4,10 @@ import type { ProjectStorage } from "../../api/src/project-storage.js";
 import type { UploadArchiveLimits } from "../../api/src/upload-archive.js";
 import type { VerifiedFile } from "./verification.js";
 import type { ZipResultBuildJob } from "./zip-result-build-worker.js";
+import type { ZipResultCompletion } from "./postgres-zip-result-build-queue.js";
 
 export interface ZipResultArtifactStore {
-  insert(input: { readonly executionId: string; readonly artifactId: string; readonly storageKey: string; readonly sha256: string; readonly sizeBytes: number; readonly fileCount: number }): Promise<boolean>;
+  complete(input: { readonly executionId: string; readonly artifactId: string; readonly storageKey: string; readonly sha256: string; readonly sizeBytes: number; readonly fileCount: number }): Promise<ZipResultCompletion>;
 }
 
 type CleanupStorage = ProjectStorage & { deleteVersion?(storageKey: string): Promise<void> };
@@ -39,10 +40,11 @@ export function createZipResultBuilder(options: { readonly storage: CleanupStora
     const artifactId = randomUUID();
     const stored = await options.storage.writeVersion({ organizationId: job.organizationId, projectId: job.projectId, versionId: artifactId, bytes: built.bytes });
     try {
-      const inserted = await options.artifacts.insert({ executionId: job.executionId, artifactId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount });
-      if (!inserted) {
-        if (!options.storage.deleteVersion) throw new Error("ZIP result artifact lost an insert race but storage cleanup is unavailable.");
+      const completion = await options.artifacts.complete({ executionId: job.executionId, artifactId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount });
+      if (completion !== "inserted") {
+        if (!options.storage.deleteVersion) throw new Error("ZIP result artifact was not adopted but storage cleanup is unavailable.");
         await options.storage.deleteVersion(stored.storageKey);
+        if (completion === "lost") throw new Error("ZIP result build ownership was lost before completion.");
       }
     } catch (error) {
       if (options.storage.deleteVersion) await options.storage.deleteVersion(stored.storageKey).catch(() => undefined);
