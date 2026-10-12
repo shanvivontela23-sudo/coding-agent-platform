@@ -2,7 +2,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { AppError, isSafeErrorCode } from "./errors.js";
 import { genericRequestFailureMessage, logRequestError, tenantSessionFromRequest } from "./http-request.js";
 import type { TaskExecutionService } from "./task-execution-service.js";
-import type { TaskPublicationService } from "./task-publication-service.js";
+import { TaskPublicationInProgressError, type TaskPublicationService } from "./task-publication-service.js";
 
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.statusCode = status;
@@ -51,6 +51,10 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
     const logged = logRequestError(request, url.pathname, error);
     if (isSafeErrorCode(error, "AUTH_REQUIRED")) {
       json(response, 401, { code: "AUTH_REQUIRED", error: "Please sign in to continue." });
+      return true;
+    }
+    if (error instanceof TaskPublicationInProgressError) {
+      json(response, 409, { code: error.code, error: error.publicMessage, publication: error.publication });
       return true;
     }
     const status = error instanceof AppError ? error.status : 500;
