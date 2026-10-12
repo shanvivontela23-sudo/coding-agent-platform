@@ -22,7 +22,7 @@ export async function POST(request: Request, context: Context) {
   const { taskId } = await context.params;
   let action: unknown;
   try { action = (await request.json() as { readonly action?: unknown }).action; } catch { action = null; }
-  if (action !== "start" && action !== "cancel" && action !== "publish") return NextResponse.json({ code: "INVALID_ACTION", error: "Invalid implementation action." }, { status: 400 });
-  const backendAction = action === "publish" ? "publication" : action;
+  if (action !== "start" && action !== "cancel" && action !== "publish" && action !== "acceptZip" && action !== "promoteZip") return NextResponse.json({ code: "INVALID_ACTION", error: "Invalid implementation action." }, { status: 400 });
+  const backendAction = action === "publish" ? "publication" : action === "acceptZip" ? "zip-result/accept-unproven" : action === "promoteZip" ? "zip-result/promote" : action;
   return await proxy(`/api/tasks/${encodeURIComponent(taskId)}/execution/${backendAction}`, "POST");
 }
