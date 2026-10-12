@@ -1,4 +1,5 @@
 import type { SandboxCommandResult, SandboxProvider, SandboxSession } from "../../../evals/src/sandbox/types.js";
+import { boundedDependencyInstallFailureDetail } from "./change-document.js";
 import type { PreparedExecutionSource } from "./execution-source.js";
 import { testOnlyPatch } from "./patch-parser.js";
 
@@ -31,7 +32,6 @@ export type VerificationResult = {
   readonly reproduce: ReproduceProof;
 };
 type GeneralRun = { readonly checks: ReadonlyMap<string, SandboxCommandResult> };
-
 type SetupResult = { readonly complete: true } | { readonly complete: false; readonly reason: string };
 
 function abortError(timedOut = false): Error { return new Error(timedOut ? "verification stage timed out" : "execution aborted"); }
@@ -80,7 +80,7 @@ async function prepareSession(session: SandboxSession, source: PreparedExecution
   await session.setNetworkPhase("offline");
   assertNotAborted(signal, timedOut());
   if (install.exitCode !== 0) {
-    const detail = output(install);
+    const detail = boundedDependencyInstallFailureDetail(output(install));
     return { complete: false, reason: detail ? `Dependency installation failed before verification: ${detail}` : "Dependency installation failed before verification." };
   }
   return { complete: true };
