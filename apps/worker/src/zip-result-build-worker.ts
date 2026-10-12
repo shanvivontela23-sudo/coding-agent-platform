@@ -34,7 +34,8 @@ export async function processClaimedZipResultBuild(options: {
 }): Promise<void> {
   try {
     await options.build(options.job);
-    await options.queue.markReady(options.job.executionId);
+    const ready = await options.queue.markReady(options.job.executionId);
+    if (!ready) throw new Error("ZIP result build ownership was lost before completion.");
   } catch (error) {
     await options.queue.markFailed(options.job.executionId, "ZIP_RESULT_FAILED", sanitizeZipResultBuildFailure(error));
   }
