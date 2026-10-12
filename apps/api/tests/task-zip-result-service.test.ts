@@ -8,7 +8,7 @@ const artifact: TaskZipResultArtifact = { executionId: "50000000-0000-4000-8000-
 function context(role: "owner" | "developer" | "rep"): TaskZipResultContext { return { executionId: artifact.executionId, taskId: artifact.taskId, projectId: artifact.projectId, status: "fix_not_reproduced", sourceVersionId: artifact.sourceVersionId, sourceStorageKey: "source.zip", sourceSha256: "0".repeat(64), resultPatch: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n", changeDocument: "note", verifiedFiles: [{ path: "a.txt", blobSha: "b".repeat(40), mode: "100644", deleted: false }], role }; }
 function database(role: "owner" | "developer" | "rep", existing: TaskZipResultArtifact | null = artifact): TaskZipResultDatabase {
   return {
-    getStatus: vi.fn(async () => ({ status: existing ? "ready" : null, errorCode: null, errorMessage: null, artifact: existing })),
+    getStatus: vi.fn(async () => ({ status: existing ? ("ready" as const) : null, errorCode: null, errorMessage: null, artifact: existing })),
     getContext: vi.fn(async () => context(role)),
     getArtifact: vi.fn(async () => existing),
     insertArtifact: vi.fn(async () => true),
