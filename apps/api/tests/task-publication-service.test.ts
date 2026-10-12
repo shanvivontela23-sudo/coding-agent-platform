@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TaskPublicationInProgressError, createTaskPublicationService, type TaskPublishContext } from "../src/task-publication-service.js";
+import { TaskPublicationInProgressError, createTaskPublicationService, type PublicationClaim, type TaskPublishContext } from "../src/task-publication-service.js";
 
 const session = { userId: "10000000-0000-4000-8000-000000000601", organizationId: "00000000-0000-4000-8000-000000000601", expiresAtMs: Date.now() + 60_000 };
 const taskId = "40000000-0000-4000-8000-000000000601";
@@ -24,7 +24,7 @@ function setup(overrides: Partial<TaskPublishContext> = {}, existing: ExistingPu
   const database = {
     getPublishContext: vi.fn(async () => context),
     getLatest: vi.fn(async () => existing),
-    markPublishing: vi.fn(async () => ({ state: "acquired" as const, record: publishingRecord })),
+    markPublishing: vi.fn<() => Promise<PublicationClaim>>(async () => ({ state: "acquired", record: publishingRecord })),
     markPublished: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
     markSourceChanged: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
     markFailed: vi.fn(async (_session: typeof session, _taskId: string, failure: unknown) => failure),
@@ -67,7 +67,7 @@ describe("task publication service", () => {
 
   it("returns 409 semantics when another request already owns publishing", async () => {
     const { service, database, publisher } = setup();
-    const record = { status: "publishing", executionId: base.executionId };
+    const record = { status: "publishing", executionId: base.executionId, branchName: `dhara/execution-${base.executionId}` };
     database.markPublishing.mockResolvedValueOnce({ state: "publishing", record });
     await expect(service.publish(session, taskId)).rejects.toEqual(expect.objectContaining({ code: "TASK_PUBLICATION_IN_PROGRESS", status: 409, publicMessage: "Publishing is already in progress", publication: record } satisfies Partial<TaskPublicationInProgressError>));
     expect(publisher.publish).not.toHaveBeenCalled();
