@@ -28,6 +28,10 @@ export interface TaskPublicationService {
   publish(session: SessionIdentity, taskId: string): Promise<unknown>;
 }
 
+function isPublished(value: unknown): value is { readonly status: "published"; readonly executionId?: string } {
+  return typeof value === "object" && value !== null && (value as { readonly status?: unknown }).status === "published";
+}
+
 export function createTaskPublicationService(options: {
   readonly database: TaskPublicationDatabase;
   readonly publisher: Pick<GitHubExecutionPublisher, "publish">;
@@ -39,6 +43,9 @@ export function createTaskPublicationService(options: {
       if (!context) throw new AppError("TASK_PUBLICATION_NOT_FOUND", "No implementation result is available to publish.", 404);
       if (context.currentUserRole !== "developer" && context.currentUserRole !== "owner") throw new AppError("TASK_PUBLICATION_FORBIDDEN", "Only a developer or owner can publish this implementation.", 403);
       if (context.executionStatus !== "succeeded" && context.executionStatus !== "fix_not_reproduced") throw new AppError("TASK_PUBLICATION_NOT_ALLOWED", "This implementation result cannot be published.", 409);
+      const existing = options.database.getLatest ? await options.database.getLatest(session, taskId) : null;
+      if (isPublished(existing) && (!existing.executionId || existing.executionId === context.executionId)) return existing;
+
       const unproven = context.executionStatus === "fix_not_reproduced";
       const branchName = `dhara/execution-${context.executionId.toLowerCase()}`;
       await options.database.markPublishing(session, taskId, { executionId: context.executionId, branchName, unproven });
