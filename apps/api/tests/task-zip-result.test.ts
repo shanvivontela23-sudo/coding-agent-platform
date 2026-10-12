@@ -58,33 +58,33 @@ describe("B4 ZIP result", () => {
     await expect(buildVerifiedZipResult({ approvedZip: approved.normalizedZip, patch, verifiedFiles: [{ path: "src/a.txt", blobSha: "d".repeat(40), mode: "100644", deleted: false }], changeDocument: "note", limits })).rejects.toMatchObject({ code: "PUBLISHED_CONTENT_MISMATCH" });
   });
 
-  it("worker builder reads the exact approved version and persists one result artifact", async () => {
+  it("worker builder reads the exact approved version and atomically completes one result artifact", async () => {
     const storage = new FakeStorage();
     const approved = await validateAndNormalizeZip(zip([{ name: "repo/src/a.txt", contents: "old\n" }, { name: "repo/package.json", contents: "{}\n" }]), limits);
     storage.values.set("approved.zip", approved.normalizedZip);
-    const insert = vi.fn(async () => true);
-    const build = createZipResultBuilder({ storage, artifacts: { insert }, limits });
+    const complete = vi.fn(async () => "inserted" as const);
+    const build = createZipResultBuilder({ storage, artifacts: { complete }, limits });
     await build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: approved.sha256, resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644", deleted: false }] } });
     expect(storage.writeVersion).toHaveBeenCalledTimes(1);
-    expect(insert).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   it("worker builder refuses a stored source whose digest no longer matches the approved version", async () => {
     const storage = new FakeStorage();
     storage.values.set("approved.zip", zip([{ name: "src/a.txt", contents: "old\n" }]));
-    const insert = vi.fn(async () => true);
-    const build = createZipResultBuilder({ storage, artifacts: { insert }, limits });
+    const complete = vi.fn(async () => "inserted" as const);
+    const build = createZipResultBuilder({ storage, artifacts: { complete }, limits });
     await expect(build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: "f".repeat(64), resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [] } })).rejects.toThrow("digest");
     expect(storage.writeVersion).not.toHaveBeenCalled();
-    expect(insert).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
     expect(sha256(storage.values.get("approved.zip")!)).not.toBe("f".repeat(64));
   });
 
-  it("removes a candidate storage object when the artifact insert loses a race", async () => {
+  it("removes a candidate storage object when artifact completion finds an existing winner", async () => {
     const storage = new FakeStorage();
     const approved = await validateAndNormalizeZip(zip([{ name: "repo/src/a.txt", contents: "old\n" }, { name: "repo/package.json", contents: "{}\n" }]), limits);
     storage.values.set("approved.zip", approved.normalizedZip);
-    const build = createZipResultBuilder({ storage, artifacts: { insert: vi.fn(async () => false) }, limits });
+    const build = createZipResultBuilder({ storage, artifacts: { complete: vi.fn(async () => "existing" as const) }, limits });
     await build({ ...job, sourceStorageKey: "approved.zip", sourceSha256: approved.sha256, resultPatch: patch, changeDocument: "note", resultMetadata: { verifiedFiles: [{ path: "src/a.txt", blobSha: gitBlobSha(Buffer.from("new\n")), mode: "100644", deleted: false }] } });
     expect(storage.writeVersion).toHaveBeenCalledTimes(1);
     expect([...storage.values.keys()]).toEqual(["approved.zip"]);
