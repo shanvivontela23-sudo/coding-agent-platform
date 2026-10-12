@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSessionToken } from "../src/auth.js";
 import type { TenantPool } from "../src/database.js";
+import { GitHubExecutionPublisher } from "../src/github-publication.js";
 import { attachTaskExecutionRoutes } from "../src/task-execution-server.js";
 import type { TaskExecutionService } from "../src/task-execution-service.js";
 import { createTaskPublicationDatabase } from "../src/task-publication-database.js";
@@ -72,18 +73,23 @@ afterAll(async () => {
 }, 30_000);
 
 describe.skipIf(!baseDatabaseUrl)("concurrent GitHub publication", () => {
-  it("lets exactly one request publish and returns 409 with the current record to the other", async () => {
-    let releasePublish!: () => void;
-    let enteredPublish!: () => void;
-    const entered = new Promise<void>((resolve) => { enteredPublish = resolve; });
-    const release = new Promise<void>((resolve) => { releasePublish = resolve; });
-    const publisher = {
-      publish: vi.fn(async () => {
-        enteredPublish();
+  it("lets exactly one request create the PR and returns 409 with the current record to the other", async () => {
+    let releaseCreate!: () => void;
+    let enteredCreate!: () => void;
+    const entered = new Promise<void>((resolve) => { enteredCreate = resolve; });
+    const release = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const operation = {
+      getDefaultBranchHead: vi.fn(async () => ({ sha: commit })),
+      compareCommits: vi.fn(async () => ({ aheadBy: 0, files: [] as readonly string[] })),
+      ensurePatchedBranch: vi.fn(async () => ({ headSha: "b".repeat(40) })),
+      findOpenPullRequest: vi.fn(async () => null),
+      createPullRequest: vi.fn(async () => {
+        enteredCreate();
         await release;
-        return { status: "published" as const, branchName: `dhara/execution-${execution}`, baseMovedCommits: 0, currentHeadSha: commit, branchHeadSha: "b".repeat(40), pullRequestNumber: 17, pullRequestUrl: "https://github.com/acme/demo/pull/17" };
+        return { number: 17, url: "https://github.com/acme/demo/pull/17" };
       }),
     };
+    const publisher = new GitHubExecutionPublisher({ beginPublishOperation: vi.fn(async () => operation) });
     const publicationService = createTaskPublicationService({
       database: createTaskPublicationDatabase(apiPool! as unknown as TenantPool),
       publisher,
@@ -109,12 +115,12 @@ describe.skipIf(!baseDatabaseUrl)("concurrent GitHub publication", () => {
       expect(second.status).toBe(409);
       const secondBody = await second.json() as { code: string; error: string; publication: { status: string; executionId: string } };
       expect(secondBody).toMatchObject({ code: "TASK_PUBLICATION_IN_PROGRESS", error: "Publishing is already in progress", publication: { status: "publishing", executionId: execution } });
-      releasePublish();
+      releaseCreate();
       const first = await firstPromise;
       expect(first.status).toBe(200);
-      expect(publisher.publish).toHaveBeenCalledTimes(1);
+      expect(operation.createPullRequest).toHaveBeenCalledTimes(1);
     } finally {
-      releasePublish();
+      releaseCreate();
       server.close();
       await once(server, "close");
     }
