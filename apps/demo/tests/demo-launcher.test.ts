@@ -42,6 +42,20 @@ describe("demo launcher plan", () => {
     expect(plan.ngrok.args).toEqual(expect.arrayContaining(["http", "8080"]));
   });
 
+  it("gives each child only the credentials it needs", () => {
+    const plan = createDemoLaunchPlan(config(), "https://demo-tunnel.ngrok.app");
+    expect(plan.web.env).toEqual({ NEXT_PUBLIC_API_ORIGIN: "http://localhost:3101", PORT: "3000" });
+    expect(plan.api.env.DEMO_DATABASE_ADMIN_URL).toBeUndefined();
+    expect(plan.api.env.DEMO_WORKER_DATABASE_URL).toBeUndefined();
+    expect(plan.api.env.E2B_API_KEY).toBeUndefined();
+    expect(plan.api.env.NGROK_AUTHTOKEN).toBeUndefined();
+    expect(plan.worker.env.DEMO_DATABASE_ADMIN_URL).toBeUndefined();
+    expect(plan.worker.env.SUPABASE_FLOW_SECRET).toBeUndefined();
+    expect(plan.worker.env.GITHUB_APP_CLIENT_SECRET).toBeUndefined();
+    expect(plan.compose.env.SUPABASE_FLOW_SECRET).toBeUndefined();
+    expect(plan.ngrok.env).toEqual({ NGROK_AUTHTOKEN: secret });
+  });
+
   it("renders a public launch summary without secret values", () => {
     expect(publicLaunchPlan(createDemoLaunchPlan(config(), "https://demo-tunnel.ngrok.app"), config())).not.toContain(secret);
   });
