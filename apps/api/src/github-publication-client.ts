@@ -94,15 +94,30 @@ export class GitHubRestPublicationClient implements GitHubPublicationClient {
     if (!response.ok) throw new Error(`GitHub publication request failed (${response.status})`);
     return await jsonObject(response);
   }
+  private async contentSha(fullName: string, path: string, ref: string): Promise<string | null> {
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const response = await this.request(fullName, `/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GitHub protected-file lookup failed (${response.status})`);
+    const body = await jsonObject(response);
+    return stringField(body.sha, "content sha");
+  }
   async getDefaultBranchHead(input: { repositoryFullName: string; defaultBranch: string }) {
     const body = await this.api(input.repositoryFullName, `/git/ref/heads/${encodeURIComponent(input.defaultBranch)}`);
     const object = body.object as Record<string, unknown> | undefined;
     return { sha: stringField(object?.sha, "ref sha") };
   }
-  async compareCommits(input: { repositoryFullName: string; baseSha: string; headSha: string }) {
+  async compareCommits(input: { repositoryFullName: string; baseSha: string; headSha: string; protectedPaths: readonly string[] }) {
     const body = await this.api(input.repositoryFullName, `/compare/${input.baseSha}...${input.headSha}`);
-    const files = Array.isArray(body.files) ? body.files.map((item) => typeof item === "object" && item !== null ? (item as Record<string, unknown>).filename : null).filter((value): value is string => typeof value === "string") : [];
     const aheadBy = typeof body.ahead_by === "number" && Number.isSafeInteger(body.ahead_by) ? body.ahead_by : 0;
+    const files: string[] = [];
+    for (const path of input.protectedPaths) {
+      const [before, after] = await Promise.all([
+        this.contentSha(input.repositoryFullName, path, input.baseSha),
+        this.contentSha(input.repositoryFullName, path, input.headSha),
+      ]);
+      if (before !== after) files.push(path);
+    }
     return { aheadBy, files };
   }
   async ensurePatchedBranch(input: { repositoryFullName: string; branchName: string; approvedSha: string; patch: string }) {
