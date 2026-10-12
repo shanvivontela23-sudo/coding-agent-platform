@@ -28,6 +28,7 @@ const requiredNames = [
   "POSTGRES_PASSWORD",
   "ANTHROPIC_API_KEY",
   "TASK_MODEL_NAME",
+  "HARNESS_MODEL_PRICES_JSON",
   "NGROK_AUTHTOKEN",
 ] as const;
 

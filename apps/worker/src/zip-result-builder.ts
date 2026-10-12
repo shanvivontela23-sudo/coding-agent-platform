@@ -10,7 +10,7 @@ export interface ZipResultArtifactStore {
   complete(input: { readonly executionId: string; readonly artifactId: string; readonly storageKey: string; readonly sha256: string; readonly sizeBytes: number; readonly fileCount: number }): Promise<ZipResultCompletion>;
 }
 
-type CleanupStorage = ProjectStorage & { deleteVersion?(storageKey: string): Promise<void> };
+type CleanupStorage = ProjectStorage & { deleteVersion(storageKey: string): Promise<void> };
 
 function sha256(bytes: Uint8Array): string { return createHash("sha256").update(bytes).digest("hex"); }
 function verifiedFiles(metadata: Readonly<Record<string, unknown>>): readonly VerifiedFile[] {
@@ -27,7 +27,13 @@ function verifiedFiles(metadata: Readonly<Record<string, unknown>>): readonly Ve
 }
 function required(value: string | undefined, label: string): string { if (!value) throw new Error(`${label} is unavailable`); return value; }
 
-export function createZipResultBuilder(options: { readonly storage: CleanupStorage; readonly artifacts: ZipResultArtifactStore; readonly limits: UploadArchiveLimits }) {
+export function createZipResultBuilder(options: {
+  readonly storage: CleanupStorage;
+  readonly artifacts: ZipResultArtifactStore;
+  readonly limits: UploadArchiveLimits;
+  readonly warn?: (message: string) => void;
+}) {
+  const warn = options.warn ?? ((message: string) => console.warn(message));
   return async (job: ZipResultBuildJob): Promise<void> => {
     const sourceStorageKey = required(job.sourceStorageKey, "approved ZIP storage key");
     const sourceSha256 = required(job.sourceSha256, "approved ZIP digest");
@@ -39,16 +45,23 @@ export function createZipResultBuilder(options: { readonly storage: CleanupStora
     const built = await buildVerifiedZipResult({ approvedZip, patch, verifiedFiles: verifiedFiles(metadata), changeDocument, limits: options.limits });
     const artifactId = randomUUID();
     const stored = await options.storage.writeVersion({ organizationId: job.organizationId, projectId: job.projectId, versionId: artifactId, bytes: built.bytes });
+    let completion: ZipResultCompletion;
     try {
-      const completion = await options.artifacts.complete({ executionId: job.executionId, artifactId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount });
-      if (completion !== "inserted") {
-        if (!options.storage.deleteVersion) throw new Error("ZIP result artifact was not adopted but storage cleanup is unavailable.");
-        await options.storage.deleteVersion(stored.storageKey);
-        if (completion === "lost") throw new Error("ZIP result build ownership was lost before completion.");
-      }
+      completion = await options.artifacts.complete({ executionId: job.executionId, artifactId, storageKey: stored.storageKey, sha256: built.sha256, sizeBytes: built.sizeBytes, fileCount: built.fileCount });
     } catch (error) {
-      if (options.storage.deleteVersion) await options.storage.deleteVersion(stored.storageKey).catch(() => undefined);
+      await options.storage.deleteVersion(stored.storageKey).catch(() => undefined);
       throw error;
     }
+    if (completion === "inserted") return;
+    if (completion === "existing") {
+      await options.storage.deleteVersion(stored.storageKey);
+      return;
+    }
+    try {
+      await options.storage.deleteVersion(stored.storageKey);
+    } catch {
+      warn(`ZIP result cleanup failed for execution ${job.executionId}.`);
+    }
+    throw new Error("ZIP result build ownership was lost before completion.");
   };
 }
