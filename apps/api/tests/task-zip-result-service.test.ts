@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProjectDownloadTokenService } from "../src/project-download-token.js";
 import { createTaskZipResultService, type TaskZipResultArtifact, type TaskZipResultDatabase, type TaskZipResultContext } from "../src/task-zip-result.js";
 import type { ProjectStorage } from "../src/project-storage.js";
 
@@ -29,5 +30,23 @@ describe("B4 ZIP result service", () => {
     const promoted = await developer.api.promote(session, artifact.taskId);
     expect(promoted.promotedVersionNumber).toBe(2);
     expect(developer.db.promote).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the existing short-lived signed download token and audits a successful result download", async () => {
+    let now = 1_000_000;
+    const downloadTokens = new ProjectDownloadTokenService({ secret: "z".repeat(32), nowMs: () => now });
+    const auditDownload = vi.fn(async () => undefined);
+    const db: TaskZipResultDatabase = { getContext: vi.fn(async () => context("developer")), getArtifact: vi.fn(async () => artifact), saveArtifact: vi.fn(async (_session, input) => input), promote: vi.fn(), auditDownload };
+    const bytes = new Uint8Array([1, 2, 3]);
+    const storage = { readVersion: vi.fn(async () => bytes), writeVersion: vi.fn(), deleteProject: vi.fn() } as unknown as ProjectStorage;
+    const api = createTaskZipResultService({ database: db, storage, downloadTokens, limits: { maxCompressedBytes: 1024, maxUncompressedBytes: 2048, maxFiles: 20, maxFileBytes: 1024, maxNestedArchiveDepth: 1 } });
+    const token = await api.issueDownloadToken(session, artifact.taskId);
+    const claims = downloadTokens.verify(token);
+    expect(claims.expiresAtMs - now).toBe(5 * 60_000);
+    expect((await api.download(session, artifact.taskId, token)).bytes).toEqual(bytes);
+    expect(auditDownload).toHaveBeenCalledTimes(1);
+    now = claims.expiresAtMs;
+    await expect(api.download(session, artifact.taskId, token)).rejects.toMatchObject({ code: "PROJECT_DOWNLOAD_INVALID" });
+    expect(auditDownload).toHaveBeenCalledTimes(1);
   });
 });
