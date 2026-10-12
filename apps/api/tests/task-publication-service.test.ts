@@ -15,10 +15,12 @@ const base: TaskPublishContext = {
   changeDocument: "## What was asked\nFix retry",
 };
 
-function setup(overrides: Partial<TaskPublishContext> = {}) {
+type ExistingPublication = { readonly status: "published"; readonly pullRequestUrl: string; readonly executionId: string } | null;
+function setup(overrides: Partial<TaskPublishContext> = {}, existing: ExistingPublication = null) {
   const context: TaskPublishContext = { ...base, ...overrides };
   const database = {
     getPublishContext: vi.fn(async () => context),
+    getLatest: vi.fn(async () => existing),
     markPublishing: vi.fn(async () => undefined),
     markPublished: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
     markSourceChanged: vi.fn(async (_session: typeof session, _taskId: string, result: unknown) => result),
@@ -61,5 +63,13 @@ describe("task publication service", () => {
     await expect(service.publish(session, taskId)).resolves.toBeDefined();
     expect(publisher.publish).toHaveBeenCalledTimes(2);
     expect(database.getPublishContext).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an already published result without touching GitHub again", async () => {
+    const existing = { status: "published" as const, pullRequestUrl: "https://github.com/acme/demo/pull/9", executionId: base.executionId };
+    const { service, publisher, database } = setup({}, existing);
+    await expect(service.publish(session, taskId)).resolves.toEqual(existing);
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(database.markPublishing).not.toHaveBeenCalled();
   });
 });
