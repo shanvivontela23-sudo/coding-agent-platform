@@ -26,6 +26,7 @@ async function handleZipResult(request: IncomingMessage, response: ServerRespons
   }
   if (request.method !== "POST") return false;
   if (action === "accept-unproven") { json(response, 200, { zipResult: await options.zipResultService.acceptUnproven(session, taskId) }); return true; }
+  if (action === "retry") { json(response, 200, { zipResult: await options.zipResultService.retryBuild(session, taskId) }); return true; }
   if (action === "promote") { json(response, 200, { zipResult: await options.zipResultService.promote(session, taskId) }); return true; }
   if (action === "download-token") {
     const token = await options.zipResultService.issueDownloadToken(session, taskId);
@@ -42,7 +43,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   readonly zipResultService?: TaskZipResultService;
 }): Promise<boolean> {
   const url = new URL(request.url ?? "/", options.apiOrigin);
-  const zipMatch = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)\/execution\/zip-result\/(accept-unproven|promote|download-token|download|patch)$/i);
+  const zipMatch = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)\/execution\/zip-result\/(accept-unproven|retry|promote|download-token|download|patch)$/i);
   if (zipMatch) {
     if (!options.zipResultService) throw new AppError("ZIP_RESULT_UNAVAILABLE", "Updated ZIP delivery is unavailable.", 503);
     try { return await handleZipResult(request, response, url, zipMatch[1]!, zipMatch[2]!, { apiOrigin: options.apiOrigin, sessionSecret: options.sessionSecret, zipResultService: options.zipResultService }); }
@@ -63,18 +64,14 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   try {
     const session = tenantSessionFromRequest(request, options.sessionSecret);
     if (!action) {
-      const [execution, readiness, publication] = await Promise.all([
+      const [execution, readiness, publication, zipState] = await Promise.all([
         options.service.get(session, taskId),
         options.service.readiness(session, taskId),
         options.publicationService?.get(session, taskId) ?? Promise.resolve(null),
+        options.zipResultService?.readStatus(session, taskId) ?? Promise.resolve(null),
       ]);
-      let zipResult = null; let zipResultError: { code: string; error: string } | null = null;
-      if (options.zipResultService) {
-        try { zipResult = await options.zipResultService.getOrCreate(session, taskId); }
-        catch (error) { if (error instanceof AppError) zipResultError = { code: error.code, error: error.publicMessage }; else throw error; }
-      }
       if (!options.publicationService && !options.zipResultService && readiness.implementationBlocker === null) json(response, 200, { execution });
-      else json(response, 200, { execution, ...readiness, publication, zipResult, zipResultError });
+      else json(response, 200, { execution, ...readiness, publication, zipResult: zipState?.artifact ?? null, zipResultBuild: zipState ? { status: zipState.status, errorCode: zipState.errorCode, errorMessage: zipState.errorMessage } : null });
       return true;
     }
     if (action === "start") {
