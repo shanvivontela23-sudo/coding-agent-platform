@@ -11,13 +11,13 @@ export type ChangeDocumentInput = {
 
 export function sanitizeChangeNoteText(value: string): string {
   return value
-    .replace(/\b(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted-secret]@")
+    .replace(/\b(https?:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, "$1[redacted-secret]@")
     .replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g, "[redacted-secret]")
     .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[redacted-secret]")
     .replace(/\bnpm_[A-Za-z0-9_-]{20,}\b/gi, "[redacted-secret]")
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted-secret]")
     .replace(/\bsk-[A-Za-z0-9_-]{24,}\b/g, "[redacted-secret]")
-    .replace(/^(authorization\s*:\s*)(?:bearer|basic|token)\s+[^\r\n]+$/gim, "$1[redacted-secret]")
+    .replace(/(authorization\s*:\s*)(?:bearer|basic|token)\s+[^\r\n]+/gim, "$1[redacted-secret]")
     .replace(/([?&](?:access_?token|auth_?token|token|api_?key|key)=)[^\s&#]+/gi, "$1[redacted-secret]")
     .replace(/((?:^|[\s/:])(?:_authToken|authToken|accessToken|token|apiKey)\s*[=:]\s*)[^\s]+/gim, "$1[redacted-secret]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]");
