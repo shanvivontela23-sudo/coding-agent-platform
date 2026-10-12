@@ -1,11 +1,21 @@
 import { createRuntimePostgresPool } from "../../api/src/postgres-pool.js";
+import { LocalProjectStorage } from "../../api/src/project-storage.js";
 import { runFakeTaskExecutionWorker, runTaskExecutionWorker } from "./main.js";
+import { PostgresZipResultArtifactStore, PostgresZipResultBuildQueue } from "./postgres-zip-result-build-queue.js";
 import { createRealProductExecutionRunner } from "./real-worker.js";
 import { loadRealWorkerConfig } from "./worker-config.js";
+import { createZipResultBuilder } from "./zip-result-builder.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+function positiveInteger(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
 }
 function assertWorkerDatabaseUrl(databaseUrl: string): void {
@@ -32,7 +42,19 @@ async function main(): Promise<void> {
       return;
     }
     const runner = createRealProductExecutionRunner({ config: realConfig!, pool, env: process.env });
-    await runTaskExecutionWorker({ pool, databaseUsername: "coding_agent_worker", workerId, signal: controller.signal, runner });
+    const zipResultBuildQueue = new PostgresZipResultBuildQueue(pool);
+    const zipResultBuild = createZipResultBuilder({
+      storage: new LocalProjectStorage({ rootDir: realConfig!.projectStorageRoot }),
+      artifacts: new PostgresZipResultArtifactStore(pool),
+      limits: {
+        maxCompressedBytes: positiveInteger("PROJECT_UPLOAD_MAX_COMPRESSED_BYTES", 100 * 1024 * 1024),
+        maxUncompressedBytes: positiveInteger("PROJECT_UPLOAD_MAX_UNCOMPRESSED_BYTES", 500 * 1024 * 1024),
+        maxFiles: positiveInteger("PROJECT_UPLOAD_MAX_FILES", 50_000),
+        maxFileBytes: positiveInteger("PROJECT_UPLOAD_MAX_FILE_BYTES", 5 * 1024 * 1024),
+        maxNestedArchiveDepth: positiveInteger("PROJECT_UPLOAD_MAX_NESTED_ARCHIVE_DEPTH", 1),
+      },
+    });
+    await runTaskExecutionWorker({ pool, databaseUsername: "coding_agent_worker", workerId, signal: controller.signal, runner, zipResultBuildQueue, zipResultBuild });
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
