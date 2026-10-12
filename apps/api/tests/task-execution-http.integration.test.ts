@@ -120,6 +120,8 @@ class IntegrationSandboxSession implements SandboxSession {
   constructor(readonly id: string) {}
   async exec(request: SandboxCommand): Promise<SandboxCommandResult> {
     if (request.command.startsWith("git apply")) return { exitCode: 0, stdout: "", stderr: "" };
+    if (request.command.startsWith("git hash-object")) return { exitCode: 0, stdout: `${"d".repeat(40)}\n`, stderr: "" };
+    if (request.command.startsWith("if test -x")) return { exitCode: 0, stdout: "100644", stderr: "" };
     if (request.command === "pnpm test src/retry.test.ts") {
       return this.id.endsWith("-baseline")
         ? { exitCode: 1, stdout: "FAIL src/retry.test.ts > retry recovers", stderr: "AssertionError: expected false to be true" }

@@ -9,27 +9,38 @@ export type ChangeDocumentInput = {
   readonly reviewFocus: string;
 };
 
-function sanitize(value: string): string {
+export function sanitizeChangeNoteText(value: string): string {
   return value
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+    .replace(/\b(https?:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, "$1[redacted-secret]@")
     .replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g, "[redacted-secret]")
-    .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b/g, "[redacted-secret]")
+    .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[redacted-secret]")
+    .replace(/\bnpm_[A-Za-z0-9_-]{20,}\b/gi, "[redacted-secret]")
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted-secret]")
-    .replace(/\bsk-[A-Za-z0-9_-]{24,}\b/g, "[redacted-secret]");
+    .replace(/\bsk-[A-Za-z0-9_-]{24,}\b/g, "[redacted-secret]")
+    .replace(/(authorization\s*:\s*)(?:bearer|basic|token)\s+[^\r\n]+/gim, "$1[redacted-secret]")
+    .replace(/([?&](?:access_?token|auth_?token|token|api_?key|key)=)[^\s&#]+/gi, "$1[redacted-secret]")
+    .replace(/((?:^|[\s/:])(?:_authToken|authToken|accessToken|token|apiKey)\s*[=:]\s*)[^\s]+/gim, "$1[redacted-secret]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]");
+}
+
+export function boundedDependencyInstallFailureDetail(value: string, maxCharacters = 2_000): string {
+  if (!Number.isSafeInteger(maxCharacters) || maxCharacters <= 0) throw new Error("failure detail limit must be a positive integer");
+  const sanitized = sanitizeChangeNoteText(value).trim();
+  return sanitized.length <= maxCharacters ? sanitized : sanitized.slice(-maxCharacters);
 }
 
 export function buildChangeDocument(input: ChangeDocumentInput): string {
   if (input.costUsd !== null && (!Number.isFinite(input.costUsd) || input.costUsd < 0)) throw new Error("execution cost must be non-negative");
   const checks = input.checks.length > 0
-    ? input.checks.map((check) => `- ${sanitize(check.name)}: ${sanitize(check.status)}`).join("\n")
+    ? input.checks.map((check) => `- ${sanitizeChangeNoteText(check.name)}: ${sanitizeChangeNoteText(check.status)}`).join("\n")
     : "- No checks recorded";
-  const files = input.files.length > 0 ? input.files.map((file) => `- ${sanitize(file)}`).join("\n") : "- None";
+  const files = input.files.length > 0 ? input.files.map((file) => `- ${sanitizeChangeNoteText(file)}`).join("\n") : "- None";
   return [
     "## What was asked",
-    sanitize(input.asked),
+    sanitizeChangeNoteText(input.asked),
     "",
     "## What changed and why",
-    sanitize(input.changed),
+    sanitizeChangeNoteText(input.changed),
     "",
     "## Files touched",
     files,
@@ -38,15 +49,15 @@ export function buildChangeDocument(input: ChangeDocumentInput): string {
     checks,
     "",
     "## Verification status",
-    sanitize(input.verificationStatus ?? "Verification completed."),
+    sanitizeChangeNoteText(input.verificationStatus ?? "Verification completed."),
     "",
     "## Reproduce proof",
-    sanitize(input.reproduceProof),
+    sanitizeChangeNoteText(input.reproduceProof),
     "",
     "## Execution cost",
     input.costUsd === null ? "Cost unavailable" : `$${input.costUsd.toFixed(2)}`,
     "",
     "## Developer review focus",
-    sanitize(input.reviewFocus),
+    sanitizeChangeNoteText(input.reviewFocus),
   ].join("\n");
 }

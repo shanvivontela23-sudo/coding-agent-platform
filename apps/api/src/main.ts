@@ -8,6 +8,9 @@ import { RunTokenService } from "../../../evals/src/gateway/run-token.js";
 import { createSupabaseAuthClient } from "./auth.js";
 import { assertRestrictedDatabaseUrl, createProductDatabase, type TenantPool } from "./database.js";
 import { createGitHubAppClient } from "./github-app.js";
+import { createGitHubInstallationPermissionReader } from "./github-installation-permissions.js";
+import { GitHubRestPublicationClient } from "./github-publication-client.js";
+import { GitHubExecutionPublisher } from "./github-publication.js";
 import { HybridProjectCodeReader } from "./hybrid-project-code-reader.js";
 import { ProjectDownloadTokenService } from "./project-download-token.js";
 import { GitHubProjectCodeReader } from "./project-code-reader.js";
@@ -17,9 +20,12 @@ import { createProduct07Service } from "./product-07-service.js";
 import { createApiServer } from "./server.js";
 import { createTaskDatabase } from "./task-database.js";
 import { createTaskExecutionDatabase } from "./task-execution-database.js";
+import { createTaskExecutionReadinessReader } from "./task-execution-readiness.js";
 import { attachTaskExecutionRoutes } from "./task-execution-server.js";
 import { createTaskExecutionService } from "./task-execution-service.js";
 import { ExistingGatewayTaskModelGateway } from "./task-intake.js";
+import { createTaskPublicationDatabase } from "./task-publication-database.js";
+import { createTaskPublicationService } from "./task-publication-service.js";
 import { attachTaskRoutes } from "./task-server.js";
 import { createTaskPlanningService, createTaskReadService, type TaskPlanningService } from "./task-service.js";
 import { createTicketCipher } from "./ticket-crypto.js";
@@ -66,6 +72,8 @@ const githubApp = createGitHubAppClient({
   clientSecret: required("GITHUB_APP_CLIENT_SECRET"),
   privateKey: githubPrivateKey,
 });
+const githubPermissions = createGitHubInstallationPermissionReader({ appId: githubAppId, privateKey: githubPrivateKey });
+const githubPublicationClient = new GitHubRestPublicationClient({ appId: githubAppId, privateKey: githubPrivateKey });
 
 const uploadLimits: UploadArchiveLimits = {
   maxCompressedBytes: positiveInteger("PROJECT_UPLOAD_MAX_COMPRESSED_BYTES", 100 * 1024 * 1024),
@@ -90,8 +98,15 @@ const taskCipher = createTicketCipher(process.env.TASK_TICKET_ENCRYPTION_SECRET?
 const taskReadService = createTaskReadService({ database: taskDatabase, cipher: taskCipher });
 const taskExecutionService = createTaskExecutionService({
   database: createTaskExecutionDatabase(tenantPool),
+  readinessReader: createTaskExecutionReadinessReader(tenantPool),
+  githubApp: githubPermissions,
   budgetUsd: positiveNumber("TASK_EXECUTION_BUDGET_USD", 2),
   timeoutSeconds: positiveInteger("TASK_EXECUTION_TIMEOUT_SECONDS", 20 * 60),
+});
+const taskPublicationService = createTaskPublicationService({
+  database: createTaskPublicationDatabase(tenantPool),
+  publisher: new GitHubExecutionPublisher(githubPublicationClient),
+  githubApp: githubPermissions,
 });
 let taskPlanningService: TaskPlanningService | undefined;
 const taskGatewayAdminToken = process.env.TASK_MODEL_GATEWAY_ADMIN_TOKEN?.trim();
@@ -131,7 +146,7 @@ const productServer = createApiServer({
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
 const taskServer = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
-const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService });
+const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });
 const shutdown = () => { server.close(() => { void pool.end().finally(() => process.exit(0)); }); };

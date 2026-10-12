@@ -20,17 +20,25 @@ type Execution = {
   readonly resultMetadata: Readonly<Record<string, unknown>>;
   readonly costUsd: number | null;
 };
-
+type Publication = {
+  readonly status: "publishing" | "published" | "failed" | "source_changed";
+  readonly branchName: string;
+  readonly baseMovedCommits: number | null;
+  readonly pullRequestNumber: number | null;
+  readonly pullRequestUrl: string | null;
+  readonly unproven: boolean;
+  readonly failureMessage: string | null;
+};
 type Props = {
   readonly taskId: string;
   readonly taskStatus: "draft" | "waiting_for_answers" | "plan_ready" | "approved";
   readonly currentUserRole: "owner" | "developer" | "rep";
   readonly currentUserId: string;
   readonly requestedByUserId: string;
+  readonly implementationBlocker?: string | null;
 };
 
 const active = (execution: Execution | null): boolean => execution?.status === "queued" || execution?.status === "running";
-
 function statusText(execution: Execution): string {
   if (execution.status === "queued") return Date.now() - new Date(execution.queuedAt).getTime() >= 60_000 ? "Waiting for a worker." : "Queued for implementation.";
   if (execution.status === "running" && execution.cancelRequestedAt) return "Cancelling implementation…";
@@ -43,62 +51,67 @@ function statusText(execution: Execution): string {
   if (execution.status === "timed_out") return "Implementation timed out. No changes were published.";
   return execution.failureMessage || "Implementation failed. No changes were published.";
 }
-
 function metadataFlag(execution: Execution, key: string): boolean { return execution.resultMetadata[key] === true; }
 
-export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, currentUserId, requestedByUserId }: Props) {
+export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, currentUserId, requestedByUserId, implementationBlocker: initialBlocker = null }: Props) {
   const [execution, setExecution] = useState<Execution | null>(null);
+  const [publication, setPublication] = useState<Publication | null>(null);
+  const [implementationBlocker, setImplementationBlocker] = useState<string | null>(initialBlocker);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const canControl = currentUserRole === "owner" || currentUserRole === "developer" || (currentUserRole === "rep" && currentUserId === requestedByUserId);
+  const canPublish = currentUserRole === "owner" || currentUserRole === "developer";
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, { cache: "no-store" });
     if (!response.ok) return;
-    const payload = await response.json() as { readonly execution: Execution | null };
+    const payload = await response.json() as { readonly execution: Execution | null; readonly implementationBlocker?: string | null; readonly publication?: Publication | null };
     setExecution(payload.execution);
-  }, [taskId]);
+    setPublication(payload.publication ?? null);
+    setImplementationBlocker(payload.implementationBlocker ?? initialBlocker);
+  }, [taskId, initialBlocker]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!active(execution)) return;
+    if (!active(execution) && publication?.status !== "publishing") return;
     const timer = setInterval(() => { void load(); }, 2_000);
     return () => clearInterval(timer);
-  }, [execution, load]);
+  }, [execution, publication, load]);
 
-  async function act(action: "start" | "cancel") {
+  async function act(action: "start" | "cancel" | "publish") {
     setBusy(true); setError(null);
     try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const payload = await response.json() as { readonly execution?: Execution; readonly error?: string };
+      const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/execution`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
+      const payload = await response.json() as { readonly execution?: Execution; readonly publication?: Publication; readonly error?: string };
       if (!response.ok) { setError(payload.error || "Unable to update implementation."); return; }
       if (payload.execution) setExecution(payload.execution);
-      else await load();
-    } catch {
-      setError("Unable to update implementation.");
-    } finally {
-      setBusy(false);
-    }
+      if (payload.publication) setPublication(payload.publication);
+      if (!payload.execution && !payload.publication) await load();
+    } catch { setError("Unable to update implementation."); }
+    finally { setBusy(false); }
   }
 
   const dependencyChanged = execution ? metadataFlag(execution, "dependencyChanged") || metadataFlag(execution, "lockfileChanged") : false;
+  const publishable = execution?.status === "succeeded" || execution?.status === "fix_not_reproduced";
+  const publishLabel = execution?.status === "fix_not_reproduced" ? "Publish unproven pull request" : publication?.status === "failed" ? "Retry publication" : "Publish pull request";
   return (
     <Card>
       <CardHeader><CardTitle>Implementation</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        {implementationBlocker ? <Alert variant="destructive"><AlertDescription>{implementationBlocker === "Re-analyse this project before implementation" ? "Re-analyse this project before implementation" : implementationBlocker}</AlertDescription></Alert> : null}
         {execution ? <div className="space-y-1"><p className="text-sm font-medium">Attempt {execution.attempt}</p><p className="text-sm text-muted-foreground">{statusText(execution)}</p></div> : <p className="text-sm text-muted-foreground">No implementation attempt yet.</p>}
         {execution ? <div><p className="text-xs text-muted-foreground">Execution cost</p><p className="text-sm font-medium">{execution.costUsd === null ? "Cost unavailable" : `$${execution.costUsd.toFixed(2)}`}</p></div> : null}
         {dependencyChanged ? <Alert><AlertDescription>Dependency or lockfile changes are included. Review them carefully.</AlertDescription></Alert> : null}
         {execution?.changeDocument ? <section className="space-y-2"><p className="text-sm font-medium">Change note</p><pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-4 text-xs leading-5">{execution.changeDocument}</pre></section> : null}
         {execution?.resultPatch && execution.sourceVersionId ? <section className="space-y-2"><p className="text-sm font-medium">Result diff</p><pre className="max-h-[32rem] overflow-auto whitespace-pre rounded-md border bg-muted/30 p-4 text-xs leading-5">{execution.resultPatch}</pre></section> : null}
+        {publication?.status === "published" && publication.pullRequestUrl ? <Alert><AlertDescription><a className="font-medium underline" href={publication.pullRequestUrl} target="_blank" rel="noreferrer">Pull request #{publication.pullRequestNumber}</a>{publication.baseMovedCommits !== null ? ` · base moved ${publication.baseMovedCommits} commit${publication.baseMovedCommits === 1 ? "" : "s"}` : ""}{publication.unproven ? " · unproven fix" : ""}</AlertDescription></Alert> : null}
+        {publication?.status === "source_changed" ? <Alert variant="destructive"><AlertDescription>Source changed in a file named by the approved plan or patch. Re-plan before publishing.</AlertDescription></Alert> : null}
+        {publication?.status === "failed" ? <Alert variant="destructive"><AlertDescription>{publication.failureMessage || "GitHub publication failed. Retry publication without starting a new implementation attempt."}</AlertDescription></Alert> : null}
         {canControl && taskStatus !== "approved" && !execution ? <p className="text-sm text-muted-foreground">Approve the plan before starting implementation.</p> : null}
-        {canControl && taskStatus === "approved" && !active(execution) ? <Button type="button" disabled={busy} onClick={() => void act("start")}>{busy ? "Starting…" : "Start implementation"}</Button> : null}
+        {canControl && taskStatus === "approved" && !active(execution) && !implementationBlocker ? <Button type="button" disabled={busy} onClick={() => void act("start")}>{busy ? "Starting…" : "Start implementation"}</Button> : null}
         {canControl && active(execution) ? <Button type="button" variant="outline" disabled={busy || Boolean(execution?.cancelRequestedAt)} onClick={() => void act("cancel")}>{busy ? "Cancelling…" : "Cancel implementation"}</Button> : null}
+        {canPublish && publishable && publication?.status !== "published" && publication?.status !== "source_changed" ? <Button type="button" disabled={busy || publication?.status === "publishing"} onClick={() => void act("publish")}>{publication?.status === "publishing" ? "Publishing…" : publishLabel}</Button> : null}
       </CardContent>
     </Card>
   );
