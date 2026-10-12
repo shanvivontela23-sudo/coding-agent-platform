@@ -11,10 +11,9 @@ function database(role: "owner" | "developer" | "rep", existing: TaskZipResultAr
     getStatus: vi.fn(async () => ({ status: existing ? ("ready" as const) : null, errorCode: null, errorMessage: null, artifact: existing })),
     getContext: vi.fn(async () => context(role)),
     getArtifact: vi.fn(async () => existing),
-    insertArtifact: vi.fn(async () => true),
+    completeBuild: vi.fn(async () => "inserted" as const),
     acceptUnproven: vi.fn(async () => { if (role === "rep") throw Object.assign(new Error("forbidden"), { code: "ZIP_UNPROVEN_ACCEPT_FORBIDDEN", status: 403 }); return null; }),
     retryBuild: vi.fn(async () => null),
-    markReady: vi.fn(async () => true),
     markFailed: vi.fn(async () => true),
     promote: vi.fn(async (_session, input) => ({ ...input, promotedVersionId: input.artifactVersionId, promotedVersionNumber: 2 })),
     auditDownload: vi.fn(async () => undefined),
@@ -30,7 +29,7 @@ describe("B4 ZIP result service", () => {
   it("reads an existing result without building another artifact", async () => {
     const developer = service("developer");
     await expect(developer.api.getOrCreate(session, artifact.taskId)).resolves.toBe(artifact);
-    expect(developer.db.insertArtifact).not.toHaveBeenCalled();
+    expect(developer.db.completeBuild).not.toHaveBeenCalled();
   });
 
   it("refuses a rep attempting to accept an unproven ZIP result", async () => {
@@ -43,7 +42,7 @@ describe("B4 ZIP result service", () => {
     const promoted = await developer.api.promote(session, artifact.taskId);
     expect(promoted.promotedVersionNumber).toBe(2);
     expect(developer.db.promote).toHaveBeenCalledTimes(1);
-    expect(developer.db.insertArtifact).not.toHaveBeenCalled();
+    expect(developer.db.completeBuild).not.toHaveBeenCalled();
   });
 
   it("uses the existing short-lived signed download token and audits a successful result download", async () => {
