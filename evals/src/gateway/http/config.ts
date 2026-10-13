@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { z } from "zod";
 import type { HarnessHttpConfig } from "./types.js";
 
@@ -42,7 +42,7 @@ const configSchema = z.object({
 });
 
 function readCommittedConfig(): unknown {
-  const path = fileURLToPath(new URL("../../../config/http-gateway.json", import.meta.url));
+  const path = join(__dirname, "../../../config/http-gateway.json");
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
