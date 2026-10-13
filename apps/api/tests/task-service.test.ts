@@ -13,6 +13,7 @@ const orgId = "00000000-0000-4000-8000-000000000001";
 function identity(userId: string): SessionIdentity { return { userId, organizationId: orgId, expiresAtMs: Date.now() + 60_000 }; }
 function detail(role: TaskDetail["currentUserRole"]): TaskDetail {
   return {
+    planningAttempt: 1,
     id: "40000000-0000-4000-8000-000000000001",
     projectId: "20000000-0000-4000-8000-000000000001",
     projectName: "Demo",

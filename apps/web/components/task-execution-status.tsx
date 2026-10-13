@@ -130,7 +130,9 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
   }
 
   const dependencyChanged = execution ? metadataFlag(execution, "dependencyChanged") || metadataFlag(execution, "lockfileChanged") : false;
-  const publishable = execution?.status === "succeeded" || execution?.status === "fix_not_reproduced";
+  // ZIP-backed runs deliver an updated ZIP (sourceVersionId); only GitHub-backed
+  // runs can open a pull request. Live run: the button showed on a ZIP task.
+  const publishable = (execution?.status === "succeeded" || execution?.status === "fix_not_reproduced") && !execution?.sourceVersionId;
   const publishLabel = execution?.status === "fix_not_reproduced" ? "Publish unproven pull request" : publication?.status === "failed" ? "Retry publication" : "Publish pull request";
   return (
     <Card>

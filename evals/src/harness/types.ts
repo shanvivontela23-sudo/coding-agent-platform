@@ -19,6 +19,8 @@ export type HarnessRunOutcome = {
   readonly patch: SandboxPatch;
   /** Only for status "error": exit code plus the stderr tail, for operator logs. */
   readonly errorDetail?: string;
+  /** The harness's last agent message, when it produced one. */
+  readonly finalMessage?: string;
 };
 
 export interface HarnessRunner {

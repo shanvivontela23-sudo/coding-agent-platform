@@ -74,10 +74,11 @@ export async function executeHarnessCommand(
   const finishedAt = clock();
   const limit = detectLimit(execution.stdout, execution.stderr);
 
+  const finalMessageText = spec.finalMessage(execution.stdout)?.trim() || null;
   let status: HarnessRunStatus;
   if (execution.exitCode !== 0) {
     status = limit ? "limit-hit" : "error";
-  } else if (askedWithoutPatch(spec.finalMessage(execution.stdout), patch)) {
+  } else if (askedWithoutPatch(finalMessageText, patch)) {
     status = "asked";
   } else {
     status = "completed";
@@ -90,6 +91,7 @@ export async function executeHarnessCommand(
     wallClockSeconds: Math.max(0, finishedAt - startedAt) / 1_000,
     patch,
     ...(status === "error" ? { errorDetail: harnessErrorDetail(execution) } : {}),
+    ...(finalMessageText ? { finalMessage: finalMessageText } : {}),
   };
 }
 

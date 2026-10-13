@@ -16,6 +16,7 @@ const cipher = createTicketCipher("task-plan-pin-test-secret-that-is-long-enough
 function task(): TaskDetail {
   return {
     id: taskId,
+    planningAttempt: 1,
     projectId,
     projectName: "Demo",
     repositoryId: "30000000-0000-4000-8000-000000000221",

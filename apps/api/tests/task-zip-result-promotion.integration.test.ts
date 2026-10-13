@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { testPool } from "./helpers/test-pool.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TenantPool } from "../src/database.js";
 import { createTaskZipResultDatabase } from "../src/task-zip-result-database.js";
@@ -37,9 +38,9 @@ function resultArtifact(overrides: Partial<TaskZipResultArtifact> = {}): TaskZip
 
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
-  rootPool = new Pool({ connectionString: baseDatabaseUrl });
+  rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`); await rootPool.query(`CREATE DATABASE ${databaseName}`);
-  adminPool = new Pool({ connectionString: urlFor(databaseName) });
+  adminPool = testPool({ connectionString: urlFor(databaseName) });
   for (const name of ["0001_tenant_core.sql","0002_organization_invitations.sql","0003_github_projects.sql","0004_task_intake.sql","0005_zip_projects_and_task_review_fixes.sql","0006_task_execution.sql","0007_task_execution_b2.sql","0008_verification_incomplete.sql","0009_github_publication.sql","0010_zip_results.sql"]) await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
   const artifactMetadata = JSON.stringify({ sourceVersionId: sourceVersion, artifactVersionId: resultVersion, fileCount: 3 }).replaceAll("'", "''");
@@ -69,7 +70,7 @@ beforeAll(async () => {
       ('${resultVersion}','${org}','${task}','${execution}','zip_result','${org}/${project}/${resultVersion}.zip','${"b".repeat(64)}',200,'${artifactMetadata}'::jsonb),
       ('${driftResult}','${org}','${driftTask}','${driftExecution}','zip_result','${org}/${driftProject}/${driftResult}.zip','${"e".repeat(64)}',200,'${driftMetadata}'::jsonb);
   `);
-  apiPool = new Pool({ connectionString: urlFor(databaseName, "coding_agent_api", apiPassword), max: 4 });
+  apiPool = testPool({ connectionString: urlFor(databaseName, "coding_agent_api", apiPassword), max: 4 });
 }, 30_000);
 
 afterAll(async () => { await apiPool?.end(); await adminPool?.end(); if (rootPool) { await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`); await rootPool.end(); } }, 30_000);

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { testPool } from "./helpers/test-pool.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HarnessRunOutcome, HarnessRunner } from "../../../evals/src/harness/types.js";
 import type { SandboxCommand, SandboxCommandResult, SandboxCreateRequest, SandboxNetworkPhase, SandboxPatch, SandboxProvider, SandboxSession, SandboxSnapshot } from "../../../evals/src/sandbox/types.js";
@@ -49,10 +50,10 @@ function databaseUrlFor(name: string, user?: string, password?: string): string 
 
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
-  rootPool = new Pool({ connectionString: baseDatabaseUrl });
+  rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
-  adminPool = new Pool({ connectionString: databaseUrlFor(integrationDb) });
+  adminPool = testPool({ connectionString: databaseUrlFor(integrationDb) });
   for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql"]) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
@@ -81,8 +82,8 @@ beforeAll(async () => {
     UPDATE tasks SET status='plan_ready', what_i_understand='Fix retry', proposed_approach='Update behavior' WHERE id='${taskId}';
     UPDATE tasks SET status='approved', confirmed_requirement='Fix retry', confirmed_plan='Update behavior', approved_at=now() WHERE id='${taskId}';
   `);
-  apiPool = new Pool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 4 });
-  workerPool = new Pool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_worker", workerPassword), max: 4 });
+  apiPool = testPool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 4 });
+  workerPool = testPool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_worker", workerPassword), max: 4 });
 }, 30_000);
 
 afterAll(async () => {

@@ -43,6 +43,15 @@ function reproductionCommand(source: PreparedExecutionSource, patch: string): st
   return testPath ? `${source.commands.test} ${shellArg(testPath)}` : null;
 }
 
+// Live run: the change note's "What changed and why" said only "codex
+// completed in 1 turns". Use the agent's own final message, bounded; the change
+// note sanitizes secrets when it is built.
+export function codingSummary(finalMessage: string | undefined, harnessName: string, turnsUsed: number): string {
+  const message = finalMessage?.trim();
+  if (!message) return `${harnessName} completed in ${turnsUsed} turn${turnsUsed === 1 ? "" : "s"}.`;
+  return message.length > 2_000 ? `${message.slice(0, 2_000).trimEnd()}…` : message;
+}
+
 function abortError(stageTimedOut: boolean): Error {
   return new Error(stageTimedOut ? "coding stage timed out" : "execution aborted");
 }
@@ -130,7 +139,7 @@ export class ProductCodingRunner {
       const costUsd = await this.reconciledCost();
       if (costUsd === null) throw new CodingRunError("execution cost reconciliation failed", null);
       if (outcome.status !== "completed") throw new CodingRunError(`coding harness ended with ${outcome.status}${outcome.limit ? ` (${outcome.limit})` : ""}${outcome.errorDetail ? `: ${outcome.errorDetail}` : ""}`, costUsd);
-      return { patch: outcome.patch.patch, reproductionCommand: reproductionCommand(source, outcome.patch.patch), costUsd, summary: `${this.options.harnessRunner.name} completed in ${outcome.turnsUsed} turns.` };
+      return { patch: outcome.patch.patch, reproductionCommand: reproductionCommand(source, outcome.patch.patch), costUsd, summary: codingSummary(outcome.finalMessage, this.options.harnessRunner.name, outcome.turnsUsed) };
     } catch (error) {
       if (error instanceof CodingRunError) throw error;
       const costUsd = await this.reconciledCost();

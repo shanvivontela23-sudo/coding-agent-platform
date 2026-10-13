@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { testPool } from "./helpers/test-pool.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionToken } from "../src/auth.js";
 import { createProductDatabase } from "../src/database.js";
@@ -34,10 +35,10 @@ function databaseUrlFor(name: string, user?: string, password?: string): string 
 
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
-  rootPool = new Pool({ connectionString: baseDatabaseUrl });
+  rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
-  adminPool = new Pool({ connectionString: databaseUrlFor(integrationDb) });
+  adminPool = testPool({ connectionString: databaseUrlFor(integrationDb) });
   for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql"]) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
@@ -47,7 +48,7 @@ beforeAll(async () => {
     INSERT INTO users (id,supabase_user_id,email) VALUES ('${userId}','${supabaseUserId}','owner@example.com');
     INSERT INTO organization_memberships (organization_id,user_id,role) VALUES ('${organizationId}','${userId}','owner');
   `);
-  apiPool = new Pool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 2 });
+  apiPool = testPool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 2 });
 }, 30_000);
 
 afterAll(async () => {

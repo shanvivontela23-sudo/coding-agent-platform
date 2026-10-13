@@ -34,11 +34,12 @@ describe("project report install command", () => {
 });
 
 describe("draft task message", () => {
-  it("says a draft task failed and links to a new task instead of implying it is still working", async () => {
+  it("says a draft task failed and offers the requester an in-place retry", async () => {
     const page = await readFile("apps/web/app/tasks/[taskId]/page.tsx", "utf8");
     expect(page).not.toContain("Clarification has not completed yet.");
     expect(page).toContain("draftTaskMessage");
-    expect(page).toContain("/tasks/new");
+    expect(page).toContain("/retry-clarification");
+    expect(page).toContain("Try again");
   });
 });
 

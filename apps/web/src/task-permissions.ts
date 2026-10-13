@@ -1,6 +1,6 @@
 // Clarification runs inside the create request, so a task still in draft on
 // its own page means clarification failed; it will not complete by waiting.
-export const draftTaskMessage = "Dhara couldn't finish clarifying this request. Start a new task with the same request to try again.";
+export const draftTaskMessage = "Dhara couldn't finish clarifying this request. Try again to rerun clarification for this task.";
 
 // Mirrors the API rule in task-database approveTask: only the user who
 // requested the task may approve its plan, whatever their org role. Owners and
