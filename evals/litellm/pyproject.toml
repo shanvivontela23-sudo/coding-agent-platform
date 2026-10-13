@@ -1,0 +1,2 @@
+[tool.prisma]
+nodeenv_extra_args = ["--node=22.11.0"]

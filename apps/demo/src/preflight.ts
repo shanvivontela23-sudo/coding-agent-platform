@@ -36,6 +36,7 @@ const connectGitHubMessage = "Connect the GitHub App from Dhara home before the 
 const multipleGitHubMessage = "More than one GitHub installation is connected; set DEMO_ORGANIZATION_ID to choose one.";
 const disconnectedGitHubMessage = "GitHub installation is disconnected.";
 const acceptContentsMessage = "Accept the new Contents permission on the dhara-coding-agent installation (GitHub → Settings → Applications → Installed GitHub Apps).";
+const liteLLMHealthFailureMessage = "LiteLLM did not become healthy; see `docker logs http-gateway-litellm-1`";
 
 export async function runDemoPreflight(deps: DemoPreflightDependencies): Promise<readonly DemoPreflightResult[]> {
   const results: DemoPreflightResult[] = [];
@@ -113,6 +114,43 @@ async function fetchReady(url: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
+type LiteLLMHealthOptions = {
+  readonly headers: HeadersInit;
+  readonly fetchImpl?: typeof fetch;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly timeoutMs?: number;
+  readonly retryDelayMs?: number;
+  readonly now?: () => number;
+};
+
+export async function checkLiteLLMHealth(options: LiteLLMHealthOptions): Promise<void> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sleep = options.sleep ?? (async (milliseconds: number) => { await new Promise((resolve) => setTimeout(resolve, milliseconds)); });
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const retryDelayMs = options.retryDelayMs ?? 2_000;
+  const now = options.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+
+  while (true) {
+    try {
+      const response = await fetchImpl("http://127.0.0.1:4000/health/liveliness", {
+        headers: options.headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.ok) return;
+    } catch {
+      // The proxy may still be starting or applying its first-start database schema.
+    }
+
+    if (now() >= deadline) throw new Error(liteLLMHealthFailureMessage);
+    await sleep(retryDelayMs);
+  }
+}
+
+export function workerClaimRollbackSql(): string {
+  return "BEGIN; SELECT * FROM public.claim_task_execution('demo-preflight',30); ROLLBACK;";
+}
+
 export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): DemoPreflightDependencies {
   const value = (name: string): string => config.values[name] ?? "";
   return {
@@ -127,10 +165,7 @@ export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): 
       await paginator.nextItems();
     },
     checkLiteLLM: async () => {
-      const headers = { authorization: `Bearer ${value("LITELLM_MASTER_KEY")}` };
-      const live = await fetch("http://127.0.0.1:4000/health/liveliness", { headers, signal: AbortSignal.timeout(10_000) });
-      if (live.ok) return;
-      await fetchReady("http://127.0.0.1:4000/health", { headers });
+      await checkLiteLLMHealth({ headers: { authorization: `Bearer ${value("LITELLM_MASTER_KEY")}` } });
     },
     checkTunnel: async () => {
       if (!/^https:\/\//.test(tunnelUrl)) throw new Error("ngrok did not expose an HTTPS gateway tunnel");
@@ -141,7 +176,7 @@ export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): 
       const service = new RunTokenService({ secret: value("MODEL_GATEWAY_RUN_TOKEN_SECRET") }); const runId = "demo-preflight"; const token = service.issue(runId, Date.now() + 60_000); service.verify(token, runId);
     },
     checkWorkerClaimRollback: async () => {
-      await runCommand("psql", [value("DEMO_WORKER_DATABASE_URL"), "-v", "ON_ERROR_STOP=1", "-At", "-c", "BEGIN; SELECT * FROM public.claim_task_execution('demo-preflight',1); ROLLBACK;"]);
+      await runCommand("psql", [value("DEMO_WORKER_DATABASE_URL"), "-v", "ON_ERROR_STOP=1", "-At", "-c", workerClaimRollbackSql()]);
     },
   };
 }

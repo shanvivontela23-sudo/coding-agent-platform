@@ -42,6 +42,16 @@ docker compose \
   up -d
 ```
 
+The LiteLLM image installs the hash-locked Prisma Python client and runs `prisma generate` against LiteLLM's bundled `litellm/proxy/schema.prisma` during the image build. No Prisma generation happens when the container starts. The image installs `libatomic1` and `openssl`, which are required by the Node runtime and Prisma engines used during generation. prisma-client-py 0.11.0 reads its supported `[tool.prisma] nodeenv_extra_args` list from `pyproject.toml`; this image uses that configuration to pin Node 22.11.0 instead of floating to nodeenv's newest Node release. With `DATABASE_URL` set, LiteLLM uses its normal `prisma migrate deploy` startup path; the image enables `--enforce_prisma_migration_check`, so a failed migration prevents the proxy from reporting healthy instead of starting against an incomplete schema. A fresh local database can therefore take a little longer to become ready on first start.
+
+Check the proxy without sending a model request:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  http://127.0.0.1:4000/health/liveliness
+```
+
 The Node gateway is available only at `127.0.0.1:8080`. LiteLLM management is available only at `127.0.0.1:4000`. PostgreSQL is not published to the host.
 
 ## 3. Start the tunnel outside Compose
