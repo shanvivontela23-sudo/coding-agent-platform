@@ -4,10 +4,10 @@
 # LiteLLM 1.103.2's extra-proxy dependencies pin prisma to ^0.11.0. The
 # DATABASE_URL-backed proxy imports its generated Prisma client at startup.
 nodeenv==1.10.0 \
-    --hash=sha256:0acb7d3bc2a8a7928254e23fd5ab53fa5df1cdf71820c2b27a9598a704c6a492 \
-    --hash=sha256:99ddf2d9ea9fa8f6752845a066081b8e73e1587a9ea8c59767e4bb8a2022c1a1
+    --hash=sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb \
+    --hash=sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827
     # via prisma
 prisma==0.11.0 \
-    --hash=sha256:09809f4332388b805a454bef4af3f32b66b6f863040c6ad7a0aebcbceee1454b \
-    --hash=sha256:884cbc3900e683083e9f706955a38bf6adf56afdcee5608f2bf77cccac758aac
+    --hash=sha256:3f2f2fd2361e1ec5ff655f2a04c7860c2f2a5bc4c91f78ca9c5c6349735bf693 \
+    --hash=sha256:22bb869e59a2968b99f3483bb417717273ffbc569fd1e9ceed95e5614cbaf53a
     # via -r evals/litellm/requirements.in
