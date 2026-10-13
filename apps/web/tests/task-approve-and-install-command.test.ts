@@ -32,3 +32,26 @@ describe("project report install command", () => {
     expect(page).toContain("Re-analyse to detect");
   });
 });
+
+describe("draft task message", () => {
+  it("says a draft task failed and links to a new task instead of implying it is still working", async () => {
+    const page = await readFile("apps/web/app/tasks/[taskId]/page.tsx", "utf8");
+    expect(page).not.toContain("Clarification has not completed yet.");
+    expect(page).toContain("draftTaskMessage");
+    expect(page).toContain("/tasks/new");
+  });
+});
+
+describe("project current version after promotion", () => {
+  it("flags when the analysis is for an older version than the current one", async () => {
+    const page = await readFile("apps/web/app/projects/[projectId]/page.tsx", "utf8");
+    expect(page).toContain("analysedVersionNumber");
+    expect(page).toContain("Re-analyse to refresh it.");
+  });
+
+  it("API reports the latest version as current, not the analysed one", async () => {
+    const db = await readFile("apps/api/src/upload-project-database.ts", "utf8");
+    expect(db).toContain("ORDER BY version_number DESC LIMIT 1) pv ON true");
+    expect(db).toContain("apv.version_number AS analysed_version_number");
+  });
+});
