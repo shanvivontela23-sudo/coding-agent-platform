@@ -32,7 +32,7 @@ export function createRealProductExecutionRunner(options: {
 }): ProductExecutionOrchestrator {
   const env = options.env ?? process.env;
   const tenantPool = options.pool as unknown as TenantPool;
-  const sandboxProvider = options.sandboxProvider ?? new E2BSandboxProvider({ apiKey: options.config.e2bApiKey });
+  const sandboxProvider = options.sandboxProvider ?? new E2BSandboxProvider({ apiKey: options.config.e2bApiKey, defaultTemplate: options.config.e2bTemplateId });
   const harness = options.harness ?? new CodexHarnessRunner({ version: options.config.codexVersion });
   const gateway = options.gateway ?? new FileBackedExecutionGatewayControl({
     gatewayUrl: options.config.gatewayUrl,

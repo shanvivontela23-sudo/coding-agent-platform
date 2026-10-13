@@ -2,6 +2,11 @@ model_list:
   - model_name: "*"
     litellm_params:
       model: "*"
+      # Codex sends OpenAI's prompt_cache_key on /v1/responses; Anthropic
+      # rejects it ("anthropic does not support parameters:
+      # ['prompt_cache_key']"). Drop only this known param; drop_params stays
+      # false so nothing else is silently removed.
+      additional_drop_params: ["prompt_cache_key"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

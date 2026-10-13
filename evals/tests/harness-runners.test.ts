@@ -112,14 +112,17 @@ describe("Codex harness runner", () => {
     expect(command).toContain("--version");
     expect(command).toContain("codex exec");
     expect(command).toContain("--json");
-    expect(command).toContain("--full-auto");
+    expect(command).toContain("--sandbox workspace-write");
+    // Codex 0.160.1 removed --full-auto ("unexpected argument '--full-auto' found").
+    expect(command).not.toContain("--full-auto");
+    expect(command).not.toContain("dangerously-bypass");
     expect(command).toContain('model_provider="benchmark_gateway"');
     expect(command).toContain("model_providers.benchmark_gateway.base_url");
     expect(command).toContain('wire_api="responses"');
     expect(command).toContain("responses_websockets=false");
     expect(command).not.toContain(request.runToken);
     expect(session.commands[0]?.env).toMatchObject({
-      OPENAI_BASE_URL: request.gatewayUrl,
+      OPENAI_BASE_URL: "https://gateway.example.test/v1",
       OPENAI_API_KEY: request.runToken,
       BENCHMARK_TICKET: request.ticketText,
       BENCHMARK_HARNESS_VERSION: "0.90.0",

@@ -89,7 +89,25 @@ export async function executeHarnessCommand(
     turnsUsed: Math.max(0, spec.parseTurns(execution.stdout)),
     wallClockSeconds: Math.max(0, finishedAt - startedAt) / 1_000,
     patch,
+    ...(status === "error" ? { errorDetail: harnessErrorDetail(execution) } : {}),
   };
+}
+
+function tail(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `…${trimmed.slice(-max)}` : trimmed;
+}
+
+// Without this, a harness that exits non-zero is reported only as "error".
+// Callers must redact secrets before logging (the worker does).
+export function harnessErrorDetail(execution: { readonly exitCode: number; readonly stdout: string; readonly stderr: string }): string {
+  const stderr = tail(execution.stderr, 1_500);
+  const lastStdoutLine = tail(execution.stdout.trim().split(/\r?\n/).at(-1) ?? "", 500);
+  // Codex --json reports its own failures as JSONL on stdout while stderr may
+  // hold only warnings, so always include the last stdout line.
+  return [`exit ${execution.exitCode}`, stderr ? `stderr: ${stderr}` : "", lastStdoutLine ? `stdout: ${lastStdoutLine}` : ""]
+    .filter(Boolean)
+    .join("; ");
 }
 
 export function jsonLines(stdout: string): ReadonlyArray<Record<string, unknown>> {

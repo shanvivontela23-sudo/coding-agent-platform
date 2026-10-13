@@ -28,9 +28,12 @@ class FakeSandbox {
   commands = {
     run: async (
       command: string,
-      options?: { cwd?: string; envs?: Record<string, string>; timeoutMs?: number },
+      options?: { cwd?: string; envs?: Record<string, string>; timeoutMs?: number; user?: string },
     ) => {
       this.commandsRun.push({ command, options });
+      if (command === "id -un") {
+        return { exitCode: 0, stdout: "user\n", stderr: "" };
+      }
       if (
         this.failWhenCommandIncludes &&
         command.includes(this.failWhenCommandIncludes)

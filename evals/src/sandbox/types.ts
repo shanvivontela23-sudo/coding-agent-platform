@@ -58,6 +58,12 @@ export interface SandboxSession {
   writeFile(path: string, data: string | ArrayBuffer): Promise<void>;
   setNetworkPhase(phase: SandboxNetworkPhase): Promise<void>;
   exportPatch(): Promise<SandboxPatch>;
+  /**
+   * Commit the post-dependency-install tree and diff future patches against
+   * it, so files an install creates (e.g. package-lock.json) are not exported
+   * as the agent's change.
+   */
+  recordDependencyBaseline?(): Promise<void>;
   snapshot(name?: string): Promise<SandboxSnapshot>;
   destroy(): Promise<void>;
 }

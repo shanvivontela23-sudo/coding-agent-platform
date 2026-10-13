@@ -3,6 +3,7 @@ import { E2B } from "e2b";
 import {
   buildArchiveVerificationCommand,
   buildBaselineCommitCommand,
+  buildDependencyBaselineCommand,
   buildPatchExportCommand,
   buildRepositoryBootstrapCommand,
   buildStatusCommand,
@@ -43,6 +44,7 @@ type E2BSandboxLike = {
         cwd?: string;
         envs?: Record<string, string>;
         timeoutMs?: number;
+        user?: string;
       },
     ): Promise<E2BCommandResult>;
   };
@@ -140,13 +142,34 @@ class E2BSandboxSession implements SandboxSession {
   private destroyed = false;
   private networkPhase: SandboxNetworkPhase = "locked";
 
+  private currentBaselineSha: string;
+
   constructor(
     readonly id: string,
-    readonly baselineCommitSha: string,
+    baselineCommitSha: string,
     private readonly sandbox: E2BSandboxLike,
     private readonly gatewayUrl: string,
     private readonly extraDependencyHosts: readonly string[],
-  ) {}
+  ) {
+    this.currentBaselineSha = baselineCommitSha;
+  }
+
+  get baselineCommitSha(): string {
+    return this.currentBaselineSha;
+  }
+
+  async recordDependencyBaseline(): Promise<void> {
+    this.assertAlive();
+    const committed = await this.exec({
+      command: buildDependencyBaselineCommand(),
+      cwd: sandboxWorkspacePath,
+      timeoutMs: 60_000,
+    });
+    if (committed.exitCode !== 0) {
+      throw new Error(`failed to record dependency baseline: ${commandFailureDetail(committed)}`);
+    }
+    this.currentBaselineSha = validateBaselineCommitSha(committed.stdout.trim().split(/\r?\n/).at(-1) ?? "");
+  }
 
   async exec(command: SandboxCommand): Promise<SandboxCommandResult> {
     this.assertAlive();
@@ -212,7 +235,7 @@ class E2BSandboxSession implements SandboxSession {
     });
     if (patch.exitCode !== 0) {
       throw new Error(
-        `failed to export patch: ${patch.error ?? patch.stderr ?? "unknown error"}`,
+        `failed to export patch: ${commandFailureDetail(patch)}`,
       );
     }
 
@@ -223,7 +246,7 @@ class E2BSandboxSession implements SandboxSession {
     });
     if (status.exitCode !== 0) {
       throw new Error(
-        `failed to read workspace status: ${status.error ?? status.stderr ?? "unknown error"}`,
+        `failed to read workspace status: ${commandFailureDetail(status)}`,
       );
     }
 
@@ -310,9 +333,11 @@ export class E2BSandboxProvider implements SandboxProvider {
       );
       if (verify.exitCode !== 0) {
         throw new Error(
-          `uploaded repository archive failed verification: ${verify.error ?? verify.stderr}`,
+          `uploaded repository archive failed verification: ${commandFailureDetail(verify)}`,
         );
       }
+
+      await prepareWorkspaceRoot(sandbox);
 
       const bootstrap = await runRaw(
         sandbox,
@@ -321,7 +346,7 @@ export class E2BSandboxProvider implements SandboxProvider {
       );
       if (bootstrap.exitCode !== 0) {
         throw new Error(
-          `repository bootstrap failed: ${bootstrap.error ?? bootstrap.stderr}`,
+          `repository bootstrap failed: ${commandFailureDetail(bootstrap)}`,
         );
       }
 
@@ -332,7 +357,7 @@ export class E2BSandboxProvider implements SandboxProvider {
       );
       if (baseline.exitCode !== 0) {
         throw new Error(
-          `failed to record repository baseline commit: ${baseline.error ?? baseline.stderr}`,
+          `failed to record repository baseline commit: ${commandFailureDetail(baseline)}`,
         );
       }
       const baselineCommitSha = validateBaselineCommitSha(baseline.stdout);
@@ -351,13 +376,47 @@ export class E2BSandboxProvider implements SandboxProvider {
   }
 }
 
+const posixUsername = /^[a-z_][a-z0-9_-]{0,31}$/;
+
+// E2B templates run commands as an unprivileged user by default, which cannot
+// create top-level /workspace ("mkdir: cannot create directory '/workspace':
+// Permission denied"). Create only that directory as root and hand it to the
+// default user; every other command keeps running unprivileged.
+export async function prepareWorkspaceRoot(sandbox: E2BSandboxLike): Promise<void> {
+  const whoami = await runRaw(sandbox, "id -un", 10_000);
+  const username = whoami.stdout.trim();
+  if (whoami.exitCode !== 0 || !posixUsername.test(username)) {
+    throw new Error(`could not determine sandbox user: ${commandFailureDetail(whoami)}`);
+  }
+  const workspaceRoot = posix.dirname(sandboxWorkspacePath);
+  const prepare = await runRaw(
+    sandbox,
+    `install -d -m 0755 -o ${username} -g "$(id -gn ${username})" ${workspaceRoot}`,
+    10_000,
+    { user: "root" },
+  );
+  if (prepare.exitCode !== 0) {
+    throw new Error(`could not prepare sandbox workspace: ${commandFailureDetail(prepare)}`);
+  }
+}
+
+// E2B puts a generic "exit status N" in `error`; the cause is in stderr.
+// Report both (stderr tail only) so sandbox setup failures are diagnosable.
+export function commandFailureDetail(result: { readonly exitCode?: number; readonly stderr?: string; readonly error?: string }): string {
+  const stderr = (result.stderr ?? "").trim();
+  const tail = stderr.length > 1_500 ? `…${stderr.slice(-1_500)}` : stderr;
+  const parts = [result.error?.trim() || (result.exitCode !== undefined ? `exit status ${result.exitCode}` : ""), tail ? `stderr: ${tail}` : ""].filter(Boolean);
+  return parts.length ? parts.join("; ") : "unknown error";
+}
+
 async function runRaw(
   sandbox: E2BSandboxLike,
   command: string,
   timeoutMs: number,
+  options: { readonly user?: string } = {},
 ): Promise<SandboxCommandResult> {
   try {
-    return await sandbox.commands.run(command, { timeoutMs });
+    return await sandbox.commands.run(command, { timeoutMs, ...(options.user ? { user: options.user } : {}) });
   } catch (error) {
     if (isCommandExitLike(error)) {
       return {

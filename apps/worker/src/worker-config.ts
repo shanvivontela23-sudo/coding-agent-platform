@@ -2,6 +2,7 @@ export type RealWorkerConfig = {
   readonly databaseUrl: string;
   readonly workerId: string;
   readonly e2bApiKey: string;
+  readonly e2bTemplateId: string;
   readonly model: string;
   readonly codexVersion: string;
   readonly gatewayUrl: string;
@@ -19,6 +20,7 @@ const realRequired = [
   "DATABASE_URL",
   "TASK_EXECUTION_WORKER_ID",
   "E2B_API_KEY",
+  "E2B_TEMPLATE_ID",
   "TASK_EXECUTION_MODEL",
   "TASK_EXECUTION_CODEX_VERSION",
   "TASK_EXECUTION_GATEWAY_URL",
@@ -39,6 +41,7 @@ export function loadRealWorkerConfig(env: Readonly<Record<string, string | undef
     databaseUrl: env.DATABASE_URL!.trim(),
     workerId: env.TASK_EXECUTION_WORKER_ID!.trim(),
     e2bApiKey: env.E2B_API_KEY!.trim(),
+    e2bTemplateId: env.E2B_TEMPLATE_ID!.trim(),
     model: env.TASK_EXECUTION_MODEL!.trim(),
     codexVersion: env.TASK_EXECUTION_CODEX_VERSION!.trim(),
     gatewayUrl: env.TASK_EXECUTION_GATEWAY_URL!.trim(),
