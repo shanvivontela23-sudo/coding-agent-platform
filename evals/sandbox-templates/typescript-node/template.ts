@@ -6,5 +6,7 @@ export const TEMPLATE_BASE_IMAGE = "node:22-bookworm@sha256:1caeacc40090c4607170
 
 export const typescriptNodeHarnessTemplate = Template()
   .fromImage(TEMPLATE_BASE_IMAGE)
-  .runCmd("npm install --global @anthropic-ai/claude-code@2.1.292 @openai/codex@0.160.1")
+  // Global npm prefix (/usr/local) is root-owned; E2B runs build steps as
+  // `user` by default, which fails with EACCES (npm exit 243).
+  .runCmd("npm install --global @anthropic-ai/claude-code@2.1.292 @openai/codex@0.160.1", { user: "root" })
   .runCmd("claude --version && codex --version");

@@ -94,6 +94,10 @@ export class ProductCodingRunner {
         const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: remainingMs() });
         assertActive();
         if (install.exitCode !== 0) throw new Error("coding dependency setup failed");
+        // Install output (e.g. a new package-lock.json) is not the agent's
+        // change; verification reinstalls before applying the patch.
+        await session.recordDependencyBaseline?.();
+        assertActive();
       }
       await session.setNetworkPhase("coding");
       phase = "coding";
@@ -125,7 +129,7 @@ export class ProductCodingRunner {
       assertActive();
       const costUsd = await this.reconciledCost();
       if (costUsd === null) throw new CodingRunError("execution cost reconciliation failed", null);
-      if (outcome.status !== "completed") throw new CodingRunError(`coding harness ended with ${outcome.status}${outcome.limit ? ` (${outcome.limit})` : ""}`, costUsd);
+      if (outcome.status !== "completed") throw new CodingRunError(`coding harness ended with ${outcome.status}${outcome.limit ? ` (${outcome.limit})` : ""}${outcome.errorDetail ? `: ${outcome.errorDetail}` : ""}`, costUsd);
       return { patch: outcome.patch.patch, reproductionCommand: reproductionCommand(source, outcome.patch.patch), costUsd, summary: `${this.options.harnessRunner.name} completed in ${outcome.turnsUsed} turns.` };
     } catch (error) {
       if (error instanceof CodingRunError) throw error;

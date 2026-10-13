@@ -52,7 +52,7 @@ export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd 
   };
   const webEnv: Record<string, string | undefined> = { NEXT_PUBLIC_API_ORIGIN: `http://localhost:${config.apiPort}`, PORT: String(config.webPort) };
   const workerEnv: Record<string, string | undefined> = {
-    ...pick(config, ["E2B_API_KEY", "TASK_EXECUTION_MODEL", "TASK_EXECUTION_CODEX_VERSION", "MODEL_GATEWAY_RUN_TOKEN_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]),
+    ...pick(config, ["E2B_API_KEY", "E2B_TEMPLATE_ID", "TASK_EXECUTION_MODEL", "TASK_EXECUTION_CODEX_VERSION", "MODEL_GATEWAY_RUN_TOKEN_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]),
     DATABASE_URL: value(config, "DEMO_WORKER_DATABASE_URL"),
     TASK_EXECUTION_WORKER_ID: value(config, "TASK_EXECUTION_WORKER_ID", "demo-worker-1"),
     TASK_EXECUTION_GATEWAY_URL: tunnelUrl,

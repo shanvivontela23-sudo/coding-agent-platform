@@ -161,6 +161,7 @@ function fakeRealConfig(): RealWorkerConfig {
     databaseUrl: "postgresql://coding_agent_worker:fake@localhost/fake",
     workerId: "integration-worker",
     e2bApiKey: "fake-e2b",
+    e2bTemplateId: "fake-template",
     model: "fake-model",
     codexVersion: "fake",
     gatewayUrl: "http://fake-gateway/v1",

@@ -18,6 +18,7 @@ function config() {
     GITHUB_APP_CLIENT_SECRET: secret,
     GITHUB_APP_PRIVATE_KEY: secret,
     E2B_API_KEY: secret,
+    E2B_TEMPLATE_ID: "tmpl-test",
     TASK_EXECUTION_MODEL: "anthropic/demo",
     TASK_EXECUTION_CODEX_VERSION: "1.0.0",
     MODEL_GATEWAY_RUN_TOKEN_SECRET: secret,

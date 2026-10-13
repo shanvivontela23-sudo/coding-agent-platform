@@ -10,6 +10,35 @@ export interface CodingRunner {
   run(execution: ClaimedExecution, options: { readonly signal: AbortSignal }): Promise<CodingRunResult | void>;
 }
 
+export type RunnerFailureLog = {
+  readonly event: "execution_runner_failed";
+  readonly executionId: string;
+  readonly workerId: string;
+  readonly error: { readonly name: string; readonly message: string; readonly stack?: string };
+};
+
+const secretPatterns: readonly RegExp[] = [
+  /\b(?:sk|e2b|ghs|ghp|gho|ghu|github_pat)[-_][A-Za-z0-9_-]{8,}/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+  /(postgres(?:ql)?:\/\/[^:\s/]+:)[^@\s]+@/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+];
+
+export function redactSecrets(value: string): string {
+  let redacted = value;
+  for (const pattern of secretPatterns) {
+    redacted = redacted.replace(pattern, (match, prefix?: string) => typeof prefix === "string" && match.startsWith(prefix) ? `${prefix}[REDACTED]@` : "[REDACTED]");
+  }
+  return redacted;
+}
+
+export function describeRunnerFailure(executionId: string, workerId: string, error: unknown): RunnerFailureLog {
+  const name = error instanceof Error ? error.name : "NonError";
+  const message = redactSecrets(error instanceof Error ? error.message : String(error)).slice(0, 4_000);
+  const stack = error instanceof Error && error.stack ? redactSecrets(error.stack).slice(0, 8_000) : undefined;
+  return { event: "execution_runner_failed", executionId, workerId, error: stack ? { name, message, stack } : { name, message } };
+}
+
 export type WorkerOnceResult =
   | { readonly worked: false }
   | { readonly worked: true; readonly executionId: string; readonly status: ExecutionControlState };
@@ -20,7 +49,9 @@ export async function runExecutionWorkerOnce(options: {
   readonly workerId: string;
   readonly leaseSeconds?: number;
   readonly heartbeatIntervalMs?: number;
+  readonly logRunnerFailure?: (entry: RunnerFailureLog) => void;
 }): Promise<WorkerOnceResult> {
+  const logRunnerFailure = options.logRunnerFailure ?? ((entry: RunnerFailureLog) => console.error(JSON.stringify(entry)));
   const leaseSeconds = options.leaseSeconds ?? 30;
   const execution = await options.queue.claim(options.workerId, leaseSeconds);
   if (!execution) return { worked: false };
@@ -54,6 +85,7 @@ export async function runExecutionWorkerOnce(options: {
     runnerResult = await options.runner.run(execution, { signal: controller.signal });
   } catch (error) {
     runnerFailure = error;
+    logRunnerFailure(describeRunnerFailure(execution.executionId, options.workerId, error));
   } finally {
     clearInterval(heartbeatTimer);
     clearTimeout(timeoutTimer);

@@ -24,6 +24,18 @@ function finalMessage(stdout: string): string | null {
   return message;
 }
 
+// Codex appends "/responses" to the provider base_url, and the gateway serves
+// POST /v1/responses. A bare gateway origin produced
+// "404 Not Found: route is not available, url: https://<tunnel>/responses".
+export function codexBaseUrl(gatewayUrl: string): string {
+  const url = new URL(gatewayUrl);
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path.endsWith("/v1") ? path : `${path}/v1`;
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
+}
+
 function safeBinary(binary: string): string {
   if (!/^[A-Za-z0-9_./-]+$/.test(binary)) throw new Error("invalid Codex binary path");
   return binary;
@@ -55,7 +67,7 @@ export class CodexHarnessRunner implements HarnessRunner {
     const command = [
       'mkdir -p "$CODEX_HOME"',
       versionGuard,
-      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --full-auto --model "$BENCHMARK_MODEL" ${providerConfig} -`,
+      `printf '%s' "$BENCHMARK_TICKET" | ${this.binary} exec --json --sandbox workspace-write --model "$BENCHMARK_MODEL" ${providerConfig} -`,
     ].join("; ");
 
     // Codex CLI 0.90.0 does not expose a supported hard max-turns switch for
@@ -67,7 +79,7 @@ export class CodexHarnessRunner implements HarnessRunner {
       {
         command,
         env: {
-          OPENAI_BASE_URL: request.gatewayUrl,
+          OPENAI_BASE_URL: codexBaseUrl(request.gatewayUrl),
           OPENAI_API_KEY: request.runToken,
           CODEX_HOME: "/tmp/codex-benchmark",
           BENCHMARK_TICKET: request.ticketText,

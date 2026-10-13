@@ -33,6 +33,17 @@ export function validateBaselineCommitSha(value: string): string {
   return sha;
 }
 
+export const dependencyExcludes = [
+  "node_modules/",
+  ".pnpm-store/",
+  ".venv/",
+  "venv/",
+  "__pycache__/",
+  ".pytest_cache/",
+  ".gradle/",
+  ".m2/",
+] as const;
+
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -73,12 +84,30 @@ export function buildRepositoryBootstrapCommand(
     `printf '%s\\n' ${commit} > ${sandboxMetadataPath}/source-commit`,
     `cd ${sandboxWorkspacePath}`,
     "git init -q",
+    // Dependency installs must never become part of the exported patch, even
+    // when the customer project has no .gitignore (live run: a 6-file ZIP gave
+    // a 2.5 MB patch of node_modules). .git/info/exclude is local to this
+    // synthetic repo and never exported.
+    `printf '%s\\n' ${dependencyExcludes.map(shellSingleQuote).join(" ")} >> .git/info/exclude`,
     'git config user.name "Coding Agent Benchmark"',
     'git config user.email "benchmark@invalid.local"',
     "git add -A",
     `git commit -q --allow-empty -m "benchmark baseline: ${pinnedCommit}"`,
     'test "$(git rev-list --count HEAD)" = "1"',
     'test -z "$(git remote)"',
+  ].join("\n");
+}
+
+// Live run 2026-10-13: npm install created package-lock.json in the coding
+// sandbox, the patch added it, and verification (which installs first)
+// rejected the patch as not applying cleanly.
+export function buildDependencyBaselineCommand(): string {
+  return [
+    "set -euo pipefail",
+    `cd ${sandboxWorkspacePath}`,
+    "git add -A",
+    'git commit -q --allow-empty -m "dependencies installed"',
+    "git rev-parse HEAD",
   ].join("\n");
 }
 

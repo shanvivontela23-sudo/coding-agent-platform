@@ -17,6 +17,8 @@ export type HarnessRunOutcome = {
   readonly turnsUsed: number;
   readonly wallClockSeconds: number;
   readonly patch: SandboxPatch;
+  /** Only for status "error": exit code plus the stderr tail, for operator logs. */
+  readonly errorDetail?: string;
 };
 
 export interface HarnessRunner {

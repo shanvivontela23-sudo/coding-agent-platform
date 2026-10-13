@@ -3,6 +3,13 @@ import { boundedDependencyInstallFailureDetail } from "./change-document.js";
 import type { PreparedExecutionSource } from "./execution-source.js";
 import { parsePatchFiles, testOnlyPatch } from "./patch-parser.js";
 
+// Verification sandboxes never reach a model: they only use the locked,
+// dependency-setup and offline phases, so this host is never allowlisted.
+// It must still be https (network policy rejects the plain-http loopback
+// placeholder used before, which failed every live verification), and
+// .invalid (RFC 2606) never resolves.
+export const verificationGatewayPlaceholder = "https://verification.invalid";
+
 export type VerificationCheck = {
   readonly name: "test" | "build";
   readonly command: string;
@@ -161,7 +168,7 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
 
   try {
     assertNotAborted(signal, timedOut());
-    const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: remainingMs() });
+    const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs() });
     let baselineChecks: GeneralRun | null = null;
     let baselineReproduction: SandboxCommandResult | null = null;
     let baselineSetup: SetupResult = { complete: false, reason: "Baseline setup did not complete." };
@@ -177,7 +184,7 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     if (!baselineSetup.complete) return incomplete(baselineSetup.reason, options.reproductionCommand);
 
     assertNotAborted(signal, timedOut());
-    const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: "http://127.0.0.1:1", timeoutMs: remainingMs() });
+    const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs() });
     let patchedChecks: GeneralRun | null = null;
     let patchedReproduction: SandboxCommandResult | null = null;
     let patchedSetup: SetupResult = { complete: false, reason: "Patched setup did not complete." };

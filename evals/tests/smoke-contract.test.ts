@@ -114,6 +114,6 @@ describe("live smoke contract", () => {
     expect(gatewayDoc).toContain("evals/smoke/http-gateway-smoke.ts");
     expect(gatewayDoc).toContain("truncated");
     expect(sandboxDoc).toContain("evals/smoke/e2b-network-smoke.ts");
-    expect(sandboxDoc).toContain("::/0");
+    expect(sandboxDoc).toContain("ALL_TRAFFIC");
   });
 });

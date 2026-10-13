@@ -17,6 +17,7 @@ function validDemoEnv(): Record<string, string> {
     GITHUB_APP_CLIENT_SECRET: value,
     GITHUB_APP_PRIVATE_KEY: value,
     E2B_API_KEY: value,
+    E2B_TEMPLATE_ID: value,
     TASK_EXECUTION_MODEL: "execution-model",
     TASK_EXECUTION_CODEX_VERSION: "codex",
     MODEL_GATEWAY_RUN_TOKEN_SECRET: value,

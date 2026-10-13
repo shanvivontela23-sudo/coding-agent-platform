@@ -16,12 +16,12 @@ describe("networkPolicyForPhase", () => {
     expect(policy.allowHosts).toEqual([]);
     expect(toE2BCreateNetwork(policy)).toEqual({
       allowOut: [],
-      denyOut: ["0.0.0.0/0", "::/0"],
+      denyOut: ["0.0.0.0/0"],
       allowPublicTraffic: false,
     });
     expect(toE2BEgressUpdate(policy)).toEqual({
       allowOut: [],
-      denyOut: ["0.0.0.0/0", "::/0"],
+      denyOut: ["0.0.0.0/0"],
     });
   });
 
@@ -66,10 +66,7 @@ describe("networkPolicyForPhase", () => {
 
       expect(policy.allowHosts).toEqual(["gateway.example.com"]);
       expect(policy.denyAllOtherEgress).toBe(true);
-      expect(toE2BCreateNetwork(policy).denyOut).toEqual([
-        "0.0.0.0/0",
-        "::/0",
-      ]);
+      expect(toE2BCreateNetwork(policy).denyOut).toEqual(["0.0.0.0/0"]);
     },
   );
 
@@ -84,7 +81,7 @@ describe("networkPolicyForPhase", () => {
     expect(policy.denyAllOtherEgress).toBe(true);
     expect(toE2BEgressUpdate(policy)).toEqual({
       allowOut: [],
-      denyOut: ["0.0.0.0/0", "::/0"],
+      denyOut: ["0.0.0.0/0"],
     });
   });
 

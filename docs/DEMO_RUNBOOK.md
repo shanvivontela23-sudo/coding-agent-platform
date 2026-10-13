@@ -32,7 +32,7 @@ Fill the placeholders for:
 - Supabase: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_FLOW_SECRET`.
 - Session/security: `SESSION_SIGNING_SECRET` and, optionally, `TASK_TICKET_ENCRYPTION_SECRET`.
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`.
-- E2B: `E2B_API_KEY`.
+- E2B: `E2B_API_KEY` and `E2B_TEMPLATE_ID`. Build the template once with `pnpm exec tsx evals/sandbox-templates/typescript-node/build.ts` (E2B build time only, no model calls) and put the printed `E2B_TEMPLATE_ID` (a version-pinned `name:tag` reference) in `.env`. The plain E2B `base` template has no Codex CLI, so implementation fails without it.
 - Model/gateway: `ANTHROPIC_API_KEY`, `LITELLM_MASTER_KEY`, `MODEL_GATEWAY_RUN_TOKEN_SECRET`, `TASK_MODEL_NAME`, `TASK_EXECUTION_MODEL`, `TASK_EXECUTION_CODEX_VERSION`, and `HARNESS_MODEL_PRICES_JSON`. The price map must contain entries for the exact planning and execution model names using the format documented in `.env.example`.
 - ngrok: `NGROK_AUTHTOKEN`.
 - Local LiteLLM Postgres: `POSTGRES_PASSWORD`.

@@ -17,7 +17,10 @@ export const defaultDependencyHosts = [
   "globalcdn.nuget.org",
 ] as const;
 
-const denyAllCidrs = ["0.0.0.0/0", "::/0"] as const;
+// E2B treats denyOut "0.0.0.0/0" (its SDK's ALL_TRAFFIC) as "no internet
+// access" for the sandbox, and its API rejects "::/0" with
+// "400: invalid denied CIDR ::/0". The allowlist stays the only exception.
+const denyAllCidrs = ["0.0.0.0/0"] as const;
 
 function normalizedGatewayHostname(url: string): string {
   const parsed = new URL(url);

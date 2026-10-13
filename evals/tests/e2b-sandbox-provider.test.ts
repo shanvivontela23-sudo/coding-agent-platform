@@ -28,9 +28,12 @@ class FakeSandbox {
   commands = {
     run: async (
       command: string,
-      options?: { cwd?: string; envs?: Record<string, string>; timeoutMs?: number },
+      options?: { cwd?: string; envs?: Record<string, string>; timeoutMs?: number; user?: string },
     ) => {
       this.commandsRun.push({ command, options });
+      if (command === "id -un") {
+        return { exitCode: 0, stdout: "user\n", stderr: "" };
+      }
       if (
         this.failWhenCommandIncludes &&
         command.includes(this.failWhenCommandIncludes)
@@ -148,7 +151,7 @@ describe("E2BSandboxProvider", () => {
       metadata: { taskId: "task-001" },
       network: {
         allowOut: [],
-        denyOut: ["0.0.0.0/0", "::/0"],
+        denyOut: ["0.0.0.0/0"],
         allowPublicTraffic: false,
       },
       lifecycle: {
@@ -203,7 +206,7 @@ describe("E2BSandboxProvider", () => {
 
     expect(sandbox.networkUpdates[1]).toEqual({
       allowOut: ["gateway.example.com"],
-      denyOut: ["0.0.0.0/0", "::/0"],
+      denyOut: ["0.0.0.0/0"],
     });
     expect(sandbox.networkUpdates[2]).toEqual(sandbox.networkUpdates[1]);
   });

@@ -11,6 +11,7 @@ describe("real worker configuration", () => {
       DATABASE_URL: "postgresql://coding_agent_worker:x@localhost/db",
       TASK_EXECUTION_WORKER_ID: "worker-1",
       E2B_API_KEY: "e2b-test",
+      E2B_TEMPLATE_ID: "tmpl-test",
       TASK_EXECUTION_MODEL: "model-test",
       TASK_EXECUTION_CODEX_VERSION: "0.90.0",
       TASK_EXECUTION_GATEWAY_URL: "https://gateway.example.test",
