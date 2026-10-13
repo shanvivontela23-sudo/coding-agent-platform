@@ -6,6 +6,8 @@ describe("task job type", () => {
     const system = buildClarificationPrompt({ maskedTicket: "t", repositoryContext: "c" })[0]!.content;
     expect(system).toContain(`jobType must be exactly one of: ${taskJobTypes.join(", ")}`);
     expect(system).toContain("Use bug_fix whenever the ticket reports existing behavior that is wrong");
+    // Live run: a suggested answer named calculateRefund and item.unitPrice.
+    expect(system).toContain("Each suggestedAnswer must also describe customer-visible behavior only");
   });
 
   it.each([
