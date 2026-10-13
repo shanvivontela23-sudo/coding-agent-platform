@@ -1,1 +1,3 @@
+# Keep direct gateway dependencies explicit; regenerate requirements.txt with hashes when bumping.
 litellm[proxy]==1.103.2
+prisma==0.11.0
