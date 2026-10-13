@@ -27,6 +27,7 @@ const endpointByWireApi = {
 } as const;
 
 const forbiddenSettingName = /(api[-_]?key|token|secret|password|authorization)/i;
+const httpLoopbackHostnames = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -44,7 +45,8 @@ function assertSafeModelSettings(settings: Readonly<Record<string, unknown>>): v
 
 function normalizeBaseUrl(baseUrl: string): string {
   const parsed = new URL(baseUrl);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+  const isLoopbackHttp = parsed.protocol === "http:" && httpLoopbackHostnames.has(parsed.hostname);
+  if (parsed.protocol !== "https:" && !isLoopbackHttp) {
     throw new Error("LiteLLM baseUrl must use https outside localhost");
   }
   return parsed.toString().replace(/\/$/, "");

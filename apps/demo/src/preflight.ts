@@ -1,3 +1,4 @@
+import { connect, createServer } from "node:net";
 import { E2B } from "e2b";
 import { createGitHubInstallationPermissionReader, type GitHubInstallationPermissionReader } from "../../api/src/github-installation-permissions.js";
 import { parseModelListPrices } from "../../../evals/src/gateway/http/cost-estimator.js";
@@ -6,6 +7,7 @@ import type { DemoConfig } from "./config.js";
 import { ensureDemoMigrations, runCommand } from "./migrations.js";
 
 export type DemoPreflightDependencies = {
+  readonly checkAppPorts: () => Promise<void>;
   readonly checkDatabase: () => Promise<void>;
   readonly checkSupabase: () => Promise<void>;
   readonly checkGitHubContentsWrite: () => Promise<void>;
@@ -20,6 +22,7 @@ export type DemoPreflightDependencies = {
 export type DemoPreflightResult = { readonly name: string; readonly ok: boolean; readonly message: string };
 
 const checks: readonly [string, keyof DemoPreflightDependencies][] = [
+  ["API and web ports", "checkAppPorts"],
   ["database roles and migrations", "checkDatabase"],
   ["Supabase", "checkSupabase"],
   ["GitHub App Contents: Read and write", "checkGitHubContentsWrite"],
@@ -37,6 +40,8 @@ const multipleGitHubMessage = "More than one GitHub installation is connected; s
 const disconnectedGitHubMessage = "GitHub installation is disconnected.";
 const acceptContentsMessage = "Accept the new Contents permission on the dhara-coding-agent installation (GitHub → Settings → Applications → Installed GitHub Apps).";
 const liteLLMHealthFailureMessage = "LiteLLM did not become healthy; see `docker logs http-gateway-litellm-1`";
+const portProbeTimeoutMs = 500;
+const ipv6NotApplicableCodes = new Set(["EADDRNOTAVAIL", "EAFNOSUPPORT"]);
 
 export async function runDemoPreflight(deps: DemoPreflightDependencies): Promise<readonly DemoPreflightResult[]> {
   const results: DemoPreflightResult[] = [];
@@ -108,6 +113,76 @@ export async function checkDemoGitHubContentsWrite(config: DemoConfig, dependenc
   if (permissions.contents !== "write") throw new Error(acceptContentsMessage);
 }
 
+function portInUseError(port: number): Error {
+  return new Error(`Port ${port} is already in use; stop the process using it (\`lsof -iTCP:${port} -sTCP:LISTEN\`)`);
+}
+
+async function loopbackAcceptsConnections(port: number, host: "127.0.0.1" | "::1"): Promise<boolean> {
+  return await new Promise<boolean>((resolve, reject) => {
+    const socket = connect({ host, port });
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      callback();
+    };
+    const timer = setTimeout(() => finish(() => resolve(false)), portProbeTimeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      finish(() => resolve(true));
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ECONNREFUSED") {
+        finish(() => resolve(false));
+        return;
+      }
+      if (host === "::1" && code && ipv6NotApplicableCodes.has(code)) {
+        finish(() => resolve(false));
+        return;
+      }
+      finish(() => reject(error));
+    });
+  });
+}
+
+async function canBindProbe(port: number, host?: "127.0.0.1" | "::1"): Promise<boolean> {
+  return await new Promise<boolean>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EADDRINUSE") {
+        resolve(false);
+        return;
+      }
+      if (host === "::1" && code && ipv6NotApplicableCodes.has(code)) {
+        resolve(true);
+        return;
+      }
+      reject(error);
+    });
+    server.listen({ port, host, exclusive: true }, () => {
+      server.close((error) => error ? reject(error) : resolve(true));
+    });
+  });
+}
+
+export async function assertDemoPortFree(port: number): Promise<void> {
+  if (await loopbackAcceptsConnections(port, "127.0.0.1")) throw portInUseError(port);
+  if (await loopbackAcceptsConnections(port, "::1")) throw portInUseError(port);
+
+  for (const host of [undefined, "127.0.0.1", "::1"] as const) {
+    if (!await canBindProbe(port, host)) throw portInUseError(port);
+  }
+}
+
+export async function checkDemoAppPorts(apiPort: number, webPort: number): Promise<void> {
+  await assertDemoPortFree(apiPort);
+  await assertDemoPortFree(webPort);
+}
+
 async function fetchReady(url: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -154,6 +229,7 @@ export function workerClaimRollbackSql(): string {
 export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): DemoPreflightDependencies {
   const value = (name: string): string => config.values[name] ?? "";
   return {
+    checkAppPorts: async () => { await checkDemoAppPorts(config.apiPort, config.webPort); },
     checkDatabase: async () => { await ensureDemoMigrations(value("DEMO_DATABASE_ADMIN_URL")); },
     checkSupabase: async () => { await fetchReady(`${value("SUPABASE_URL").replace(/\/$/, "")}/auth/v1/settings`, { headers: { apikey: value("SUPABASE_ANON_KEY") } }); },
     checkGitHubContentsWrite: async () => { await checkDemoGitHubContentsWrite(config); },
