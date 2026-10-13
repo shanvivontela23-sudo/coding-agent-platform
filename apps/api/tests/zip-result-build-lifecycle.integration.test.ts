@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { testPool } from "./helpers/test-pool.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTaskZipResultDatabase } from "../src/task-zip-result-database.js";
 import type { TenantPool } from "../src/database.js";
@@ -34,10 +35,10 @@ function urlFor(name: string, username?: string, password?: string): string {
 
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
-  rootPool = new Pool({ connectionString: baseDatabaseUrl });
+  rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${databaseName}`);
-  adminPool = new Pool({ connectionString: urlFor(databaseName) });
+  adminPool = testPool({ connectionString: urlFor(databaseName) });
   for (const name of ["0001_tenant_core.sql","0002_organization_invitations.sql","0003_github_projects.sql","0004_task_intake.sql","0005_zip_projects_and_task_review_fixes.sql","0006_task_execution.sql","0007_task_execution_b2.sql","0008_verification_incomplete.sql","0009_github_publication.sql","0010_zip_results.sql","0011_zip_result_build_lifecycle.sql"]) await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
   await adminPool.query(`ALTER ROLE coding_agent_worker PASSWORD '${workerPassword}'`);
@@ -60,8 +61,8 @@ beforeAll(async () => {
     UPDATE task_executions SET zip_build_status='failed',zip_build_error_code='ZIP_RESULT_FAILED',zip_build_error_message='failed once' WHERE id='${raceExecution}';
     UPDATE task_executions SET zip_build_status='building',zip_build_started_at=now()-interval '11 minutes' WHERE id='${staleExecution}';
   `);
-  apiPool = new Pool({ connectionString: urlFor(databaseName, "coding_agent_api", apiPassword), max: 4 });
-  workerPool = new Pool({ connectionString: urlFor(databaseName, "coding_agent_worker", workerPassword), max: 4 });
+  apiPool = testPool({ connectionString: urlFor(databaseName, "coding_agent_api", apiPassword), max: 4 });
+  workerPool = testPool({ connectionString: urlFor(databaseName, "coding_agent_worker", workerPassword), max: 4 });
 }, 30_000);
 
 afterAll(async () => {

@@ -57,6 +57,13 @@ export function maskPersonalData(value: string): string {
 // Only bug_fix changes downstream behavior (reproduce-first proof in the
 // worker). Live run: the model invented "clarify-behavior-change" for a clear
 // refund bug, so the fix shipped without a fail-before/pass-after proof.
+// Gateway run ids cannot be reused, so a retried clarification needs its own
+// run. Attempt 1 keeps the original "task:<id>" run for existing tasks.
+export function planningRunKey(taskId: string, attempt: number): string {
+  if (!Number.isInteger(attempt) || attempt < 1) throw new Error("planning attempt must be a positive integer");
+  return attempt === 1 ? taskId : `${taskId}:attempt-${attempt}`;
+}
+
 export const taskJobTypes = ["bug_fix", "feature", "change", "other"] as const;
 
 export function normalizeJobType(value: unknown): (typeof taskJobTypes)[number] {

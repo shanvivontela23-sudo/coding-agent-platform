@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { handlePoolErrors } from "./postgres-pool.js";
 import { FileGatewayStore } from "../../../evals/src/gateway/file-store.js";
 import { LiteLLMAdapter } from "../../../evals/src/gateway/litellm-adapter.js";
 import { PersistentModelGateway } from "../../../evals/src/gateway/model-gateway.js";
@@ -61,7 +62,7 @@ const executionBudgetUsd = demoBudgetCaps?.executionUsd ?? positiveNumber("TASK_
 const planningBudgetUsd = demoBudgetCaps?.planningUsd ?? positiveNumber("TASK_MODEL_BUDGET_USD", 0.5);
 
 const databaseUrl = assertRestrictedDatabaseUrl(required("DATABASE_URL"));
-const pool = new Pool({ connectionString: databaseUrl });
+const pool = handlePoolErrors(new Pool({ connectionString: databaseUrl }));
 const tenantPool = pool as unknown as TenantPool;
 const database = createProductDatabase(tenantPool);
 const auth = createSupabaseAuthClient({

@@ -48,7 +48,7 @@ async function psql(databaseUrl: string, sql: string): Promise<string> {
 export async function ensureDemoMigrations(adminDatabaseUrl: string, directory = "packages/db/migrations"): Promise<{ readonly applied: readonly string[]; readonly plan: readonly MigrationEntry[] }> {
   const plan = await loadMigrationPlan(directory);
   const hasCore = (await psql(adminDatabaseUrl, "SELECT to_regclass('public.organizations') IS NOT NULL;")) === "t";
-  const hasLatest = hasCore && (await psql(adminDatabaseUrl, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='task_executions' AND column_name='zip_build_started_at');")) === "t";
+  const hasLatest = hasCore && (await psql(adminDatabaseUrl, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='tasks' AND column_name='planning_attempt');")) === "t";
   if (hasCore && !hasLatest) throw new Error("Database is partially migrated. Refusing to guess an applied prefix; apply the immutable numbered migrations in order before demo startup.");
   const applied: string[] = [];
   if (!hasCore) {

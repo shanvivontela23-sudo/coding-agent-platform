@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { testPool } from "./helpers/test-pool.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSessionToken } from "../src/auth.js";
 import type { TenantPool } from "../src/database.js";
@@ -37,10 +38,10 @@ function databaseUrlFor(name: string, username?: string, password?: string): str
 
 beforeAll(async () => {
   if (!baseDatabaseUrl) return;
-  rootPool = new Pool({ connectionString: baseDatabaseUrl });
+  rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
-  adminPool = new Pool({ connectionString: databaseUrlFor(integrationDb) });
+  adminPool = testPool({ connectionString: databaseUrlFor(integrationDb) });
   for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql", "0009_github_publication.sql"]) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
@@ -63,7 +64,7 @@ beforeAll(async () => {
     INSERT INTO task_executions (id,organization_id,task_id,project_id,attempt,started_by_user_id,source_commit_sha,budget_usd,timeout_seconds,status,finished_at,result_patch,change_document,result_metadata)
       VALUES ('${execution}','${org}','${task}','${project}',1,'${user}','${commit}',1.00,600,'succeeded',now(),E'${patch.replaceAll("'", "''")}','## What was asked','${metadata}'::jsonb);
   `);
-  apiPool = new Pool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 4 });
+  apiPool = testPool({ connectionString: databaseUrlFor(integrationDb, "coding_agent_api", apiPassword), max: 4 });
 }, 30_000);
 
 afterAll(async () => {

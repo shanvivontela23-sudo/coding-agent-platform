@@ -1,5 +1,6 @@
 import type { SessionIdentity } from "./auth.js";
 import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./database.js";
+import { AppError } from "./errors.js";
 import type { CostRecord } from "../../../evals/src/gateway/types.js";
 import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.js";
 
@@ -24,6 +25,7 @@ export type TaskListItem = {
   readonly updatedAt: string;
 };
 export type TaskDetail = TaskListItem & {
+  readonly planningAttempt: number;
   readonly repositoryId: string | null;
   readonly jobType: string | null;
   readonly whatIUnderstand: string | null;
@@ -56,6 +58,7 @@ export interface TaskDatabase {
   createTask(session: SessionIdentity, input: { projectId: string; encryptedTicket: string; maskedTicket: string; modelBudgetUsd: number }): Promise<{ taskId: string }>;
   listTasks(session: SessionIdentity): Promise<readonly TaskListItem[]>;
   getTask(session: SessionIdentity, taskId: string): Promise<TaskDetail | null>;
+  beginClarificationRetry(session: SessionIdentity, taskId: string): Promise<{ readonly projectId: string; readonly maskedTicket: string; readonly planningAttempt: number }>;
   getProjectSource(session: SessionIdentity, projectId: string): Promise<TaskProjectSource | null>;
   saveClarification(session: SessionIdentity, taskId: string, jobType: string, questions: readonly TaskQuestion[], stats?: QuestionFilterStats): Promise<void>;
   answerQuestion(session: SessionIdentity, taskId: string, questionId: string, answer: string, developerNeeded: boolean): Promise<void>;
@@ -105,8 +108,8 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
       assertUuid(taskId, "taskId");
       return await withTenant(pool, session, async (database) => {
         const result = await database.query<{
-          id: string; project_id: string; project_name: string; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; updated_at: Date | string; current_user_role: MemberRole;
-        }>(`SELECT t.id,t.project_id,p.name AS project_name,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
+          id: string; project_id: string; project_name: string; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; planning_attempt: number | null; updated_at: Date | string; current_user_role: MemberRole;
+        }>(`SELECT t.id,t.project_id,p.name AS project_name,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.planning_attempt,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
         const row = result.rows[0];
         if (!row) return null;
         const questions = await database.query<{ id: string; ordinal: number; question: string; suggested_answer: string; answer: string | null; answer_status: TaskQuestionRecord["answerStatus"]; routed_to_user_id: string | null }>(`SELECT id,ordinal,question,suggested_answer,answer,answer_status,routed_to_user_id FROM task_questions WHERE organization_id=$1 AND task_id=$2 ORDER BY ordinal`, [session.organizationId, taskId]);
@@ -117,7 +120,7 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
           estimatedCostUsd: number(row.estimated_cost_usd), estimatedTimeMinutes: row.estimated_time_minutes,
           estimatedCostUsdMin: number(row.estimated_cost_usd_min), estimatedCostUsdMax: number(row.estimated_cost_usd_max), estimatedTimeMinutesMin: row.estimated_time_minutes_min, estimatedTimeMinutesMax: row.estimated_time_minutes_max,
           clarificationFilteredCount: row.clarification_filtered_count, clarificationRephrasedCount: row.clarification_rephrased_count,
-          confirmedRequirement: row.confirmed_requirement, confirmedPlan: row.confirmed_plan, modelBudgetUsd: Number(row.task_model_budget_usd), originalTicketEncrypted: row.original_ticket_encrypted,
+          confirmedRequirement: row.confirmed_requirement, confirmedPlan: row.confirmed_plan, modelBudgetUsd: Number(row.task_model_budget_usd), planningAttempt: Number(row.planning_attempt ?? 1), originalTicketEncrypted: row.original_ticket_encrypted,
           currentUserRole: row.current_user_role,
           questions: questions.rows.map((question) => ({ id: question.id, ordinal: question.ordinal, question: question.question, suggestedAnswer: question.suggested_answer, answer: question.answer, answerStatus: question.answer_status, routedToUserId: question.routed_to_user_id })),
         };
@@ -130,6 +133,20 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
         const result = await database.query<{ project_id: string; repository_id: string; github_repository_id: string | number; installation_id: string | number; installation_status: "connected" | "disconnected" }>(`SELECT p.id AS project_id,r.id AS repository_id,r.github_repository_id,gi.installation_id,gi.status AS installation_status FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id JOIN github_installations gi ON gi.organization_id=p.organization_id WHERE p.organization_id=$1 AND p.id=$2 AND r.github_repository_id IS NOT NULL LIMIT 1`, [session.organizationId, projectId]);
         const row = result.rows[0];
         return row ? { projectId: row.project_id, repositoryId: row.repository_id, githubRepositoryId: Number(row.github_repository_id), installationId: Number(row.installation_id), installationStatus: row.installation_status } : null;
+      });
+    },
+
+    async beginClarificationRetry(session, taskId) {
+      assertUuid(taskId, "taskId");
+      return await withTenant(pool, session, async (database) => {
+        const result = await database.query<{ project_id: string; masked_ticket: string | null; requirement: string; planning_attempt: number }>(
+          `UPDATE tasks SET planning_attempt=planning_attempt+1,updated_at=now() WHERE organization_id=$1 AND id=$2 AND status='draft' AND requested_by_user_id=$3 AND planning_attempt < 20 RETURNING project_id,masked_ticket,requirement,planning_attempt`,
+          [session.organizationId, taskId, session.userId],
+        );
+        const row = result.rows[0];
+        if (!row) throw new AppError("TASK_RETRY_NOT_ALLOWED", "Only the person who requested this task can retry it, and only while clarification has not finished.", 409);
+        await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'task_clarification_retried',jsonb_build_object('planning_attempt',$4::int))`, [session.organizationId, session.userId, taskId, row.planning_attempt]);
+        return { projectId: row.project_id, maskedTicket: row.masked_ticket ?? row.requirement, planningAttempt: Number(row.planning_attempt) };
       });
     },
 

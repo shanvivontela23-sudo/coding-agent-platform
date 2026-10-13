@@ -1,7 +1,7 @@
 import type { SessionIdentity } from "./auth.js";
 import type { ProjectCodeReader } from "./project-code-reader.js";
 import type { PlannedSourcePin, TaskDatabase, TaskDetail, TaskListItem } from "./task-database.js";
-import { maskPersonalData, TaskPlanner, type TaskModelGateway } from "./task-intake.js";
+import { maskPersonalData, planningRunKey, TaskPlanner, type TaskModelGateway } from "./task-intake.js";
 import type { TicketCipher } from "./ticket-crypto.js";
 
 export type TaskView = Omit<TaskDetail, "originalTicketEncrypted"> & { readonly originalTicket?: string };
@@ -15,6 +15,7 @@ export interface TaskReadService {
 export interface TaskPlanningService {
   create(session: SessionIdentity, projectId: string, ticket: string): Promise<{ readonly taskId: string }>;
   answer(session: SessionIdentity, taskId: string, questionId: string, answer: string): Promise<void>;
+  retryClarification(session: SessionIdentity, taskId: string): Promise<void>;
 }
 
 export interface TaskService extends TaskReadService, TaskPlanningService {}
@@ -40,6 +41,15 @@ export function createTaskReadService(options: {
   };
 }
 
+// The task row exists even when clarification fails; carry its id so the
+// HTTP layer can send the requester to the draft task to retry.
+function withCreatedTaskId(error: unknown, taskId: string): unknown {
+  if (typeof error === "object" && error !== null) {
+    try { Object.defineProperty(error, "taskId", { value: taskId, enumerable: false, configurable: true }); } catch { /* frozen error */ }
+  }
+  return error;
+}
+
 export function createTaskPlanningService(options: {
   readonly database: TaskDatabase;
   readonly codeReader: ProjectCodeReader;
@@ -50,8 +60,10 @@ export function createTaskPlanningService(options: {
   if (!Number.isFinite(options.modelBudgetUsd) || options.modelBudgetUsd <= 0) throw new Error("task model budget must be greater than zero");
   const planner = new TaskPlanner({ gateway: options.gateway, spendCapUsd: options.modelBudgetUsd });
 
-  const persistCosts = async (session: SessionIdentity, taskId: string) => {
-    for (const cost of options.gateway.takeCostRecords?.(taskId) ?? []) await options.database.recordModelCall(session, taskId, cost);
+  // Gateway costs are collected per planning run key; they are recorded
+  // against the real task id.
+  const persistCosts = async (session: SessionIdentity, taskId: string, runKey = taskId) => {
+    for (const cost of options.gateway.takeCostRecords?.(runKey) ?? []) await options.database.recordModelCall(session, taskId, cost);
   };
 
   const makePlanIfReady = async (session: SessionIdentity, taskId: string): Promise<void> => {
@@ -63,12 +75,13 @@ export function createTaskPlanningService(options: {
       ? { source: "github", commitSha: context.revision }
       : { source: "upload", versionId: context.revision };
     const answers = task.questions.filter((question) => question.answerStatus === "answered" && question.answer).map((question) => ({ question: question.question, answer: question.answer! }));
+    const runKey = planningRunKey(taskId, task.planningAttempt);
     try {
-      const plan = await planner.plan({ taskId, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers });
-      await persistCosts(session, taskId);
+      const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers });
+      await persistCosts(session, taskId, runKey);
       await options.database.savePlan(session, taskId, plan, sourcePin);
     } catch (error) {
-      await persistCosts(session, taskId);
+      await persistCosts(session, taskId, runKey);
       throw error;
     }
   };
@@ -87,9 +100,24 @@ export function createTaskPlanningService(options: {
         if (clarification.questions.length === 0) await makePlanIfReady(session, created.taskId);
       } catch (error) {
         await persistCosts(session, created.taskId);
-        throw error;
+        throw withCreatedTaskId(error, created.taskId);
       }
       return created;
+    },
+
+    async retryClarification(session, taskId) {
+      const retry = await options.database.beginClarificationRetry(session, taskId);
+      const runKey = planningRunKey(taskId, retry.planningAttempt);
+      const context = await options.codeReader.readContext(session, retry.projectId, retry.maskedTicket);
+      try {
+        const clarification = await planner.clarify({ taskId: runKey, maskedTicket: retry.maskedTicket, repositoryContext: context.text });
+        await persistCosts(session, taskId, runKey);
+        await options.database.saveClarification(session, taskId, clarification.jobType, clarification.questions, clarification.questionFilterStats);
+        if (clarification.questions.length === 0) await makePlanIfReady(session, taskId);
+      } catch (error) {
+        await persistCosts(session, taskId, runKey);
+        throw error;
+      }
     },
 
     async answer(session, taskId, questionId, answerValue) {

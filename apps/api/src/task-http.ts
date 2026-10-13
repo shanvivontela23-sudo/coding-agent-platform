@@ -37,9 +37,10 @@ export async function handleTaskHttpRequest(options: {
   const detailMatch = url.pathname.match(/^\/api\/tasks\/([0-9a-f-]+)$/i);
   const answerMatch = request.method === "POST" ? url.pathname.match(/^\/tasks\/([0-9a-f-]+)\/answers$/i) : null;
   const approveMatch = request.method === "POST" ? url.pathname.match(/^\/tasks\/([0-9a-f-]+)\/approve$/i) : null;
+  const retryMatch = request.method === "POST" ? url.pathname.match(/^\/tasks\/([0-9a-f-]+)\/retry-clarification$/i) : null;
   const configurationRoute = request.method === "GET" && url.pathname === "/api/tasks/configuration";
   const listRoute = request.method === "GET" && url.pathname === "/api/tasks";
-  const taskRoute = Boolean(createMatch || detailMatch || answerMatch || approveMatch || configurationRoute || listRoute);
+  const taskRoute = Boolean(createMatch || detailMatch || answerMatch || approveMatch || retryMatch || configurationRoute || listRoute);
   if (!taskRoute) return false;
 
   const readService = options.readService ?? options.service;
@@ -76,6 +77,13 @@ export async function handleTaskHttpRequest(options: {
       await planningService.answer(identity, answerMatch[1]!, form.get("questionId") ?? "", form.get("answer") ?? "");
       redirect(response, webLocation(options.webOrigin, `/tasks/${answerMatch[1]}`)); return true;
     }
+    if (retryMatch) {
+      if (!planningService) {
+        redirect(response, webLocation(options.webOrigin, `/tasks/${retryMatch[1]}`, "Task planning is not configured.")); return true;
+      }
+      await planningService.retryClarification(identity, retryMatch[1]!);
+      redirect(response, webLocation(options.webOrigin, `/tasks/${retryMatch[1]}`)); return true;
+    }
     if (approveMatch) {
       if (!readService) {
         redirect(response, webLocation(options.webOrigin, `/tasks/${approveMatch[1]}`, "Unable to update that task.")); return true;
@@ -97,7 +105,10 @@ export async function handleTaskHttpRequest(options: {
       json(response, status, { code: logged.code, error: error instanceof AppError ? error.publicMessage : genericRequestFailureMessage(logged.requestId) });
       return true;
     }
-    const fallback = createMatch ? `/projects/${createMatch[1]}/tasks/new` : answerMatch ? `/tasks/${answerMatch[1]}` : approveMatch ? `/tasks/${approveMatch[1]}` : "/tasks";
+    // A failed clarification still created a draft task: send the requester to
+    // it, where they can retry, instead of back to an empty form.
+    const createdTaskId = createMatch && typeof error === "object" && error !== null && typeof (error as { taskId?: unknown }).taskId === "string" ? (error as { taskId: string }).taskId : null;
+    const fallback = createdTaskId ? `/tasks/${createdTaskId}` : createMatch ? `/projects/${createMatch[1]}/tasks/new` : answerMatch ? `/tasks/${answerMatch[1]}` : approveMatch ? `/tasks/${approveMatch[1]}` : retryMatch ? `/tasks/${retryMatch[1]}` : "/tasks";
     const message = error instanceof AppError
       ? error.publicMessage
       : `Unable to update that task. ${genericRequestFailureMessage(logged.requestId)}`;
