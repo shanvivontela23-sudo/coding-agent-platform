@@ -107,6 +107,7 @@ export function createTaskPlanningService(options: {
 
     async retryClarification(session, taskId) {
       const retry = await options.database.beginClarificationRetry(session, taskId);
+      if (!retry) return;
       const runKey = planningRunKey(taskId, retry.planningAttempt);
       const context = await options.codeReader.readContext(session, retry.projectId, retry.maskedTicket);
       try {

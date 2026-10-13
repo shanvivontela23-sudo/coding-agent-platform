@@ -58,7 +58,7 @@ export interface TaskDatabase {
   createTask(session: SessionIdentity, input: { projectId: string; encryptedTicket: string; maskedTicket: string; modelBudgetUsd: number }): Promise<{ taskId: string }>;
   listTasks(session: SessionIdentity): Promise<readonly TaskListItem[]>;
   getTask(session: SessionIdentity, taskId: string): Promise<TaskDetail | null>;
-  beginClarificationRetry(session: SessionIdentity, taskId: string): Promise<{ readonly projectId: string; readonly maskedTicket: string; readonly planningAttempt: number }>;
+  beginClarificationRetry(session: SessionIdentity, taskId: string): Promise<{ readonly projectId: string; readonly maskedTicket: string; readonly planningAttempt: number } | null>;
   getProjectSource(session: SessionIdentity, projectId: string): Promise<TaskProjectSource | null>;
   saveClarification(session: SessionIdentity, taskId: string, jobType: string, questions: readonly TaskQuestion[], stats?: QuestionFilterStats): Promise<void>;
   answerQuestion(session: SessionIdentity, taskId: string, questionId: string, answer: string, developerNeeded: boolean): Promise<void>;
@@ -144,6 +144,13 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
           [session.organizationId, taskId, session.userId],
         );
         const row = result.rows[0];
+        if (!row) {
+          // A double-submitted Try again: the first request already moved the
+          // task past draft. Treat it as done for the requester.
+          const current = await database.query<{ status: string; requested_by_user_id: string }>(`SELECT status,requested_by_user_id FROM tasks WHERE organization_id=$1 AND id=$2`, [session.organizationId, taskId]);
+          const task = current.rows[0];
+          if (task && task.requested_by_user_id === session.userId && task.status !== "draft") return null;
+        }
         if (!row) throw new AppError("TASK_RETRY_NOT_ALLOWED", "Only the person who requested this task can retry it, and only while clarification has not finished.", 409);
         await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'task_clarification_retried',jsonb_build_object('planning_attempt',$4::int))`, [session.organizationId, session.userId, taskId, row.planning_attempt]);
         return { projectId: row.project_id, maskedTicket: row.masked_ticket ?? row.requirement, planningAttempt: Number(row.planning_attempt) };

@@ -65,6 +65,16 @@ describe("retryClarification", () => {
   });
 });
 
+describe("double-submitted retry", () => {
+  it("is a no-op once the task has already moved past draft", async () => {
+    const gateway = new KeyGateway({});
+    const { db, saved } = database({ beginClarificationRetry: async () => null });
+    await createTaskPlanningService({ database: db, codeReader: codeReader as never, gateway, cipher, modelBudgetUsd: 1 }).retryClarification(session, taskId);
+    expect(gateway.started).toEqual([]);
+    expect(saved).toEqual([]);
+  });
+});
+
 describe("create when clarification fails", () => {
   it("carries the created task id so the requester lands on the draft to retry", async () => {
     const gateway = new KeyGateway(new Error("model unavailable"));
