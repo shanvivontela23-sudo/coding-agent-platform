@@ -57,7 +57,7 @@ GitHub hosts are **not** in the default dependency allowlist. If a repository ge
 
 Additional dependency hosts must be exact DNS hostnames. Wildcards, URLs, CIDRs, ports, localhost, and all-traffic entries are rejected.
 
-The sandbox is created with public ingress disabled. E2B network wiring combines the exact hostname allowlist with deny-all CIDRs for both IP families: `0.0.0.0/0` and `::/0`. The allowlist is therefore the exception to an explicit IPv4/IPv6 deny-all policy, not a best-effort DNS-only restriction.
+The sandbox is created with public ingress disabled. E2B network wiring combines the exact hostname allowlist with a deny-all `0.0.0.0/0` rule, which E2B documents as no internet access for the sandbox (its SDK exports this as `ALL_TRAFFIC`). E2B rejects `::/0` (`400: invalid denied CIDR ::/0`), so it is not sent. The allowlist is therefore the exception to an explicit deny-all policy, not a best-effort DNS-only restriction.
 
 E2B's network-update API replaces the egress policy atomically. The adapter sends a complete allow/deny policy on every phase change.
 
