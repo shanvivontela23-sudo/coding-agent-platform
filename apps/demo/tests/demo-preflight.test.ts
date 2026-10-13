@@ -11,6 +11,7 @@ import {
 
 function dependencies(): DemoPreflightDependencies {
   return {
+    checkAppPorts: vi.fn(async () => undefined),
     checkDatabase: vi.fn(async () => undefined),
     checkSupabase: vi.fn(async () => undefined),
     checkGitHubContentsWrite: vi.fn(async () => undefined),
@@ -54,6 +55,7 @@ describe("demo preflight", () => {
     const deps = dependencies();
     const result = await runDemoPreflight(deps);
     expect(result.map((item) => item.name)).toEqual([
+      "API and web ports",
       "database roles and migrations",
       "Supabase",
       "GitHub App Contents: Read and write",
