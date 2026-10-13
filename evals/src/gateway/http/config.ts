@@ -42,7 +42,7 @@ const configSchema = z.object({
 });
 
 function readCommittedConfig(): unknown {
-  const path = join(process.cwd(), "evals", "config", "http-gateway.json");
+  const path = join(__dirname, "../../../config/http-gateway.json");
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
