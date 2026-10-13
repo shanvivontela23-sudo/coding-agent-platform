@@ -14,6 +14,7 @@ type Report = {
   readonly languages: ReadonlyArray<{ readonly name: string; readonly fileCount: number; readonly percentage: number }>;
   readonly frameworks: readonly string[];
   readonly packageManager: string | null;
+  readonly installCommand?: string | null;
   readonly buildCommand: string | null;
   readonly testCommand: string | null;
   readonly workspaceCommands?: readonly WorkspaceCommand[];
@@ -120,6 +121,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
             <ValueCard title="Languages">{project.report.languages.length ? <ul className="space-y-1 text-sm">{project.report.languages.map((language) => <li key={language.name} className="flex justify-between gap-4"><span>{language.name}</span><span className="text-muted-foreground">{language.percentage.toFixed(2)}% · {language.fileCount} files</span></li>)}</ul> : <p className="text-sm text-muted-foreground">None detected</p>}</ValueCard>
             <ValueCard title="Frameworks"><p className="text-sm">{project.report.frameworks.length ? project.report.frameworks.join(", ") : "None detected"}</p></ValueCard>
             <ValueCard title="Package manager"><p className="text-sm">{project.report.packageManager ?? "Not detected"}</p></ValueCard>
+            <ValueCard title="Install command">{project.report.installCommand ? <code className="text-sm">{project.report.installCommand}</code> : <p className="text-sm text-muted-foreground">{project.report.installCommand === undefined ? "Re-analyse to detect" : "Not detected"}</p>}</ValueCard>
             <ValueCard title="Build command">{project.report.buildCommand ? <code className="text-sm">{project.report.buildCommand}</code> : <WorkspaceCommands workspaces={workspaceCommands} kind="build" />}</ValueCard>
             <ValueCard title="Test command">{project.report.testCommand ? <code className="text-sm">{project.report.testCommand}</code> : <WorkspaceCommands workspaces={workspaceCommands} kind="test" />}</ValueCard>
             <ValueCard title="Stack skill"><p className="text-sm">{project.report.stackSkill}</p></ValueCard>
