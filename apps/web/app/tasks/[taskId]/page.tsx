@@ -7,6 +7,7 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { PageTitle, SectionTitle } from "../../../components/ui/heading";
+import { canApprovePlan } from "../../../src/task-permissions";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly id: string; readonly email: string | null } };
@@ -24,7 +25,7 @@ function money(value: number | null): string { return value === null ? "—" : `
 export default async function TaskPage({ params, searchParams }: Props) {
   const { taskId } = await params; const { error } = await searchParams; const headers = await requestHeaders();
   const [home, payload] = await Promise.all([load<HomePayload>("/api/home", headers), load<{ task: Task }>(`/api/tasks/${encodeURIComponent(taskId)}`, headers)]);
-  const task = payload.task; const canApprove = task.status === "plan_ready" && task.requestedByUserId === home.user.id && task.currentUserRole === "rep";
+  const task = payload.task; const canApprove = canApprovePlan(task, home.user.id);
   const implementationBlocker: string | null = null;
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/tasks">
