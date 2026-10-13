@@ -1,4 +1,4 @@
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { E2B } from "e2b";
 import { createGitHubInstallationPermissionReader, type GitHubInstallationPermissionReader } from "../../api/src/github-installation-permissions.js";
 import { parseModelListPrices } from "../../../evals/src/gateway/http/cost-estimator.js";
@@ -40,6 +40,8 @@ const multipleGitHubMessage = "More than one GitHub installation is connected; s
 const disconnectedGitHubMessage = "GitHub installation is disconnected.";
 const acceptContentsMessage = "Accept the new Contents permission on the dhara-coding-agent installation (GitHub → Settings → Applications → Installed GitHub Apps).";
 const liteLLMHealthFailureMessage = "LiteLLM did not become healthy; see `docker logs http-gateway-litellm-1`";
+const portProbeTimeoutMs = 500;
+const ipv6NotApplicableCodes = new Set(["EADDRNOTAVAIL", "EAFNOSUPPORT"]);
 
 export async function runDemoPreflight(deps: DemoPreflightDependencies): Promise<readonly DemoPreflightResult[]> {
   const results: DemoPreflightResult[] = [];
@@ -111,20 +113,69 @@ export async function checkDemoGitHubContentsWrite(config: DemoConfig, dependenc
   if (permissions.contents !== "write") throw new Error(acceptContentsMessage);
 }
 
-export async function assertDemoPortFree(port: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+function portInUseError(port: number): Error {
+  return new Error(`Port ${port} is already in use; stop the process using it (\`lsof -iTCP:${port} -sTCP:LISTEN\`)`);
+}
+
+async function loopbackAcceptsConnections(port: number, host: "127.0.0.1" | "::1"): Promise<boolean> {
+  return await new Promise<boolean>((resolve, reject) => {
+    const socket = connect({ host, port });
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      callback();
+    };
+    const timer = setTimeout(() => finish(() => resolve(false)), portProbeTimeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      finish(() => resolve(true));
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ECONNREFUSED") {
+        finish(() => resolve(false));
+        return;
+      }
+      if (host === "::1" && code && ipv6NotApplicableCodes.has(code)) {
+        finish(() => resolve(false));
+        return;
+      }
+      finish(() => reject(error));
+    });
+  });
+}
+
+async function canBindProbe(port: number, host?: "127.0.0.1" | "::1"): Promise<boolean> {
+  return await new Promise<boolean>((resolve, reject) => {
     const server = createServer();
     server.once("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
-        reject(new Error(`Port ${port} is already in use; stop the process using it (\`lsof -iTCP:${port} -sTCP:LISTEN\`)`));
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EADDRINUSE") {
+        resolve(false);
+        return;
+      }
+      if (host === "::1" && code && ipv6NotApplicableCodes.has(code)) {
+        resolve(true);
         return;
       }
       reject(error);
     });
-    server.listen({ port, exclusive: true }, () => {
-      server.close((error) => error ? reject(error) : resolve());
+    server.listen({ port, host, exclusive: true }, () => {
+      server.close((error) => error ? reject(error) : resolve(true));
     });
   });
+}
+
+export async function assertDemoPortFree(port: number): Promise<void> {
+  if (await loopbackAcceptsConnections(port, "127.0.0.1")) throw portInUseError(port);
+  if (await loopbackAcceptsConnections(port, "::1")) throw portInUseError(port);
+
+  for (const host of [undefined, "127.0.0.1", "::1"] as const) {
+    if (!await canBindProbe(port, host)) throw portInUseError(port);
+  }
 }
 
 export async function checkDemoAppPorts(apiPort: number, webPort: number): Promise<void> {
