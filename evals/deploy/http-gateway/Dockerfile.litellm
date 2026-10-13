@@ -2,9 +2,17 @@ FROM python:3.12.14-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0a
 
 WORKDIR /app
 
-COPY evals/litellm/requirements.txt /app/evals/litellm/requirements.txt
+COPY evals/litellm/requirements*.txt /app/evals/litellm/
 RUN python -m pip install --require-hashes -r /app/evals/litellm/requirements.txt
+
+# DATABASE_URL-backed LiteLLM imports a generated Prisma client at startup.
+# Generate it into the installed package during the image build; runtime startup
+# uses LiteLLM's normal `prisma migrate deploy` path and fails closed if that
+# migration cannot complete.
+RUN LITELLM_SCHEMA="$(python -c 'from pathlib import Path; import litellm; print(Path(litellm.__file__).resolve().parent / "proxy" / "schema.prisma")')" \
+    && test -f "$LITELLM_SCHEMA" \
+    && DATABASE_URL=postgresql://litellm:litellm@127.0.0.1:5432/litellm prisma generate --schema "$LITELLM_SCHEMA"
 
 COPY evals/deploy/http-gateway/litellm-config.yaml /app/litellm-config.yaml
 
-CMD ["litellm", "--config", "/app/litellm-config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+CMD ["litellm", "--config", "/app/litellm-config.yaml", "--host", "0.0.0.0", "--port", "4000", "--enforce_prisma_migration_check"]
