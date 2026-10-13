@@ -25,7 +25,7 @@ type ProjectPayload = {
   readonly project: { readonly id: string; readonly name: string };
   readonly source:
     | { readonly type: "github"; readonly fullName: string; readonly defaultBranch: string; readonly lastAnalysedCommit: string; readonly status: "connected" | "disconnected" }
-    | { readonly type: "upload"; readonly currentVersion: UploadVersion };
+    | { readonly type: "upload"; readonly currentVersion: UploadVersion; readonly analysedVersionNumber?: number };
   readonly report: Report;
   readonly currentUserRole?: "owner" | "developer" | "rep";
 };
@@ -107,7 +107,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
             </>
           ) : (
             <>
-              <ValueCard title="Current version"><p className="text-sm">Version {project.source.currentVersion.versionNumber} · {project.source.currentVersion.fileCount} files</p><p className="mt-1 text-xs text-muted-foreground"><code>{project.source.currentVersion.sha256.slice(0, 12)}</code></p></ValueCard>
+              <ValueCard title="Current version"><p className="text-sm">Version {project.source.currentVersion.versionNumber} · {project.source.currentVersion.fileCount} files</p><p className="mt-1 text-xs text-muted-foreground"><code>{project.source.currentVersion.sha256.slice(0, 12)}</code></p>{project.source.analysedVersionNumber !== undefined && project.source.analysedVersionNumber !== project.source.currentVersion.versionNumber ? <p className="mt-2 text-xs text-muted-foreground">Analysis below is for version {project.source.analysedVersionNumber}. Re-analyse to refresh it.</p> : null}</ValueCard>
               <ValueCard title="Download">
                 <form action={`${apiOrigin}/projects/${projectId}/versions/${project.source.currentVersion.id}/download-token`} method="post"><Button type="submit" variant="outline">Download current ZIP</Button></form>
               </ValueCard>

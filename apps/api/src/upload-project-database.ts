@@ -15,7 +15,7 @@ export type UploadProjectVersion = {
 };
 export type UploadProjectView = {
   readonly project: { readonly id: string; readonly name: string };
-  readonly source: { readonly type: "upload"; readonly currentVersion: UploadProjectVersion };
+  readonly source: { readonly type: "upload"; readonly currentVersion: UploadProjectVersion; readonly analysedVersionNumber: number };
   readonly report: ProjectReport;
   readonly currentUserRole: MemberRole;
 };
@@ -61,13 +61,13 @@ export function createUploadProjectDatabase(pool: TenantPool): UploadProjectData
     async getUploadProject(session, projectId) {
       assertUuid(projectId, "projectId");
       return await withTenant(pool, session, async (database) => {
-        const result = await database.query<{ project_id: string; project_name: string; report: ProjectReport; current_user_role: MemberRole; id: string; version_number: number; storage_key: string; size_bytes: string | number; file_count: number; sha256: string; uploaded_by_user_id: string; created_at: Date | string }>(
-          `SELECT p.id AS project_id,p.name AS project_name,pr.report,m.role AS current_user_role,pv.id,pv.version_number,pv.storage_key,pv.size_bytes,pv.file_count,pv.sha256,pv.uploaded_by_user_id,pv.created_at FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id AND r.provider='upload' JOIN project_reports pr ON pr.organization_id=p.organization_id AND pr.project_id=p.id JOIN project_versions pv ON pv.organization_id=p.organization_id AND pv.project_id=p.id AND pv.id=pr.analysed_version_id JOIN organization_memberships m ON m.organization_id=p.organization_id AND m.user_id=$3 WHERE p.organization_id=$1 AND p.id=$2 LIMIT 1`,
+        const result = await database.query<{ project_id: string; project_name: string; report: ProjectReport; current_user_role: MemberRole; id: string; version_number: number; storage_key: string; size_bytes: string | number; file_count: number; sha256: string; uploaded_by_user_id: string; created_at: Date | string; analysed_version_number: number }>(
+          `SELECT p.id AS project_id,p.name AS project_name,pr.report,m.role AS current_user_role,pv.id,pv.version_number,pv.storage_key,pv.size_bytes,pv.file_count,pv.sha256,pv.uploaded_by_user_id,pv.created_at,apv.version_number AS analysed_version_number FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id AND r.provider='upload' JOIN project_reports pr ON pr.organization_id=p.organization_id AND pr.project_id=p.id JOIN project_versions apv ON apv.organization_id=p.organization_id AND apv.project_id=p.id AND apv.id=pr.analysed_version_id JOIN LATERAL (SELECT id,version_number,storage_key,size_bytes,file_count,sha256,uploaded_by_user_id,created_at FROM project_versions WHERE organization_id=p.organization_id AND project_id=p.id ORDER BY version_number DESC LIMIT 1) pv ON true JOIN organization_memberships m ON m.organization_id=p.organization_id AND m.user_id=$3 WHERE p.organization_id=$1 AND p.id=$2 LIMIT 1`,
           [session.organizationId, projectId, session.userId],
         );
         const row = result.rows[0]; if (!row) return null;
         const currentVersion = version({ ...row, project_id: row.project_id });
-        return { project: { id: row.project_id, name: row.project_name }, source: { type: "upload", currentVersion }, report: row.report, currentUserRole: row.current_user_role };
+        return { project: { id: row.project_id, name: row.project_name }, source: { type: "upload", currentVersion, analysedVersionNumber: row.analysed_version_number }, report: row.report, currentUserRole: row.current_user_role };
       });
     },
 
