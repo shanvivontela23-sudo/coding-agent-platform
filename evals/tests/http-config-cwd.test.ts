@@ -1,9 +1,8 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const repoRoot = process.cwd();
 const workerCwd = join(repoRoot, "apps", "worker");
 
 function runConfigLoadFromWorkerCwd(): Promise<{ code: number | null; stdout: string; stderr: string }> {
