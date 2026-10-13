@@ -74,9 +74,10 @@ The launcher performs these steps in order:
 
 ### Expected preflight
 
-All ten checks should show ready:
+All eleven checks should show ready:
 
 ```text
+✓ API and web ports: ready
 ✓ database roles and migrations: ready
 ✓ Supabase: ready
 ✓ GitHub App Contents: Read and write: ready
@@ -91,6 +92,7 @@ All ten checks should show ready:
 
 Important safety properties:
 
+- The API/web port check only binds locally long enough to prove the configured ports are free; it makes no external request.
 - The GitHub permission check reads the installation recorded for the demo organization and verifies the permission that installation has actually accepted.
 - E2B preflight **lists at most one sandbox record; it does not create a sandbox**.
 - Worker claim preflight runs inside a transaction and rolls it back, so it cannot consume a queued execution.
