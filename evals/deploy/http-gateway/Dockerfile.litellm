@@ -2,8 +2,15 @@ FROM python:3.12.14-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0a
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 openssl && rm -rf /var/lib/apt/lists/*
+
 COPY evals/litellm/requirements*.txt /app/evals/litellm/
 RUN python -m pip install --require-hashes -r /app/evals/litellm/requirements.txt
+
+# prisma-client-py 0.11.0 exposes PRISMA_NODEENV_EXTRA_ARGS for arguments
+# appended to its nodeenv invocation. Pin Node 22 LTS instead of floating to
+# nodeenv's newest stable release.
+ENV PRISMA_NODEENV_EXTRA_ARGS='["--node=22.11.0"]'
 
 # DATABASE_URL-backed LiteLLM imports a generated Prisma client at startup.
 # Generate it into the installed package during the image build; runtime startup

@@ -42,7 +42,7 @@ docker compose \
   up -d
 ```
 
-The LiteLLM image installs the hash-locked Prisma Python client and runs `prisma generate` against LiteLLM's bundled `litellm/proxy/schema.prisma` during the image build. No Prisma generation happens when the container starts. With `DATABASE_URL` set, LiteLLM uses its normal `prisma migrate deploy` startup path; the image enables `--enforce_prisma_migration_check`, so a failed migration prevents the proxy from reporting healthy instead of starting against an incomplete schema. A fresh local database can therefore take a little longer to become ready on first start.
+The LiteLLM image installs the hash-locked Prisma Python client and runs `prisma generate` against LiteLLM's bundled `litellm/proxy/schema.prisma` during the image build. No Prisma generation happens when the container starts. The image installs `libatomic1` and `openssl`, which are required by the Node runtime and Prisma engines used during generation, and prisma-client-py's supported `PRISMA_NODEENV_EXTRA_ARGS` setting pins nodeenv to Node 22.11.0 instead of floating to the newest Node release. With `DATABASE_URL` set, LiteLLM uses its normal `prisma migrate deploy` startup path; the image enables `--enforce_prisma_migration_check`, so a failed migration prevents the proxy from reporting healthy instead of starting against an incomplete schema. A fresh local database can therefore take a little longer to become ready on first start.
 
 Check the proxy without sending a model request:
 
