@@ -1,3 +1,4 @@
+import { createServer } from "node:net";
 import { E2B } from "e2b";
 import { createGitHubInstallationPermissionReader, type GitHubInstallationPermissionReader } from "../../api/src/github-installation-permissions.js";
 import { parseModelListPrices } from "../../../evals/src/gateway/http/cost-estimator.js";
@@ -6,6 +7,7 @@ import type { DemoConfig } from "./config.js";
 import { ensureDemoMigrations, runCommand } from "./migrations.js";
 
 export type DemoPreflightDependencies = {
+  readonly checkAppPorts: () => Promise<void>;
   readonly checkDatabase: () => Promise<void>;
   readonly checkSupabase: () => Promise<void>;
   readonly checkGitHubContentsWrite: () => Promise<void>;
@@ -20,6 +22,7 @@ export type DemoPreflightDependencies = {
 export type DemoPreflightResult = { readonly name: string; readonly ok: boolean; readonly message: string };
 
 const checks: readonly [string, keyof DemoPreflightDependencies][] = [
+  ["API and web ports", "checkAppPorts"],
   ["database roles and migrations", "checkDatabase"],
   ["Supabase", "checkSupabase"],
   ["GitHub App Contents: Read and write", "checkGitHubContentsWrite"],
@@ -108,6 +111,27 @@ export async function checkDemoGitHubContentsWrite(config: DemoConfig, dependenc
   if (permissions.contents !== "write") throw new Error(acceptContentsMessage);
 }
 
+export async function assertDemoPortFree(port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+        reject(new Error(`Port ${port} is already in use; stop the process using it (\`lsof -iTCP:${port} -sTCP:LISTEN\`)`));
+        return;
+      }
+      reject(error);
+    });
+    server.listen({ port, exclusive: true }, () => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+}
+
+export async function checkDemoAppPorts(apiPort: number, webPort: number): Promise<void> {
+  await assertDemoPortFree(apiPort);
+  await assertDemoPortFree(webPort);
+}
+
 async function fetchReady(url: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -154,6 +178,7 @@ export function workerClaimRollbackSql(): string {
 export function createLiveDemoPreflight(config: DemoConfig, tunnelUrl: string): DemoPreflightDependencies {
   const value = (name: string): string => config.values[name] ?? "";
   return {
+    checkAppPorts: async () => { await checkDemoAppPorts(config.apiPort, config.webPort); },
     checkDatabase: async () => { await ensureDemoMigrations(value("DEMO_DATABASE_ADMIN_URL")); },
     checkSupabase: async () => { await fetchReady(`${value("SUPABASE_URL").replace(/\/$/, "")}/auth/v1/settings`, { headers: { apikey: value("SUPABASE_ANON_KEY") } }); },
     checkGitHubContentsWrite: async () => { await checkDemoGitHubContentsWrite(config); },
