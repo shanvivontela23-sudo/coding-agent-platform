@@ -108,7 +108,7 @@ describe("deterministic project report hardening", () => {
     ]);
   });
 
-  it("detects .NET solutions and projects and emits deterministic dotnet commands while keeping the generic skill", async () => {
+  it("detects .NET solutions and projects, emits deterministic dotnet commands and selects the .NET skill", async () => {
     const report = await analyseRepositoryArchive(archive([
       { name: "repo/Demo.sln", contents: "Microsoft Visual Studio Solution File, Format Version 12.00\n" },
       { name: "repo/src/Demo/Demo.csproj", contents: "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>" },
@@ -118,9 +118,11 @@ describe("deterministic project report hardening", () => {
     ]), limits);
 
     expect(report.languages).toEqual([{ name: "C#", fileCount: 2, percentage: 100 }]);
-    expect(report.buildCommand).toBe("dotnet build Demo.sln");
-    expect(report.testCommand).toBe("dotnet test Demo.sln");
-    expect(report.stackSkill).toBe("generic");
+    expect(report.installCommand).toBe("dotnet restore Demo.sln");
+    expect(report.buildCommand).toBe("dotnet build Demo.sln --no-restore");
+    expect(report.testCommand).toBe("dotnet test Demo.sln --no-restore");
+    expect(report.stackSkill).toBe("dotnet");
+    expect(report.testRunner).toBe("dotnet-test");
     expect(report.manifests).toEqual(expect.arrayContaining(["Demo.sln", "Demo.csproj", "Demo.Tests.csproj"]));
   });
 

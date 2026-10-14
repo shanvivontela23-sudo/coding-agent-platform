@@ -1,0 +1,95 @@
+{
+  "id": "java-spring",
+  "version": "1.0.0",
+  "displayName": "Java / Spring",
+  "detect": {
+    "manifests": [
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts"
+    ],
+    "markers": [
+      "java",
+      "kotlin"
+    ],
+    "managerRunners": {
+      "maven": "maven-surefire",
+      "maven-wrapper": "maven-surefire",
+      "gradle": "gradle-test",
+      "gradle-wrapper": "gradle-test"
+    }
+  },
+  "sandboxTemplateKey": "java",
+  "defaults": {
+    "install": {
+      "maven": "mvn -B -q dependency:go-offline test -Dmaven.test.failure.ignore=true",
+      "maven-wrapper": "sh ./mvnw -B -q dependency:go-offline test -Dmaven.test.failure.ignore=true",
+      "gradle": "gradle --no-daemon testClasses && (gradle --no-daemon test > /dev/null 2>&1 || true)",
+      "gradle-wrapper": "sh ./gradlew --no-daemon testClasses && (sh ./gradlew --no-daemon test > /dev/null 2>&1 || true)"
+    },
+    "test": {
+      "maven": "mvn -B test",
+      "maven-wrapper": "sh ./mvnw -B test",
+      "gradle": "gradle --no-daemon test",
+      "gradle-wrapper": "sh ./gradlew --no-daemon test"
+    },
+    "testRunner": {
+      "maven-surefire": {
+        "maven": "mvn -B test",
+        "maven-wrapper": "sh ./mvnw -B test"
+      },
+      "gradle-test": {
+        "gradle": "gradle --no-daemon test",
+        "gradle-wrapper": "sh ./gradlew --no-daemon test"
+      }
+    },
+    "testSingle": {
+      "maven-surefire": "{test} -Dtest={class} -Dsurefire.failIfNoSpecifiedTests=false",
+      "gradle-test": "{test} --tests {class}"
+    }
+  },
+  "verification": [
+    {
+      "name": "install",
+      "commandRole": "install",
+      "environmentFailurePatterns": [
+        "command not found",
+        "JAVA_HOME is not",
+        "Unable to locate a Java Runtime"
+      ]
+    },
+    {
+      "name": "test",
+      "commandRole": "test",
+      "environmentFailurePatterns": [
+        "command not found",
+        "JAVA_HOME is not",
+        "Unable to locate a Java Runtime",
+        "Could not resolve dependencies",
+        "Could not transfer artifact",
+        "Could not resolve all",
+        "No cached version of",
+        "Permission denied"
+      ]
+    },
+    {
+      "name": "build",
+      "commandRole": "build",
+      "environmentFailurePatterns": [
+        "command not found",
+        "JAVA_HOME is not",
+        "Unable to locate a Java Runtime",
+        "Could not resolve dependencies",
+        "Could not transfer artifact",
+        "Could not resolve all",
+        "No cached version of",
+        "Permission denied"
+      ]
+    }
+  ],
+  "limits": {
+    "installTimeoutMs": 600000,
+    "testTimeoutMs": 600000,
+    "buildTimeoutMs": 600000
+  }
+}

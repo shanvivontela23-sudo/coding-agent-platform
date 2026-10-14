@@ -1,0 +1,1 @@
+Customer was refunded 30 for an order they paid 40 for. When we refunded the remaining 10 later, the system let us refund 30 again, so they got 60 back in total. A second refund should never be more than what is left.

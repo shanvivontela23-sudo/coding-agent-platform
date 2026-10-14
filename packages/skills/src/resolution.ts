@@ -1,7 +1,8 @@
-import type { StackSkill, StackSkillDefinition } from "./schema.js";
+import { stackPackageManagers, type StackSkill, type StackSkillDefinition, type stackTestRunners } from "./schema.js";
 
 export type CommandSource = "repo" | "skill";
-export type TestRunner = "vitest" | "jest" | "mocha" | "node:test";
+export type TestRunner = (typeof stackTestRunners)[number];
+type Manager = (typeof stackPackageManagers)[number];
 export type RepositorySkillEvidence = {
   readonly manifests: readonly string[];
   readonly languages: readonly string[];
@@ -23,6 +24,9 @@ export type ResolvedStackSkill = {
   readonly testSingleCommand: string | null;
   readonly verification: StackSkillDefinition["verification"] | null;
   readonly limits: StackSkillDefinition["limits"] | null;
+  // Other stacks that also matched this repository (display names), e.g. a
+  // Node frontend next to a Java backend. Only the primary stack is used.
+  readonly otherStacks: readonly string[];
 };
 
 export type StoredProjectReport = {
@@ -41,7 +45,7 @@ export type StoredProjectReport = {
   readonly manifests: readonly string[];
 };
 
-const supportedManagers = new Set(["pnpm", "npm", "yarn", "bun"]);
+const supportedManagers = new Set<string>(stackPackageManagers);
 const dependencyRunners = ["vitest", "jest", "mocha"] as const;
 
 function managerCommand(commands: Readonly<Partial<Record<string, string>>> | undefined, manager: string | null): string | null {
@@ -51,25 +55,73 @@ function commandWithSource(command: string | null, source: CommandSource, role: 
   values[role] = command;
   if (command) sources[role] = source;
 }
-function detectedRunner(evidence: RepositorySkillEvidence): TestRunner | null {
+function manifestMatches(pattern: string, manifest: string): boolean {
+  return pattern.startsWith("*.") ? manifest.toLowerCase().endsWith(pattern.slice(1).toLowerCase()) && manifest.length > pattern.length - 1 : manifest === pattern;
+}
+function hasManifest(evidence: RepositorySkillEvidence, pattern: string): boolean {
+  return evidence.manifests.some((manifest) => manifestMatches(pattern, manifest));
+}
+// Node managers come from lockfiles (analysis); other build tools are read
+// from the skill's own manifests so a Java or .NET repo still gets a key.
+function managerFor(skill: StackSkill, evidence: RepositorySkillEvidence): Manager | null {
+  const reported = evidence.packageManager;
+  const candidates: Manager[] = [];
+  if (reported && supportedManagers.has(reported)) candidates.push(reported as Manager);
+  if (hasManifest(evidence, "mvnw")) candidates.push("maven-wrapper");
+  if (hasManifest(evidence, "pom.xml")) candidates.push("maven");
+  if (hasManifest(evidence, "gradlew")) candidates.push("gradle-wrapper");
+  if (hasManifest(evidence, "build.gradle") || hasManifest(evidence, "build.gradle.kts")) candidates.push("gradle");
+  if (hasManifest(evidence, "*.sln") || hasManifest(evidence, "*.csproj")) candidates.push("dotnet");
+  if (hasManifest(evidence, "requirements.txt") || hasManifest(evidence, "pyproject.toml") || hasManifest(evidence, "setup.py")) candidates.push("pip");
+  const commandSets = [skill.defaults.install, skill.defaults.test, skill.defaults.build, ...Object.values(skill.defaults.testRunner)];
+  const known = (manager: Manager) => commandSets.some((commands) => Boolean(commands?.[manager])) || Boolean(skill.detect.managerRunners?.[manager]);
+  return candidates.find(known) ?? null;
+}
+function detectedRunner(skill: StackSkill, evidence: RepositorySkillEvidence, manager: Manager | null): TestRunner | null {
+  const byManager = manager ? skill.detect.managerRunners?.[manager] ?? null : null;
+  if (byManager) return byManager;
   const dependencies = new Set(evidence.dependencies.map((value) => value.toLowerCase()));
+  if (skill.detect.runners) {
+    const found = (Object.entries(skill.detect.runners) as [TestRunner, readonly string[] | undefined][])
+      .filter(([, markers]) => markers?.some((marker) => dependencies.has(marker.toLowerCase())))
+      .map(([runner]) => runner);
+    return found.length === 1 ? found[0] ?? null : null;
+  }
   const found: TestRunner[] = dependencyRunners.filter((runner) => dependencies.has(runner));
   if (/\bnode\s+--test\b/.test(evidence.scripts.test ?? "")) found.push("node:test");
   return found.length === 1 ? found[0] ?? null : null;
 }
 function matches(skill: StackSkill, evidence: RepositorySkillEvidence): boolean {
-  const manifests = new Set(evidence.manifests);
-  if (!skill.detect.manifests.some((manifest) => manifests.has(manifest))) return false;
+  if (!skill.detect.manifests.some((pattern) => hasManifest(evidence, pattern))) return false;
   const markers = new Set([...evidence.languages, ...evidence.dependencies].map((value) => value.toLowerCase()));
   return skill.detect.markers.some((marker) => markers.has(marker.toLowerCase()));
 }
-function installEvidence(manager: string | null, manifests: readonly string[]): boolean {
-  const names = new Set(manifests);
-  if (manager === "pnpm") return names.has("pnpm-lock.yaml");
-  if (manager === "npm") return names.has("package-lock.json");
-  if (manager === "yarn") return names.has("yarn.lock");
-  if (manager === "bun") return names.has("bun.lock") || names.has("bun.lockb");
-  return false;
+// Primary stack: the matching skill whose language has the most files
+// (analysis lists languages by file count). A skill confirmed only by a
+// dependency ranks after every language match; ties keep registry order.
+function languageRank(skill: StackSkill, evidence: RepositorySkillEvidence): number {
+  const languages = evidence.languages.map((language) => language.toLowerCase());
+  const ranks = skill.detect.markers.map((marker) => languages.indexOf(marker.toLowerCase())).filter((index) => index >= 0);
+  return ranks.length > 0 ? Math.min(...ranks) : languages.length;
+}
+function installEvidence(manager: string | null, evidence: RepositorySkillEvidence): boolean {
+  const has = (pattern: string) => hasManifest(evidence, pattern);
+  switch (manager) {
+    case "pnpm": return has("pnpm-lock.yaml");
+    case "npm": return has("package-lock.json");
+    case "yarn": return has("yarn.lock");
+    case "bun": return has("bun.lock") || has("bun.lockb");
+    case "uv": return has("uv.lock");
+    case "poetry": return has("poetry.lock");
+    case "pipenv": return has("Pipfile.lock");
+    case "pip": return has("requirements.txt");
+    case "maven": return has("pom.xml");
+    case "maven-wrapper": return has("mvnw") && has("pom.xml");
+    case "gradle": return has("build.gradle") || has("build.gradle.kts");
+    case "gradle-wrapper": return has("gradlew");
+    case "dotnet": return has("*.sln") || has("*.csproj");
+    default: return false;
+  }
 }
 function generic(evidence: RepositorySkillEvidence): ResolvedStackSkill {
   const values: Record<keyof ResolvedCommands, string | null> = { install: null, test: null, build: null, lint: null };
@@ -77,17 +129,20 @@ function generic(evidence: RepositorySkillEvidence): ResolvedStackSkill {
   commandWithSource(evidence.commands.install, "repo", "install", values, sources);
   commandWithSource(evidence.commands.test, "repo", "test", values, sources);
   commandWithSource(evidence.commands.build, "repo", "build", values, sources);
-  return { skillId: "generic", skillVersion: null, displayName: null, sandboxTemplateKey: null, commands: values, commandSources: sources, testRunner: null, testSingleCommand: null, verification: null, limits: null };
+  return { skillId: "generic", skillVersion: null, displayName: null, sandboxTemplateKey: null, commands: values, commandSources: sources, testRunner: null, testSingleCommand: null, verification: null, limits: null, otherStacks: [] };
 }
 
 export function resolveRepositorySkill(evidence: RepositorySkillEvidence, skills: ReadonlyMap<string, StackSkill>): ResolvedStackSkill {
-  const skill = [...skills.values()].find((candidate) => matches(candidate, evidence));
+  const matching = [...skills.values()].filter((candidate) => matches(candidate, evidence));
+  const ranked = matching.map((candidate, order) => ({ candidate, order, rank: languageRank(candidate, evidence) })).sort((left, right) => left.rank - right.rank || left.order - right.order);
+  const skill = ranked[0]?.candidate;
   if (!skill) return generic(evidence);
-  const manager = evidence.packageManager;
-  const runner = detectedRunner(evidence);
+  const otherStacks = ranked.slice(1).map((entry) => entry.candidate.displayName);
+  const manager = managerFor(skill, evidence);
+  const runner = detectedRunner(skill, evidence, manager);
   const values: Record<keyof ResolvedCommands, string | null> = { install: null, test: null, build: null, lint: null };
   const sources: Partial<Record<keyof ResolvedCommands, CommandSource>> = {};
-  const skillInstall = installEvidence(manager, evidence.manifests) ? managerCommand(skill.defaults.install, manager) : null;
+  const skillInstall = installEvidence(manager, evidence) ? managerCommand(skill.defaults.install, manager) : null;
   commandWithSource(evidence.commands.install ?? skillInstall, evidence.commands.install ? "repo" : "skill", "install", values, sources);
   const skillTest = evidence.scripts.test
     ? managerCommand(skill.defaults.test, manager)
@@ -108,6 +163,7 @@ export function resolveRepositorySkill(evidence: RepositorySkillEvidence, skills
     testSingleCommand: runner ? skill.defaults.testSingle[runner] ?? null : null,
     verification: skill.verification,
     limits: skill.limits ?? null,
+    otherStacks,
   };
 }
 
@@ -126,5 +182,6 @@ export function resolveStoredProjectReport(report: StoredProjectReport, skills: 
     testSingleCommand: report.testSingleCommand ?? (testRunner && trusted ? trusted.defaults.testSingle[testRunner] ?? null : null),
     verification: trusted?.verification ?? null,
     limits: trusted?.limits ?? null,
+    otherStacks: [],
   };
 }

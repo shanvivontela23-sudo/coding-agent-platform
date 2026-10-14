@@ -1,0 +1,52 @@
+{
+  "id": "python",
+  "version": "1.0.0",
+  "displayName": "Python",
+  "detect": {
+    "manifests": ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"],
+    "markers": ["python"],
+    "runners": { "pytest": ["pytest"] }
+  },
+  "sandboxTemplateKey": "python",
+  "defaults": {
+    "install": {
+      "pip": "python -m pip install -r requirements.txt",
+      "uv": "uv sync --frozen",
+      "poetry": "poetry install --no-interaction",
+      "pipenv": "pipenv sync --dev"
+    },
+    "testRunner": {
+      "pytest": {
+        "pip": "python -m pytest",
+        "uv": "uv run pytest",
+        "poetry": "poetry run pytest",
+        "pipenv": "pipenv run pytest"
+      }
+    },
+    "testSingle": {
+      "pytest": "{test} {path}"
+    }
+  },
+  "verification": [
+    {
+      "name": "install",
+      "commandRole": "install",
+      "environmentFailurePatterns": ["command not found", "No matching distribution found", "Could not find a version that satisfies"]
+    },
+    {
+      "name": "test",
+      "commandRole": "test",
+      "environmentFailurePatterns": ["command not found", "No module named pytest", "pytest: not found", "No module named '?pytest'?"]
+    },
+    {
+      "name": "build",
+      "commandRole": "build",
+      "environmentFailurePatterns": ["command not found", "No module named build", "No module named '?build'?"]
+    }
+  ],
+  "limits": {
+    "installTimeoutMs": 300000,
+    "testTimeoutMs": 300000,
+    "buildTimeoutMs": 300000
+  }
+}

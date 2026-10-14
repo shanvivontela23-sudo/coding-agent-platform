@@ -58,7 +58,7 @@ export function codingTaskText(source: PreparedExecutionSource): string {
   const commands = profile?.commands ?? { ...source.commands, lint: null };
   if (commands.install) hints.push(`- Install: ${commands.install}`);
   if (commands.test) hints.push(`- Test: ${commands.test}`);
-  if (commands.test && profile?.testSingleTemplate) hints.push(`- Single test: ${profile.testSingleTemplate.replace("{test}", () => commands.test!).replace("{path}", "<test file>")}`);
+  if (commands.test && profile?.testSingleTemplate) hints.push(`- Single test: ${profile.testSingleTemplate.replace("{test}", () => commands.test!).replace("{path}", "<test file>").replace("{class}", "<TestClassName>")}`);
   if (commands.build) hints.push(`- Build: ${commands.build}`);
   if (commands.lint) hints.push(`- Lint (advisory only): ${commands.lint}`);
   if (profile && hints.length > 0) sections.push(`Project commands:\n${hints.join("\n")}`);

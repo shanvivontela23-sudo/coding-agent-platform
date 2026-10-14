@@ -1,0 +1,40 @@
+{
+  "id": "dotnet",
+  "version": "1.0.0",
+  "displayName": ".NET / C#",
+  "detect": {
+    "manifests": ["*.sln", "*.csproj"],
+    "markers": ["c#"],
+    "managerRunners": { "dotnet": "dotnet-test" }
+  },
+  "sandboxTemplateKey": "dotnet",
+  "defaults": {
+    "install": { "dotnet": "dotnet restore" },
+    "test": { "dotnet": "dotnet test --no-restore" },
+    "build": { "dotnet": "dotnet build --no-restore" },
+    "testRunner": { "dotnet-test": { "dotnet": "dotnet test --no-restore" } },
+    "testSingle": { "dotnet-test": "{test} --filter FullyQualifiedName~{class}" }
+  },
+  "verification": [
+    {
+      "name": "install",
+      "commandRole": "install",
+      "environmentFailurePatterns": ["command not found", "A compatible .NET SDK was not found", "dotnet: not found"]
+    },
+    {
+      "name": "test",
+      "commandRole": "test",
+      "environmentFailurePatterns": ["command not found", "A compatible .NET SDK was not found", "dotnet: not found", "error NU1101", "error NU1301", "Unable to load the service index", "assets file .* not found"]
+    },
+    {
+      "name": "build",
+      "commandRole": "build",
+      "environmentFailurePatterns": ["command not found", "A compatible .NET SDK was not found", "dotnet: not found", "error NU1101", "error NU1301", "Unable to load the service index", "assets file .* not found"]
+    }
+  ],
+  "limits": {
+    "installTimeoutMs": 600000,
+    "testTimeoutMs": 600000,
+    "buildTimeoutMs": 600000
+  }
+}

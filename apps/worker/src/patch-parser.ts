@@ -120,7 +120,14 @@ export function parsePatchFiles(patch: string): readonly ParsedPatchFile[] {
 }
 
 export function isTestPath(path: string): boolean {
-  return /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i.test(path);
+  if (/(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i.test(path)) return true;
+  const base = path.split("/").at(-1) ?? "";
+  // Python (test_x.py, x_test.py), JVM/.NET classes (FooTest, FooTests, FooIT;
+  // case-sensitive so "Contest.java" is not a test) and .NET test projects
+  // (MyApp.Tests/...).
+  if (/^test_[^/]*\.py$|_test\.py$/.test(base)) return true;
+  if (/[A-Za-z0-9](?:Test|Tests|IT)\.(?:java|kt|scala|groovy|cs|fs|vb)$/.test(base)) return true;
+  return /(?:^|\/)[^/]+\.(?:Tests?|UnitTests|IntegrationTests)\//.test(path);
 }
 
 export function testOnlyPatch(patch: string): string | null {

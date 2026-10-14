@@ -12,5 +12,5 @@ export {
   stackTestRunners,
 } from "./schema.js";
 export type { StackSkill, StackSkillDefinition } from "./schema.js";
-export { buildExecutionProfile, focusedTestCommand, parseExecutionProfile, resolveSandboxTemplateId, safeWorkspaceRelativePath, sandboxTemplateEnvName } from "./profile.js";
+export { buildExecutionProfile, focusedTestCommand, parseExecutionProfile, resolveSandboxTemplateId, safeWorkspaceRelativePath, sandboxTemplateEnvName, testClassName } from "./profile.js";
 export type { ExecutionProfile } from "./profile.js";

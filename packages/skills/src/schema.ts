@@ -1,41 +1,44 @@
 import { z } from "zod";
 
 export const stackCommandRoles = ["install", "test", "build"] as const;
-export const stackTestRunners = ["vitest", "jest", "mocha", "node:test"] as const;
-export const stackPackageManagers = ["pnpm", "npm", "yarn", "bun"] as const;
+export const stackTestRunners = ["vitest", "jest", "mocha", "node:test", "pytest", "maven-surefire", "gradle-test", "dotnet-test"] as const;
+// Package managers and build tools a skill can key commands by. Node managers
+// come from lockfiles; the others are derived from manifests during resolution.
+export const stackPackageManagers = ["pnpm", "npm", "yarn", "bun", "pip", "uv", "poetry", "pipenv", "maven", "maven-wrapper", "gradle", "gradle-wrapper", "dotnet"] as const;
 export const stackGuideTokenCap = 1_500;
 
 const nonEmptySingleLine = z.string().trim().min(1).refine((value) => !/[\0\r\n]/.test(value), "must be a single line without NUL bytes");
 const commandSchema = nonEmptySingleLine;
-const managerCommandsSchema = z.object({
-  pnpm: commandSchema.optional(),
-  npm: commandSchema.optional(),
-  yarn: commandSchema.optional(),
-  bun: commandSchema.optional(),
-}).strict().refine((commands) => Object.values(commands).some(Boolean), "must configure at least one package manager command");
-const runnerCommandsSchema = z.object({
-  vitest: managerCommandsSchema.optional(),
-  jest: managerCommandsSchema.optional(),
-  mocha: managerCommandsSchema.optional(),
-  "node:test": managerCommandsSchema.optional(),
-}).strict();
+const managerCommandsSchema = z.object(Object.fromEntries(stackPackageManagers.map((manager) => [manager, commandSchema.optional()])) as Record<(typeof stackPackageManagers)[number], z.ZodOptional<typeof commandSchema>>)
+  .strict().refine((commands) => Object.values(commands).some(Boolean), "must configure at least one package manager command");
+const runnerCommandsSchema = z.object(Object.fromEntries(stackTestRunners.map((runner) => [runner, managerCommandsSchema.optional()])) as Record<(typeof stackTestRunners)[number], z.ZodOptional<typeof managerCommandsSchema>>).strict();
 
+// A focused-test template takes the full test command as {test} and the test
+// file either as {path} or as its class name {class} (JVM and .NET runners
+// select tests by class, not by file).
 const testSingleTemplateSchema = commandSchema.superRefine((template, context) => {
-  const pathPlaceholders = template.match(/\{path\}/g)?.length ?? 0;
-  if (pathPlaceholders !== 1) context.addIssue({ code: "custom", message: "must contain exactly one {path} placeholder" });
+  const targets = (template.match(/\{path\}/g)?.length ?? 0) + (template.match(/\{class\}/g)?.length ?? 0);
+  if (targets !== 1) context.addIssue({ code: "custom", message: "must contain exactly one {path} or {class} placeholder" });
   const testPlaceholders = template.match(/\{test\}/g)?.length ?? 0;
   if (testPlaceholders > 1) context.addIssue({ code: "custom", message: "may contain at most one {test} placeholder" });
-  const unknown = template.match(/\{[^}]+\}/g)?.filter((placeholder) => placeholder !== "{path}" && placeholder !== "{test}") ?? [];
+  const unknown = template.match(/\{[^}]+\}/g)?.filter((placeholder) => placeholder !== "{path}" && placeholder !== "{class}" && placeholder !== "{test}") ?? [];
   if (unknown.length > 0) context.addIssue({ code: "custom", message: `contains unsupported placeholder ${unknown[0]}` });
 });
+const runnerTemplatesSchema = z.object(Object.fromEntries(stackTestRunners.map((runner) => [runner, testSingleTemplateSchema.optional()])) as Record<(typeof stackTestRunners)[number], z.ZodOptional<typeof testSingleTemplateSchema>>).strict();
 
 const definitionSchema = z.object({
   id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a lowercase kebab-case id"),
   version: z.string().regex(/^\d+\.\d+\.\d+$/, "must be a semantic version"),
   displayName: z.string().trim().min(1).max(100),
   detect: z.object({
+    // Exact manifest names, or "*.ext" to match any manifest with that suffix.
     manifests: z.array(nonEmptySingleLine).min(1),
+    // Languages (as analysis names them) or dependency names that confirm the stack.
     markers: z.array(nonEmptySingleLine).min(1),
+    // Optional: a runner is detected when exactly one runner's dependency markers are present.
+    runners: z.object(Object.fromEntries(stackTestRunners.map((runner) => [runner, z.array(nonEmptySingleLine).min(1).optional()])) as Record<(typeof stackTestRunners)[number], z.ZodOptional<z.ZodArray<typeof nonEmptySingleLine>>>).strict().optional(),
+    // Optional: the build tool alone fixes the runner (Maven -> Surefire, dotnet -> dotnet test).
+    managerRunners: z.object(Object.fromEntries(stackPackageManagers.map((manager) => [manager, z.enum(stackTestRunners).optional()])) as Record<(typeof stackPackageManagers)[number], z.ZodOptional<z.ZodEnum<{ [K in (typeof stackTestRunners)[number]]: K }>>>).strict().optional(),
   }).strict(),
   sandboxTemplateKey: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a lowercase kebab-case key"),
   defaults: z.object({
@@ -44,12 +47,7 @@ const definitionSchema = z.object({
     test: managerCommandsSchema.optional(),
     testRunner: runnerCommandsSchema.default({}),
     lint: managerCommandsSchema.optional(),
-    testSingle: z.object({
-      vitest: testSingleTemplateSchema.optional(),
-      jest: testSingleTemplateSchema.optional(),
-      mocha: testSingleTemplateSchema.optional(),
-      "node:test": testSingleTemplateSchema.optional(),
-    }).strict().default({}),
+    testSingle: runnerTemplatesSchema.default({}),
   }).strict(),
   verification: z.array(z.object({
     name: z.enum(stackCommandRoles),
