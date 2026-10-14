@@ -139,10 +139,10 @@ export function buildRephrasePrompt(question: TaskQuestion): readonly PromptMess
   ];
 }
 
-export function buildPlanPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string }): readonly PromptMessage[] {
+export function buildPlanPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string; readonly organizationRules?: string }): readonly PromptMessage[] {
   return [
     { role: "system", content: [planRoleSystem, input.trustedStackGuide?.trim(), planOutputSystem].filter(Boolean).join(" ") },
-    { role: "user", content: [`<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>`, `<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>`, input.projectHistory?.trim(), `<UNTRUSTED_ANSWERS>\n${JSON.stringify(input.answers)}\n</UNTRUSTED_ANSWERS>`].filter(Boolean).join("\n") },
+    { role: "user", content: [`<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>`, `<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>`, input.projectHistory?.trim(), input.organizationRules?.trim(), `<UNTRUSTED_ANSWERS>\n${JSON.stringify(input.answers)}\n</UNTRUSTED_ANSWERS>`].filter(Boolean).join("\n") },
   ];
 }
 
@@ -255,7 +255,7 @@ export class TaskPlanner {
     return { jobType, questions, questionFilterStats: { filteredCount, rephrasedCount } };
   }
 
-  async plan(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string }): Promise<TaskPlan> {
+  async plan(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string; readonly organizationRules?: string }): Promise<TaskPlan> {
     let result: TaskPlan;
     try {
       result = normalizePlan(await this.gateway.call(input.taskId, "plan", buildPlanPrompt(input)));

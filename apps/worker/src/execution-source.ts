@@ -1,6 +1,7 @@
 import type { PinnedRepositoryArchive } from "../../../evals/src/sandbox/types.js";
 import type { ExecutionProfile } from "../../../packages/skills/src/profile.js";
 import type { StoredProjectReport } from "../../../packages/skills/src/resolution.js";
+import type { OrganizationSkill } from "../../../packages/db/src/organization-skills.js";
 
 export type ExecutionCommands = {
   readonly install: string | null;
@@ -16,6 +17,9 @@ export type PreparedExecutionSource = {
   readonly commands: ExecutionCommands;
   readonly reviewFocus: string;
   readonly projectHistory?: string;
+  // Every rule of the organization; the ones that apply are chosen and pinned
+  // with the execution profile.
+  readonly organizationSkills?: readonly OrganizationSkill[];
   // Facts used to resolve the execution profile once. After pinning, commands
   // above are replaced by the profile's and executionProfile is set; every later
   // stage reads only the pinned values.

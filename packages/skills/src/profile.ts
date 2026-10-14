@@ -25,6 +25,8 @@ const profileSchema = z.object({
   limits: z.object({ installTimeoutMs: z.number().int().positive().optional(), testTimeoutMs: z.number().int().positive().optional(), buildTimeoutMs: z.number().int().positive().optional() }).strict().nullable(),
   guide: z.string().max(20_000).nullable(),
   sandboxTemplateId: z.string().min(1).max(200).regex(/^\S+$/),
+  // Organization rules that applied to this run (optional: older profiles have none).
+  organizationRules: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(100), body: z.string().min(1).max(2_000) }).strict()).max(20).optional(),
 }).strict().superRefine((profile, context) => {
   if ((profile.skillId === null) !== (profile.skillVersion === null)) context.addIssue({ code: "custom", message: "skill id and version must both be set or both be null" });
   if ((profile.planningSkillId === null) !== (profile.planningSkillVersion === null)) context.addIssue({ code: "custom", message: "planning skill id and version must both be set or both be null" });

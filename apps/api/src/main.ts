@@ -39,6 +39,9 @@ import { validateBuiltInStackSkillsAtStartup } from "../../../packages/skills/sr
 import { createProjectDecisionDatabase } from "./project-decision-database.js";
 import { attachProjectDecisionRoutes } from "./project-decision-http.js";
 import { createProjectDecisionService } from "./project-decision-service.js";
+import { createOrganizationSkillDatabase } from "./organization-skill-database.js";
+import { attachOrganizationSkillRoutes } from "./organization-skill-http.js";
+import { createOrganizationSkillService } from "./organization-skill-service.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -74,6 +77,8 @@ const tenantPool = pool as unknown as TenantPool;
 const database = createProductDatabase(tenantPool);
 const projectDecisionDatabase = createProjectDecisionDatabase(tenantPool);
 const projectDecisionService = createProjectDecisionService({ database: projectDecisionDatabase });
+const organizationSkillDatabase = createOrganizationSkillDatabase(tenantPool);
+const organizationSkillService = createOrganizationSkillService({ database: organizationSkillDatabase });
 const auth = createSupabaseAuthClient({
   supabaseUrl: required("SUPABASE_URL"),
   anonKey: required("SUPABASE_ANON_KEY"),
@@ -155,6 +160,7 @@ if (taskGatewayAdminToken) {
     cipher: taskCipher,
     modelBudgetUsd: planningBudgetUsd,
     projectDecisions: projectDecisionDatabase,
+    organizationSkills: organizationSkillDatabase,
   });
 }
 
@@ -170,7 +176,8 @@ const productServer = createApiServer({
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
 const projectDecisionServer = attachProjectDecisionRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, service: projectDecisionService });
-const taskServer = attachTaskRoutes(projectDecisionServer, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
+const organizationSkillServer = attachOrganizationSkillRoutes(projectDecisionServer, { apiOrigin, webOrigin, sessionSecret, service: organizationSkillService });
+const taskServer = attachTaskRoutes(organizationSkillServer, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
 const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService, demoBudgetCaps });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });

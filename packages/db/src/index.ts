@@ -10,3 +10,4 @@ export {
   type ProjectDecisionKind,
   type ProjectDecisionSource,
 } from "./project-decisions.js";
+export * from "./organization-skills.js";

@@ -130,7 +130,9 @@ export class ProductExecutionOrchestrator implements CodingRunner {
       : bugTask ? `Fix not reproduced: ${verification.reproduce.reason ?? "no valid fail-before/pass-after proof was produced."}` : "Not required for this task type.";
     const reviewFocus = unverifiedPreExisting ? `${source.reviewFocus} Pre-existing failures could not be compared by test name; those checks remain unverified.` : source.reviewFocus;
     const verificationStatus = verificationComplete ? describeCompletedVerification(verification.checks) : `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}`;
-    const changeDocument = buildChangeDocument({ asked: source.requirement, changed: codingSummary, files: safety.files, checks: verification.checks.map((check) => ({ name: check.name, status: check.status })), verificationStatus, reproduceProof, costUsd, reviewFocus });
+    const profile = source.executionProfile;
+    const guidanceApplied = profile ? { stackSkill: profile.skillId && profile.skillVersion ? `${profile.displayName ?? profile.skillId} v${profile.skillVersion}` : null, organizationRules: (profile.organizationRules ?? []).map((rule) => rule.title) } : undefined;
+    const changeDocument = buildChangeDocument({ asked: source.requirement, changed: codingSummary, files: safety.files, checks: verification.checks.map((check) => ({ name: check.name, status: check.status })), verificationStatus, reproduceProof, costUsd, reviewFocus, ...(guidanceApplied ? { guidanceApplied } : {}) });
     await this.options.store.saveVerification(execution, { verification, changeDocument, costUsd });
 
     if (status === "verification_incomplete") return { status, failureCode: "VERIFICATION_INCOMPLETE", failureMessage: `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}` };

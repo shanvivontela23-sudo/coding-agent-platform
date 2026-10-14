@@ -5,6 +5,8 @@ import type { ProjectStorage } from "../../api/src/project-storage.js";
 import type { ProjectReport } from "../../api/src/repository-analysis.js";
 import { readNormalizedZipFiles, type UploadArchiveLimits } from "../../api/src/upload-archive.js";
 import type { ExecutionSourceProvider, PreparedExecutionSource } from "./execution-source.js";
+import { listOrganizationSkills } from "../../api/src/organization-skill-database.js";
+import type { OrganizationSkill } from "../../../packages/db/src/organization-skills.js";
 import { formatProjectHistory, type ProjectDecision, type ProjectDecisionKind, type ProjectDecisionSource } from "../../../packages/db/src/project-decisions.js";
 
 export type GitHubPinnedArchiveReader = {
@@ -140,7 +142,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
         [input.organizationId, input.taskId, input.projectId, input.sourceVersionId],
       );
       const row = result.rows[0] ?? null;
-      if (!row) return { row: null, projectHistory: "" };
+      if (!row) return { row: null, projectHistory: "", organizationSkills: [] as readonly OrganizationSkill[] };
       const history = await database.query<DecisionRow>(
         `SELECT id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by
            FROM project_decisions
@@ -149,7 +151,8 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
           LIMIT 15`,
         [input.organizationId, input.projectId],
       );
-      return { row, projectHistory: formatProjectHistory(history.rows.map(projectDecision)) };
+      const organizationSkills = await listOrganizationSkills(database, input.organizationId);
+      return { row, projectHistory: formatProjectHistory(history.rows.map(projectDecision)), organizationSkills };
     });
     const row = loaded.row;
     if (!row) throw new Error("Approved task source is not visible to the worker");
@@ -181,6 +184,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
       commands: { install: row.report.installCommand ?? null, test: row.report.testCommand, build: row.report.buildCommand },
       reviewFocus: "Review the generated patch against the approved plan, verification evidence, dependency changes, and any unverified pre-existing failures.",
       ...(loaded.projectHistory ? { projectHistory: loaded.projectHistory } : {}),
+      organizationSkills: loaded.organizationSkills,
       report: row.report,
       planningSkill: row.planning_skill_id && row.planning_skill_version ? { id: row.planning_skill_id, version: row.planning_skill_version } : null,
     };

@@ -7,12 +7,13 @@ const navigation = [
   { label: "Projects", href: "/home" },
   { label: "Tasks", href: "/tasks" },
   { label: "Members", href: "/members" },
+  { label: "Coding rules", href: "/rules" },
 ] as const;
 
 type AppShellProps = {
   readonly organizationName: string;
   readonly userEmail: string | null;
-  readonly activePath: "/home" | "/tasks" | "/members";
+  readonly activePath: "/home" | "/tasks" | "/members" | "/rules";
   readonly children: ReactNode;
 };
 

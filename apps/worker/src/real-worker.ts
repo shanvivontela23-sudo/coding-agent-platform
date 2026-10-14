@@ -12,7 +12,8 @@ import { ProductExecutionOrchestrator } from "./product-execution-orchestrator.j
 import { GitHubInstallationArchiveReader, ProductExecutionSourceProvider } from "./product-execution-source.js";
 import type { RestrictedQueryPool } from "./postgres-execution-queue.js";
 import type { RealWorkerConfig } from "./worker-config.js";
-import { buildExecutionProfile, resolveSandboxTemplateId } from "../../../packages/skills/src/profile.js";
+import { buildExecutionProfile, parseExecutionProfile, resolveSandboxTemplateId } from "../../../packages/skills/src/profile.js";
+import { applicableOrganizationRules, boundedOrganizationRules } from "../../../packages/db/src/organization-skills.js";
 import { loadBuiltInStackSkillsSync } from "../../../packages/skills/src/registry.js";
 import type { StackSkill } from "../../../packages/skills/src/schema.js";
 
@@ -68,7 +69,9 @@ export function createRealProductExecutionRunner(options: {
     resolveProfile: (source) => {
       // A source without a stored report degrades to generic with its own commands.
       const report = source.report ?? { stackSkill: "generic", packageManager: null, installCommand: source.commands.install, testCommand: source.commands.test, buildCommand: source.commands.build, manifests: [] };
-      return buildExecutionProfile({ report, skills, planningSkill: source.planningSkill ?? null, sandboxTemplateId: (key) => resolveSandboxTemplateId(key, env, options.config.e2bTemplateId) });
+      const profile = buildExecutionProfile({ report, skills, planningSkill: source.planningSkill ?? null, sandboxTemplateId: (key) => resolveSandboxTemplateId(key, env, options.config.e2bTemplateId) });
+      const rules = boundedOrganizationRules(applicableOrganizationRules(source.organizationSkills ?? [], profile.skillId)).included;
+      return rules.length > 0 ? parseExecutionProfile({ ...profile, organizationRules: rules }) : profile;
     },
     patchLimits: { maxFiles: positiveInteger(env, "TASK_EXECUTION_MAX_PATCH_FILES", 50), maxBytes: positiveInteger(env, "TASK_EXECUTION_MAX_PATCH_BYTES", 2 * 1024 * 1024) },
     codingRuntimeFactory: async (execution) => {
