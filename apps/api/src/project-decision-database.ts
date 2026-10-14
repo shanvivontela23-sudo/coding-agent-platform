@@ -1,5 +1,5 @@
 import type { SessionIdentity } from "./auth.js";
-import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./database.js";
+import { assertUuid, type MemberRole, type TenantPool, type TenantQuery, withTenant } from "./database.js";
 import {
   projectDecisionKinds,
   projectDecisionSources,
@@ -56,6 +56,36 @@ function validateRecord(input: ProjectDecisionRecordInput): void {
   if (JSON.stringify(input.detail).length > 12_000) throw new Error("project decision detail is too large");
 }
 
+export async function recordProjectDecision(
+  database: { readonly query: TenantQuery },
+  organizationId: string,
+  input: ProjectDecisionRecordInput,
+): Promise<ProjectDecision> {
+  validateRecord(input);
+  const detail = { ...input.detail, memoryKey: input.memoryKey };
+  await database.query("SELECT pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))", [`project-decision:${organizationId}:${input.projectId}:${input.source}:${input.memoryKey}`]);
+  const current = await database.query<DecisionRow>(
+    `SELECT id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by,detail=$5::jsonb AS same_detail
+       FROM project_decisions
+      WHERE organization_id=$1 AND project_id=$2 AND source=$3 AND detail->>'memoryKey'=$4 AND superseded_by IS NULL
+      LIMIT 1 FOR UPDATE`,
+    [organizationId, input.projectId, input.source, input.memoryKey, JSON.stringify(detail)],
+  );
+  const previous = current.rows[0];
+  if (previous && previous.kind === input.kind && previous.summary === input.summary && previous.same_detail === true) return decision(previous);
+  if (previous) await database.query("UPDATE project_decisions SET superseded_by=id WHERE organization_id=$1 AND id=$2 AND superseded_by IS NULL", [organizationId, previous.id]);
+  const inserted = await database.query<DecisionRow>(
+    `INSERT INTO project_decisions (id,organization_id,project_id,task_id,kind,summary,detail,source)
+     VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6::jsonb,$7)
+     RETURNING id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by`,
+    [organizationId, input.projectId, input.taskId, input.kind, input.summary, JSON.stringify(detail), input.source],
+  );
+  const row = inserted.rows[0];
+  if (!row) throw new Error("project decision insertion returned no row");
+  if (previous) await database.query("UPDATE project_decisions SET superseded_by=$3 WHERE organization_id=$1 AND id=$2", [organizationId, previous.id, row.id]);
+  return decision(row);
+}
+
 export function createProjectDecisionDatabase(pool: TenantPool): ProjectDecisionDatabase {
   return {
     async listCurrent(session, projectId, limit = 15) {
@@ -77,31 +107,7 @@ export function createProjectDecisionDatabase(pool: TenantPool): ProjectDecision
     },
 
     async record(session, input) {
-      validateRecord(input);
-      const detail = { ...input.detail, memoryKey: input.memoryKey };
-      return await withTenant(pool, session, async (database) => {
-        await database.query("SELECT pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))", [`project-decision:${session.organizationId}:${input.projectId}:${input.source}:${input.memoryKey}`]);
-        const current = await database.query<DecisionRow>(
-          `SELECT id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by,detail=$5::jsonb AS same_detail
-             FROM project_decisions
-            WHERE organization_id=$1 AND project_id=$2 AND source=$3 AND detail->>'memoryKey'=$4 AND superseded_by IS NULL
-            LIMIT 1 FOR UPDATE`,
-          [session.organizationId, input.projectId, input.source, input.memoryKey, JSON.stringify(detail)],
-        );
-        const previous = current.rows[0];
-        if (previous && previous.kind === input.kind && previous.summary === input.summary && previous.same_detail === true) return decision(previous);
-        if (previous) await database.query("UPDATE project_decisions SET superseded_by=id WHERE organization_id=$1 AND id=$2 AND superseded_by IS NULL", [session.organizationId, previous.id]);
-        const inserted = await database.query<DecisionRow>(
-          `INSERT INTO project_decisions (id,organization_id,project_id,task_id,kind,summary,detail,source)
-           VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6::jsonb,$7)
-           RETURNING id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by`,
-          [session.organizationId, input.projectId, input.taskId, input.kind, input.summary, JSON.stringify(detail), input.source],
-        );
-        const row = inserted.rows[0];
-        if (!row) throw new Error("project decision insertion returned no row");
-        if (previous) await database.query("UPDATE project_decisions SET superseded_by=$3 WHERE organization_id=$1 AND id=$2", [session.organizationId, previous.id, row.id]);
-        return decision(row);
-      });
+      return await withTenant(pool, session, async (database) => await recordProjectDecision(database, session.organizationId, input));
     },
 
     async supersede(session, projectId, decisionId) {

@@ -40,6 +40,10 @@ function poolFor(versionSha: string): TenantPool {
       version_storage_key: "project/version.zip",
       version_sha256: versionSha,
     }] };
+    if (text.includes("FROM project_decisions")) return { rows: [{
+      id: "70000000-0000-4000-8000-000000000901", organization_id: organizationId, project_id: projectId, task_id: null,
+      kind: "convention", summary: "Tests live beside source", detail: {}, source: "verification", created_at: "2026-10-14T00:00:00.000Z", superseded_by: null,
+    }] };
     return { rows: [] };
   });
   return { query, async connect() { return { query, release() {} }; } } as unknown as TenantPool;
@@ -64,6 +68,7 @@ describe("ProductExecutionSourceProvider ZIP source", () => {
       requirement: "Fix retry",
       plan: "Add regression coverage",
       commands: { install: "pnpm install --frozen-lockfile", test: "pnpm test", build: "pnpm build" },
+      projectHistory: expect.stringContaining("Tests live beside source"),
     });
   });
 
