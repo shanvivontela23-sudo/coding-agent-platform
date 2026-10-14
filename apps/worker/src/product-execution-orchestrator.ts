@@ -2,7 +2,8 @@ import type { SandboxProvider } from "../../../evals/src/sandbox/types.js";
 import { buildChangeDocument } from "./change-document.js";
 import type { ClaimedExecution } from "./postgres-execution-queue.js";
 import type { CodingRunResult, CodingRunner } from "./task-execution-worker.js";
-import type { ExecutionSourceProvider } from "./execution-source.js";
+import { applyExecutionProfile, type ExecutionSourceProvider, type PreparedExecutionSource } from "./execution-source.js";
+import type { ExecutionProfile } from "../../../packages/skills/src/profile.js";
 import type { ExecutionStore } from "./execution-store.js";
 import { CodingRunError, type ProductCodingRunner } from "./product-coding-runner.js";
 import { inspectPatchSafety, type PatchSafetyLimits } from "./patch-safety.js";
@@ -20,6 +21,10 @@ type OrchestratorOptions = {
   readonly patchLimits: PatchSafetyLimits;
   readonly verify?: Verify;
   readonly nowMs?: () => number;
+  // Resolves the stack-skill execution profile from the prepared source. When
+  // set, the profile is pinned before the source is marked prepared and before
+  // any sandbox or model work.
+  readonly resolveProfile?: (source: PreparedExecutionSource) => ExecutionProfile;
 };
 
 function metadataString(value: unknown): string | null { return typeof value === "string" ? value : null; }
@@ -47,6 +52,7 @@ export class ProductExecutionOrchestrator implements CodingRunner {
   private readonly options: OrchestratorOptions;
   constructor(options: OrchestratorOptions) {
     if (Boolean(options.codingRunner) === Boolean(options.codingRuntimeFactory)) throw new Error("configure exactly one coding runner or coding runtime factory");
+    if (options.resolveProfile && !options.store.pinExecutionProfile) throw new Error("execution profile resolution requires a store that can pin profiles");
     this.options = options;
   }
 
@@ -68,7 +74,10 @@ export class ProductExecutionOrchestrator implements CodingRunner {
     let progress = await this.options.store.getProgress(execution);
     if (progress.codingStartedAt && !progress.codingFinishedAt) throw new Error("WORKER_INTERRUPTED: paid coding began but did not finish; refusing automatic rerun");
 
-    const source = await this.options.sourceProvider.prepare({ organizationId: execution.organizationId, taskId: execution.taskId, projectId: execution.projectId, sourceCommitSha: execution.sourceCommitSha, sourceVersionId: execution.sourceVersionId });
+    const prepared = await this.options.sourceProvider.prepare({ organizationId: execution.organizationId, taskId: execution.taskId, projectId: execution.projectId, sourceCommitSha: execution.sourceCommitSha, sourceVersionId: execution.sourceVersionId });
+    const source = this.options.resolveProfile
+      ? applyExecutionProfile(prepared, await this.options.store.pinExecutionProfile!(execution, this.options.resolveProfile(prepared)))
+      : prepared;
     if (!progress.sourcePreparedAt) { await this.options.store.markSourcePrepared(execution); progress = await this.options.store.getProgress(execution); }
 
     let patch = progress.resultPatch;

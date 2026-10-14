@@ -12,6 +12,9 @@ import { ProductExecutionOrchestrator } from "./product-execution-orchestrator.j
 import { GitHubInstallationArchiveReader, ProductExecutionSourceProvider } from "./product-execution-source.js";
 import type { RestrictedQueryPool } from "./postgres-execution-queue.js";
 import type { RealWorkerConfig } from "./worker-config.js";
+import { buildExecutionProfile, resolveSandboxTemplateId } from "../../../packages/skills/src/profile.js";
+import { loadBuiltInStackSkillsSync } from "../../../packages/skills/src/registry.js";
+import type { StackSkill } from "../../../packages/skills/src/schema.js";
 
 function positiveInteger(env: Readonly<Record<string, string | undefined>>, name: string, fallback: number): number {
   const raw = env[name]?.trim();
@@ -29,8 +32,10 @@ export function createRealProductExecutionRunner(options: {
   readonly sandboxProvider?: SandboxProvider;
   readonly harness?: HarnessRunner;
   readonly sourceProvider?: ExecutionSourceProvider;
+  readonly skills?: ReadonlyMap<string, StackSkill>;
 }): ProductExecutionOrchestrator {
   const env = options.env ?? process.env;
+  const skills = options.skills ?? loadBuiltInStackSkillsSync();
   const tenantPool = options.pool as unknown as TenantPool;
   const sandboxProvider = options.sandboxProvider ?? new E2BSandboxProvider({ apiKey: options.config.e2bApiKey, defaultTemplate: options.config.e2bTemplateId });
   const harness = options.harness ?? new CodexHarnessRunner({ version: options.config.codexVersion });
@@ -60,6 +65,11 @@ export function createRealProductExecutionRunner(options: {
     store: new PostgresExecutionStore(tenantPool),
     sourceProvider,
     verificationSandboxProvider: sandboxProvider,
+    resolveProfile: (source) => {
+      // A source without a stored report degrades to generic with its own commands.
+      const report = source.report ?? { stackSkill: "generic", packageManager: null, installCommand: source.commands.install, testCommand: source.commands.test, buildCommand: source.commands.build, manifests: [] };
+      return buildExecutionProfile({ report, skills, planningSkill: source.planningSkill ?? null, sandboxTemplateId: (key) => resolveSandboxTemplateId(key, env, options.config.e2bTemplateId) });
+    },
     patchLimits: { maxFiles: positiveInteger(env, "TASK_EXECUTION_MAX_PATCH_FILES", 50), maxBytes: positiveInteger(env, "TASK_EXECUTION_MAX_PATCH_BYTES", 2 * 1024 * 1024) },
     codingRuntimeFactory: async (execution) => {
       const gatewaySession = await gateway.open({ executionId: execution.executionId, budgetUsd: execution.budgetUsd, timeoutSeconds: execution.timeoutSeconds });

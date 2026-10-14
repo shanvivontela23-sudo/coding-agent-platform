@@ -62,6 +62,9 @@ export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd 
     ...(publicOrigin ? { NEXT_ALLOWED_DEV_ORIGINS: new URL(publicOrigin).hostname } : {}),
   };
   const workerEnv: Record<string, string | undefined> = {
+    // Optional per-stack templates (E2B_TEMPLATE_<SKILL_KEY>); unset keys fall
+    // back to E2B_TEMPLATE_ID inside the worker.
+    ...pick(config, Object.keys(config.values).filter((name) => /^E2B_TEMPLATE_[A-Z0-9_]+$/.test(name) && name !== "E2B_TEMPLATE_ID")),
     ...pick(config, ["E2B_API_KEY", "E2B_TEMPLATE_ID", "TASK_EXECUTION_MODEL", "TASK_EXECUTION_CODEX_VERSION", "MODEL_GATEWAY_RUN_TOKEN_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]),
     DATABASE_URL: value(config, "DEMO_WORKER_DATABASE_URL"),
     TASK_EXECUTION_WORKER_ID: value(config, "TASK_EXECUTION_WORKER_ID", "demo-worker-1"),

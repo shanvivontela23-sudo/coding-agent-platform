@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { testPool } from "./helpers/test-pool.js";
@@ -54,7 +54,7 @@ beforeAll(async () => {
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
   adminPool = testPool({ connectionString: databaseUrlFor(integrationDb) });
-  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql"]) {
+  for (const name of (await readdir("packages/db/migrations")).filter((file) => /^\d{4}_.+\.sql$/.test(file)).sort()) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
@@ -291,6 +291,12 @@ describe.skipIf(!baseDatabaseUrl)("task execution HTTP controls", () => {
       );
       expect(Number(persisted.rows[0]!.checks)).toBeGreaterThanOrEqual(2);
       expect(Number(persisted.rows[0]!.artifacts)).toBeGreaterThanOrEqual(2);
+
+      const pinned = await adminPool!.query<{ implementation_skill_id: string | null; implementation_skill_version: string | null; sandbox_template_id: string | null; profile_skill: string | null }>(
+        `SELECT implementation_skill_id,implementation_skill_version,sandbox_template_id,execution_profile->>'skillId' AS profile_skill FROM task_executions WHERE id=$1`,
+        [firstPayload.execution.id],
+      );
+      expect(pinned.rows[0]).toEqual({ implementation_skill_id: "typescript-node", implementation_skill_version: "1.0.0", sandbox_template_id: fakeRealConfig().e2bTemplateId, profile_skill: "typescript-node" });
 
       const second = await fetch(`${endpoint}/start`, { method: "POST", headers: ownerHeaders });
       expect(second.status).toBe(201);

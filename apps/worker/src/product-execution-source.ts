@@ -15,6 +15,8 @@ type SourceRow = {
   confirmed_requirement: string | null;
   confirmed_plan: string | null;
   job_type: string | null;
+  planning_skill_id: string | null;
+  planning_skill_version: string | null;
   report: ProjectReport | null;
   repository_full_name: string | null;
   installation_id: string | number | null;
@@ -116,7 +118,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
   async prepare(input: { readonly organizationId: string; readonly taskId: string; readonly projectId: string; readonly sourceCommitSha: string | null; readonly sourceVersionId: string | null }): Promise<PreparedExecutionSource> {
     const row = await withTenant(this.options.pool, { organizationId: input.organizationId }, async (database) => {
       const result = await database.query<SourceRow>(
-        `SELECT t.status,t.confirmed_requirement,t.confirmed_plan,t.job_type,pr.report,
+        `SELECT t.status,t.confirmed_requirement,t.confirmed_plan,t.job_type,t.planning_skill_id,t.planning_skill_version,pr.report,
                 r.full_name AS repository_full_name,gi.installation_id,
                 pv.id AS version_id,pv.storage_key AS version_storage_key,pv.sha256 AS version_sha256
            FROM tasks t
@@ -158,6 +160,8 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
       plan: row.confirmed_plan,
       commands: { install: row.report.installCommand ?? null, test: row.report.testCommand, build: row.report.buildCommand },
       reviewFocus: "Review the generated patch against the approved plan, verification evidence, dependency changes, and any unverified pre-existing failures.",
+      report: row.report,
+      planningSkill: row.planning_skill_id && row.planning_skill_version ? { id: row.planning_skill_id, version: row.planning_skill_version } : null,
     };
   }
 }
