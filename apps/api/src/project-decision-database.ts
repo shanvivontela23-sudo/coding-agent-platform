@@ -24,7 +24,6 @@ export interface ProjectDecisionDatabase {
   supersede(session: SessionIdentity, projectId: string, decisionId: string): Promise<boolean>;
   getMembershipRole(session: SessionIdentity): Promise<MemberRole>;
 }
-
 type DecisionRow = {
   id: string;
   organization_id: string;

@@ -157,4 +157,3 @@
 - [ ] Review the complete diff from `f86cf6fdbbd3879e43823b9be52b94fb3ae287cd` for RLS, tenant isolation, prompt trust, PII, idempotency, and API/UI contracts.
 - [ ] Apply one TDD fix pass for Critical/Important review findings and rerun full validation.
 - [ ] Push `codex/project-decision-log` and open a PR against `main`; do not merge.
-

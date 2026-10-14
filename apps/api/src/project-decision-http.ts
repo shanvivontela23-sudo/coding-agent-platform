@@ -35,7 +35,6 @@ export async function handleProjectDecisionHttpRequest(options: {
     redirect(options.response, projectLocation(options.webOrigin, projectId, message)); return true;
   }
 }
-
 export function attachProjectDecisionRoutes(server: Server, options: {
   readonly apiOrigin: string;
   readonly webOrigin: string;

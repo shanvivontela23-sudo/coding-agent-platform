@@ -8,7 +8,6 @@ export interface ProjectDecisionService {
   list(session: SessionIdentity, projectId: string): Promise<{ readonly decisions: readonly ProjectDecision[]; readonly currentUserRole: MemberRole }>;
   supersede(session: SessionIdentity, projectId: string, decisionId: string): Promise<void>;
 }
-
 export function createProjectDecisionService(options: { readonly database: ProjectDecisionDatabase }): ProjectDecisionService {
   return {
     async list(session, projectId) {

@@ -54,4 +54,3 @@ GRANT SELECT, INSERT, UPDATE ON project_decisions TO coding_agent_app;
 REVOKE DELETE ON project_decisions FROM coding_agent_app;
 
 COMMIT;
-

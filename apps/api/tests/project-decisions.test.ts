@@ -41,7 +41,6 @@ describe("project decision service", () => {
     await expect(createProjectDecisionService({ database }).supersede(session, projectId, decisionId)).rejects.toMatchObject({ code: "PROJECT_DECISION_NOT_FOUND", status: 404 });
   });
 });
-
 describe("project decision database", () => {
   it("loads only current rows newest first with a hard limit", async () => {
     const calls: Array<{ text: string; values?: readonly unknown[] }> = [];

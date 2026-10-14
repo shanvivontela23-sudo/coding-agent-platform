@@ -67,4 +67,3 @@ describe("verification-driven project decisions", () => {
     expect(database.rows).toHaveLength(0);
   });
 });
-

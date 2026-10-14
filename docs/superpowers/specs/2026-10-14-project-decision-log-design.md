@@ -53,4 +53,3 @@ The project page shows “What Dhara has learned about this project” with plai
 - API and worker tests cover verification, publication, ZIP promotion, rejection authorization, and idempotency using fakes where external systems would otherwise be contacted.
 - Web tests cover readable rendering and owner-only management controls.
 - No paid model call, live E2B run, template build, or demo PostgreSQL test is part of this PR.
-

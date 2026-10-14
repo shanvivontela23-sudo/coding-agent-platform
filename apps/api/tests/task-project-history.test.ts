@@ -77,4 +77,3 @@ describe("task project history", () => {
     expect(projectDecisions.listCurrent).toHaveBeenCalledTimes(2);
   });
 });
-

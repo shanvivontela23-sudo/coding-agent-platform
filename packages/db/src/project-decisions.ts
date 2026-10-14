@@ -44,7 +44,6 @@ export function normalizeDecisionSummary(value: string, mask: (value: string) =>
   if (!normalized) throw new Error("project decision summary is required");
   return normalized.slice(0, 300);
 }
-
 export function formatProjectHistory(
   decisions: readonly ProjectDecision[],
   options: { readonly maxEntries?: number; readonly maxChars?: number } = {},

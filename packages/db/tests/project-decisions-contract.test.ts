@@ -16,4 +16,3 @@ describe("project decisions migration contract", () => {
     expect(sql).toContain("REVOKE DELETE ON project_decisions FROM coding_agent_app");
   });
 });
-

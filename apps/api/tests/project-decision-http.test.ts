@@ -52,4 +52,3 @@ describe("project decision HTTP routes", () => {
     expect(await response.text()).toBe("fallback");
   });
 });
-

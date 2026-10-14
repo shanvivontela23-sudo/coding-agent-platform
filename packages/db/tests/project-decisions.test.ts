@@ -51,4 +51,3 @@ describe.skipIf(!baseDatabaseUrl)("project decision tenant persistence", () => {
     await expect(psql(databaseUrl, asApp(orgB, `INSERT INTO project_decisions (id,organization_id,project_id,kind,summary,detail,source) VALUES (gen_random_uuid(),'${orgB}','${projectA}','convention','bad','{}','verification');`))).rejects.toThrow();
   });
 });
-

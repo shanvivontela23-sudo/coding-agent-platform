@@ -25,7 +25,6 @@ describe("project decision summaries", () => {
     expect(() => normalizeDecisionSummary(" \n ", (value) => value)).toThrow(/summary/i);
   });
 });
-
 describe("project history formatting", () => {
   it("sorts newest first, excludes superseded rows and caps entries", () => {
     const rows = Array.from({ length: 18 }, (_, index) => decision(index));
