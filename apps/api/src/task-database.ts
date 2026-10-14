@@ -27,7 +27,23 @@ export type TaskListItem = {
   readonly maskedTicket: string;
   readonly updatedAt: string;
 };
+// The stack fields the task page shows (display name and commands only).
+export type TaskProjectStack = Pick<ProjectReport, "stackSkill" | "stackDisplayName" | "installCommand" | "testCommand" | "buildCommand" | "lintCommand" | "commandSources">;
+export function taskProjectStack(report: ProjectReport | null | undefined): TaskProjectStack | null {
+  if (!report || typeof report !== "object" || typeof report.stackSkill !== "string") return null;
+  return {
+    stackSkill: report.stackSkill,
+    ...(report.stackDisplayName ? { stackDisplayName: report.stackDisplayName } : {}),
+    installCommand: report.installCommand ?? null,
+    testCommand: report.testCommand ?? null,
+    buildCommand: report.buildCommand ?? null,
+    lintCommand: report.lintCommand ?? null,
+    ...(report.commandSources ? { commandSources: report.commandSources } : {}),
+  };
+}
+
 export type TaskDetail = TaskListItem & {
+  readonly projectStack?: TaskProjectStack | null;
   readonly planningAttempt: number;
   readonly repositoryId: string | null;
   readonly jobType: string | null;
@@ -112,13 +128,13 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
       assertUuid(taskId, "taskId");
       return await withTenant(pool, session, async (database) => {
         const result = await database.query<{
-          id: string; project_id: string; project_name: string; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; planning_attempt: number | null; updated_at: Date | string; current_user_role: MemberRole;
-        }>(`SELECT t.id,t.project_id,p.name AS project_name,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.planning_attempt,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
+          id: string; project_id: string; project_name: string; project_report: ProjectReport | null; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; planning_attempt: number | null; updated_at: Date | string; current_user_role: MemberRole;
+        }>(`SELECT t.id,t.project_id,p.name AS project_name,pr.report AS project_report,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.planning_attempt,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id LEFT JOIN project_reports pr ON pr.organization_id=t.organization_id AND pr.project_id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
         const row = result.rows[0];
         if (!row) return null;
         const questions = await database.query<{ id: string; ordinal: number; question: string; suggested_answer: string; answer: string | null; answer_status: TaskQuestionRecord["answerStatus"]; routed_to_user_id: string | null }>(`SELECT id,ordinal,question,suggested_answer,answer,answer_status,routed_to_user_id FROM task_questions WHERE organization_id=$1 AND task_id=$2 ORDER BY ordinal`, [session.organizationId, taskId]);
         return {
-          id: row.id, projectId: row.project_id, projectName: row.project_name, repositoryId: row.repository_id, status: row.status,
+          id: row.id, projectId: row.project_id, projectName: row.project_name, projectStack: taskProjectStack(row.project_report), repositoryId: row.repository_id, status: row.status,
           requestedByUserId: row.requested_by_user_id, maskedTicket: row.masked_ticket ?? row.requirement, updatedAt: iso(row.updated_at),
           jobType: row.job_type, whatIUnderstand: row.what_i_understand, proposedApproach: row.proposed_approach, jobSize: row.job_size,
           estimatedCostUsd: number(row.estimated_cost_usd), estimatedTimeMinutes: row.estimated_time_minutes,

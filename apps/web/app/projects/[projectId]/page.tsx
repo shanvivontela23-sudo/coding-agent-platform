@@ -5,6 +5,8 @@ import { Alert, AlertDescription } from "../../../components/ui/alert";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { PageTitle, SectionTitle } from "../../../components/ui/heading";
+import { StackSkillBadge } from "../../../components/stack-skill-badge";
+import type { StackReportFields } from "../../../src/stack-badge";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
@@ -18,8 +20,7 @@ type Report = {
   readonly buildCommand: string | null;
   readonly testCommand: string | null;
   readonly workspaceCommands?: readonly WorkspaceCommand[];
-  readonly stackSkill: string;
-};
+} & StackReportFields;
 type UploadVersion = { readonly id: string; readonly versionNumber: number; readonly sizeBytes: number; readonly fileCount: number; readonly sha256: string; readonly createdAt: string };
 type ProjectPayload = {
   readonly project: { readonly id: string; readonly name: string };
@@ -124,7 +125,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
             <ValueCard title="Install command">{project.report.installCommand ? <code className="text-sm">{project.report.installCommand}</code> : <p className="text-sm text-muted-foreground">{project.report.installCommand === undefined ? "Re-analyse to detect" : "Not detected"}</p>}</ValueCard>
             <ValueCard title="Build command">{project.report.buildCommand ? <code className="text-sm">{project.report.buildCommand}</code> : <WorkspaceCommands workspaces={workspaceCommands} kind="build" />}</ValueCard>
             <ValueCard title="Test command">{project.report.testCommand ? <code className="text-sm">{project.report.testCommand}</code> : <WorkspaceCommands workspaces={workspaceCommands} kind="test" />}</ValueCard>
-            <ValueCard title="Stack skill"><p className="text-sm">{project.report.stackSkill}</p></ValueCard>
+            <ValueCard title="Stack skill"><StackSkillBadge report={project.report} /></ValueCard>
           </div>
         </section>
 

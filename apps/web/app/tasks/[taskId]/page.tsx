@@ -8,11 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Input } from "../../../components/ui/input";
 import { PageTitle, SectionTitle } from "../../../components/ui/heading";
 import { canApprovePlan, draftTaskMessage } from "../../../src/task-permissions";
+import { StackSkillBadge } from "../../../components/stack-skill-badge";
+import type { StackReportFields } from "../../../src/stack-badge";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly id: string; readonly email: string | null } };
 type Question = { readonly id: string; readonly ordinal: number; readonly question: string; readonly suggestedAnswer: string; readonly answer: string | null; readonly answerStatus: "unanswered" | "answered" | "developer_needed"; readonly routedToUserId: string | null };
 type Task = {
+  readonly projectStack?: StackReportFields | null;
   readonly id: string; readonly projectId: string; readonly projectName: string; readonly status: "draft" | "waiting_for_answers" | "plan_ready" | "approved"; readonly requestedByUserId: string; readonly maskedTicket: string; readonly currentUserRole: "owner" | "developer" | "rep"; readonly originalTicket?: string; readonly questions: readonly Question[]; readonly whatIUnderstand: string | null; readonly proposedApproach: string | null; readonly jobSize: "small" | "medium" | "large" | null; readonly estimatedCostUsdMin: number | null; readonly estimatedCostUsdMax: number | null; readonly estimatedTimeMinutesMin: number | null; readonly estimatedTimeMinutesMax: number | null; readonly clarificationFilteredCount: number; readonly clarificationRephrasedCount: number; readonly confirmedRequirement: string | null; readonly confirmedPlan: string | null;
 };
 type Props = { readonly params: Promise<{ readonly taskId: string }>; readonly searchParams: Promise<{ readonly error?: string }> };
@@ -30,7 +33,7 @@ export default async function TaskPage({ params, searchParams }: Props) {
   return (
     <AppShell organizationName={home.organization.name} userEmail={home.user.email} activePath="/tasks">
       <div className="space-y-8">
-        <section className="space-y-2"><p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">{task.projectName} · {statusLabel[task.status]}</p><PageTitle>Task</PageTitle><p className="max-w-3xl text-muted-foreground">{task.maskedTicket}</p></section>
+        <section className="space-y-2"><p className="text-caption font-semibold uppercase tracking-[0.18em] text-accent">{task.projectName} · {statusLabel[task.status]}</p><PageTitle>Task</PageTitle><p className="max-w-3xl text-muted-foreground">{task.maskedTicket}</p>{task.projectStack ? <StackSkillBadge report={task.projectStack} /> : null}</section>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         {task.originalTicket ? <Card><CardHeader><CardTitle>Original request</CardTitle></CardHeader><CardContent><p className="whitespace-pre-wrap text-sm">{task.originalTicket}</p><p className="mt-3 text-xs text-muted-foreground">Visible only to the requesting support rep.</p></CardContent></Card> : null}
         {task.status === "draft" ? <Card><CardContent className="space-y-3 py-6 text-sm text-muted-foreground"><p>{draftTaskMessage}</p>{task.requestedByUserId === home.user.id ? <form action={`${apiOrigin}/tasks/${task.id}/retry-clarification`} method="post"><Button type="submit">Try again</Button></form> : null}</CardContent></Card> : null}
