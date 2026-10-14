@@ -75,6 +75,8 @@ describe("launch plan in share mode", () => {
     expect(plan.api.env.WEB_ORIGIN).toBe("https://abc.trycloudflare.com");
     expect(plan.web.env.NEXT_PUBLIC_API_ORIGIN).toBe("https://abc.trycloudflare.com");
     expect(plan.web.env.NEXT_ALLOWED_DEV_ORIGINS).toBe("abc.trycloudflare.com");
+    // Server-side web fetches stay local instead of looping through the tunnel.
+    expect(plan.web.env.API_INTERNAL_ORIGIN).toBe("http://127.0.0.1:3101");
   });
 
   it("keeps localhost origins when not sharing", () => {

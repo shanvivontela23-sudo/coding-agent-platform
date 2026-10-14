@@ -8,6 +8,9 @@ import { Card, CardContent } from "../../../components/ui/card";
 import { PageTitle } from "../../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 
 type HomePayload = {
   readonly organization: { readonly id: string; readonly name: string };
@@ -21,13 +24,13 @@ async function cookieHeader(): Promise<string> {
   return store.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; ");
 }
 async function loadHome(header: string): Promise<HomePayload> {
-  const response = await fetch(`${apiOrigin}/api/home`, { headers: header ? { cookie: header } : {}, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/home`, { headers: header ? { cookie: header } : {}, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load your organization.");
   return await response.json() as HomePayload;
 }
 async function loadRepositories(header: string): Promise<{ repositories: readonly Repository[]; disconnected: boolean }> {
-  const response = await fetch(`${apiOrigin}/api/github/repositories`, { headers: header ? { cookie: header } : {}, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/github/repositories`, { headers: header ? { cookie: header } : {}, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (response.status === 409) return { repositories: [], disconnected: true };
   if (!response.ok) throw new Error("Unable to load GitHub repositories.");

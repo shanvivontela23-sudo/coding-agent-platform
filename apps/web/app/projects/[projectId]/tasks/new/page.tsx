@@ -7,6 +7,9 @@ import { Card, CardContent } from "../../../../../components/ui/card";
 import { PageTitle } from "../../../../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly email: string | null } };
 type ProjectPayload = { readonly project: { readonly id: string; readonly name: string } };
 type Props = { readonly params: Promise<{ readonly projectId: string }>; readonly searchParams: Promise<{ readonly error?: string }> };
@@ -15,13 +18,13 @@ async function requestHeaders(): Promise<{ cookie?: string }> {
   const store = await cookies(); const value = store.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; "); return value ? { cookie: value } : {};
 }
 async function loadHome(headers: { cookie?: string }): Promise<HomePayload> {
-  const response = await fetch(`${apiOrigin}/api/home`, { headers, cache: "no-store" }); if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue."); if (!response.ok) throw new Error("Unable to load organization."); return await response.json() as HomePayload;
+  const response = await fetch(`${serverApiOrigin}/api/home`, { headers, cache: "no-store" }); if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue."); if (!response.ok) throw new Error("Unable to load organization."); return await response.json() as HomePayload;
 }
 async function loadProject(projectId: string, headers: { cookie?: string }): Promise<ProjectPayload> {
-  const response = await fetch(`${apiOrigin}/api/projects/${encodeURIComponent(projectId)}`, { headers, cache: "no-store" }); if (response.status === 404) notFound(); if (!response.ok) throw new Error("Unable to load project."); return await response.json() as ProjectPayload;
+  const response = await fetch(`${serverApiOrigin}/api/projects/${encodeURIComponent(projectId)}`, { headers, cache: "no-store" }); if (response.status === 404) notFound(); if (!response.ok) throw new Error("Unable to load project."); return await response.json() as ProjectPayload;
 }
 async function loadTaskConfiguration(headers: { cookie?: string }): Promise<{ readonly planningConfigured: boolean }> {
-  const response = await fetch(`${apiOrigin}/api/tasks/configuration`, { headers, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/tasks/configuration`, { headers, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load task configuration.");
   return await response.json() as { readonly planningConfigured: boolean };

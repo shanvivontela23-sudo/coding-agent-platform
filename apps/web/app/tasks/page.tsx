@@ -6,6 +6,9 @@ import { Card, CardContent } from "../../components/ui/card";
 import { PageTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly email: string | null } };
 type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved" | "rejected";
 type TaskItem = { readonly id: string; readonly projectName: string; readonly status: TaskStatus; readonly maskedTicket: string; readonly updatedAt: string };
@@ -15,7 +18,7 @@ async function headers(): Promise<{ cookie?: string }> {
   const store = await cookies(); const value = store.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; "); return value ? { cookie: value } : {};
 }
 async function getJson<T>(path: string, requestHeaders: { cookie?: string }): Promise<T> {
-  const response = await fetch(`${apiOrigin}${path}`, { headers: requestHeaders, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}${path}`, { headers: requestHeaders, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load tasks.");
   return await response.json() as T;

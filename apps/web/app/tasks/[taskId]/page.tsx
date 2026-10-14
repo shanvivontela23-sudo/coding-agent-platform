@@ -12,6 +12,9 @@ import { StackSkillBadge } from "../../../components/stack-skill-badge";
 import type { StackReportFields } from "../../../src/stack-badge";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly id: string; readonly email: string | null } };
 type Question = { readonly id: string; readonly ordinal: number; readonly question: string; readonly suggestedAnswer: string; readonly answer: string | null; readonly answerStatus: "unanswered" | "answered" | "developer_needed"; readonly routedToUserId: string | null };
 type Task = {
@@ -22,7 +25,7 @@ type Props = { readonly params: Promise<{ readonly taskId: string }>; readonly s
 const statusLabel = { draft: "Draft", waiting_for_answers: "Waiting for answers", plan_ready: "Plan ready", approved: "Approved", rejected: "Rejected" } as const;
 
 async function requestHeaders(): Promise<{ cookie?: string }> { const store = await cookies(); const value = store.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; "); return value ? { cookie: value } : {}; }
-async function load<T>(path: string, headers: { cookie?: string }): Promise<T> { const response = await fetch(`${apiOrigin}${path}`, { headers, cache: "no-store" }); if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue."); if (response.status === 404) notFound(); if (!response.ok) throw new Error("Unable to load task."); return await response.json() as T; }
+async function load<T>(path: string, headers: { cookie?: string }): Promise<T> { const response = await fetch(`${serverApiOrigin}${path}`, { headers, cache: "no-store" }); if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue."); if (response.status === 404) notFound(); if (!response.ok) throw new Error("Unable to load task."); return await response.json() as T; }
 function money(value: number | null): string { return value === null ? "—" : `$${value.toFixed(2)}`; }
 
 export default async function TaskPage({ params, searchParams }: Props) {

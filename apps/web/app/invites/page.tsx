@@ -8,6 +8,9 @@ import { PRODUCT_NAME } from "../../src/product-config";
 import { cn } from "../../src/ui-utils";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 
 type Invitation = {
   readonly id: string;
@@ -23,7 +26,7 @@ type InvitesPageProps = { readonly searchParams?: Promise<Record<string, string 
 async function loadInvitations(): Promise<InvitesPayload> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; ");
-  const response = await fetch(`${apiOrigin}/api/invitations`, {
+  const response = await fetch(`${serverApiOrigin}/api/invitations`, {
     headers: cookieHeader ? { cookie: cookieHeader } : {},
     cache: "no-store",
   });
