@@ -46,6 +46,7 @@ function task(): TaskDetail {
 }
 
 class RecordedGateway implements TaskModelGateway {
+  readonly systemMessages = new Map<string, string>();
   private readonly responses: unknown[] = [
     { jobType: "bug_fix", questions: [] },
     {
@@ -55,7 +56,8 @@ class RecordedGateway implements TaskModelGateway {
     },
   ];
   async startTaskRun(): Promise<void> {}
-  async call(): Promise<unknown> {
+  async call(_taskId: string, purpose: string, messages: readonly { readonly role: "system" | "user"; readonly content: string }[]): Promise<unknown> {
+    this.systemMessages.set(purpose, messages[0]?.content ?? "");
     const response = this.responses.shift();
     if (response === undefined) throw new Error("missing response");
     return response;
@@ -76,6 +78,7 @@ describe("task plan source pin", () => {
           source: "github" as const,
           revision: commitSha,
           text: `source at ${commitSha}`,
+          report: { languages: [], frameworks: [], packageManager: "pnpm", installCommand: "pnpm install --frozen-lockfile", buildCommand: null, testCommand: "pnpm test", stackSkill: "typescript-node", stackSkillVersion: "1.0.0", manifests: ["package.json", "pnpm-lock.yaml"] },
           pin: { source: "github" as const, commitSha },
         };
       },
@@ -91,10 +94,11 @@ describe("task plan source pin", () => {
       async recordModelCall() {},
     } as unknown as TaskDatabase;
 
+    const gateway = new RecordedGateway();
     const service = createTaskPlanningService({
       database,
       codeReader,
-      gateway: new RecordedGateway(),
+      gateway,
       cipher,
       modelBudgetUsd: 0.5,
     });
@@ -102,5 +106,8 @@ describe("task plan source pin", () => {
 
     expect(reads).toBe(2);
     expect(savedPin).toEqual({ source: "github", commitSha: planningCommit });
+    expect(gateway.systemMessages.get("clarify")).toContain("TypeScript / Node");
+    expect(gateway.systemMessages.get("clarify")).not.toContain("Work with the repository's existing Node.js package manager");
+    expect(gateway.systemMessages.get("plan")).toContain("Work with the repository's existing Node.js package manager");
   });
 });

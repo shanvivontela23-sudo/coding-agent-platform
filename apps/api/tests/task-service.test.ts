@@ -42,7 +42,7 @@ function detail(role: TaskDetail["currentUserRole"]): TaskDetail {
     currentUserRole: role,
   };
 }
-const codeReader = { readContext: async () => ({ source: "github" as const, revision: "a".repeat(40), text: "" }) } satisfies ProjectCodeReader;
+const codeReader = { readContext: async () => ({ source: "github" as const, revision: "a".repeat(40), text: "", report: { languages: [], frameworks: [], packageManager: null, installCommand: null, buildCommand: null, testCommand: null, stackSkill: "generic", manifests: [] } }) } satisfies ProjectCodeReader;
 const gateway: TaskModelGateway = { startTaskRun: async () => {}, call: async () => ({}), finishTaskRun: async () => {} };
 
 describe("task original-ticket visibility", () => {

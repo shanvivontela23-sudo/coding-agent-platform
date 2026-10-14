@@ -34,7 +34,7 @@ describe("GitHub project code retrieval", () => {
     };
     const session: SessionIdentity = { userId: "10000000-0000-4000-8000-000000000001", organizationId: "00000000-0000-4000-8000-000000000001", expiresAtMs: Date.now() + 60_000 };
     const reader = new GitHubProjectCodeReader({
-      database: { getProjectSource: async () => ({ projectId: "20000000-0000-4000-8000-000000000001", repositoryId: "30000000-0000-4000-8000-000000000001", githubRepositoryId: 99, installationId: 42, installationStatus: "connected" }) },
+      database: { getProjectSource: async () => ({ projectId: "20000000-0000-4000-8000-000000000001", repositoryId: "30000000-0000-4000-8000-000000000001", githubRepositoryId: 99, installationId: 42, installationStatus: "connected", report: { languages: [], frameworks: [], packageManager: "pnpm", installCommand: "pnpm install --frozen-lockfile", buildCommand: null, testCommand: "pnpm test", stackSkill: "typescript-node", manifests: ["package.json"] } }) },
       appId: "123",
       privateKey: pem,
       fetchImpl,
@@ -46,6 +46,7 @@ describe("GitHub project code retrieval", () => {
     const context = await reader.readContext(session, "20000000-0000-4000-8000-000000000001", "retry cart save");
     expect(context.source).toBe("github");
     expect(context.revision).toBe(revision);
+    expect(context.report.stackSkill).toBe("typescript-node");
     expect(context.text).toContain(`Revision: ${revision}`);
     expect(context.text).toContain("--- package.json ---");
     expect(context.text).toContain("--- src/cart.ts ---");

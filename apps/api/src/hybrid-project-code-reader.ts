@@ -24,8 +24,9 @@ export class HybridProjectCodeReader implements ProjectCodeReader {
     this.uploadDatabase = options.uploadDatabase; this.storage = options.storage; this.githubReader = options.githubReader; this.limits = options.limits; this.maxContextChars = options.maxContextChars ?? 60_000; this.maxCandidateFiles = options.maxCandidateFiles ?? 48;
   }
   async readContext(session: SessionIdentity, projectId: string, query: string): Promise<ProjectCodeContext> {
-    const version = await this.uploadDatabase.getCurrentUploadVersion(session, projectId);
-    if (!version) return await this.githubReader.readContext(session, projectId, query);
+    const upload = await this.uploadDatabase.getUploadProject(session, projectId);
+    if (!upload) return await this.githubReader.readContext(session, projectId, query);
+    const version = upload.source.currentVersion;
     const bytes = await this.storage.readVersion(version.storageKey);
     const queryTokens = tokens(query);
     const candidates = readNormalizedZipFiles(bytes, this.limits)
@@ -45,6 +46,6 @@ export class HybridProjectCodeReader implements ProjectCodeReader {
       sections.push(section); chars += section.length;
       if (sections.length >= 18) break;
     }
-    return { source: "upload", revision: version.id, text: sections.join("\n") };
+    return { source: "upload", revision: version.id, text: sections.join("\n"), report: upload.report };
   }
 }

@@ -3,6 +3,7 @@ import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./data
 import { AppError } from "./errors.js";
 import type { CostRecord } from "../../../evals/src/gateway/types.js";
 import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.js";
+import type { ProjectReport } from "./repository-analysis.js";
 
 export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved";
 export type PlannedSourcePin =
@@ -52,6 +53,7 @@ export type TaskProjectSource = {
   readonly githubRepositoryId: number;
   readonly installationId: number;
   readonly installationStatus: "connected" | "disconnected";
+  readonly report: ProjectReport;
 };
 
 export interface TaskDatabase {
@@ -130,9 +132,9 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
     async getProjectSource(session, projectId) {
       assertUuid(projectId, "projectId");
       return await withTenant(pool, session, async (database) => {
-        const result = await database.query<{ project_id: string; repository_id: string; github_repository_id: string | number; installation_id: string | number; installation_status: "connected" | "disconnected" }>(`SELECT p.id AS project_id,r.id AS repository_id,r.github_repository_id,gi.installation_id,gi.status AS installation_status FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id JOIN github_installations gi ON gi.organization_id=p.organization_id WHERE p.organization_id=$1 AND p.id=$2 AND r.github_repository_id IS NOT NULL LIMIT 1`, [session.organizationId, projectId]);
+        const result = await database.query<{ project_id: string; repository_id: string; github_repository_id: string | number; installation_id: string | number; installation_status: "connected" | "disconnected"; report: ProjectReport }>(`SELECT p.id AS project_id,r.id AS repository_id,r.github_repository_id,gi.installation_id,gi.status AS installation_status,pr.report FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id JOIN github_installations gi ON gi.organization_id=p.organization_id JOIN project_reports pr ON pr.organization_id=p.organization_id AND pr.project_id=p.id WHERE p.organization_id=$1 AND p.id=$2 AND r.github_repository_id IS NOT NULL LIMIT 1`, [session.organizationId, projectId]);
         const row = result.rows[0];
-        return row ? { projectId: row.project_id, repositoryId: row.repository_id, githubRepositoryId: Number(row.github_repository_id), installationId: Number(row.installation_id), installationStatus: row.installation_status } : null;
+        return row ? { projectId: row.project_id, repositoryId: row.repository_id, githubRepositoryId: Number(row.github_repository_id), installationId: Number(row.installation_id), installationStatus: row.installation_status, report: row.report } : null;
       });
     },
 

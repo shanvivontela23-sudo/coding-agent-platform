@@ -25,7 +25,7 @@ export type ResolvedStackSkill = {
   readonly limits: StackSkillDefinition["limits"] | null;
 };
 
-type StoredProjectReport = {
+export type StoredProjectReport = {
   readonly stackSkill: string;
   readonly stackSkillVersion?: string;
   readonly stackDisplayName?: string;

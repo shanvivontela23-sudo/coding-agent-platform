@@ -1,11 +1,13 @@
 import { createSign } from "node:crypto";
 import type { SessionIdentity } from "./auth.js";
+import type { ProjectReport } from "./repository-analysis.js";
 import type { TaskDatabase, TaskProjectSource } from "./task-database.js";
 
 export type ProjectCodeContext = {
   readonly source: "github" | "upload";
   readonly revision: string;
   readonly text: string;
+  readonly report: ProjectReport;
 };
 
 export interface ProjectCodeReader {
@@ -131,6 +133,6 @@ export class GitHubProjectCodeReader implements ProjectCodeReader {
       sections.push(section); chars += section.length;
       if (sections.length >= 18) break;
     }
-    return { source: "github", revision, text: sections.join("\n") };
+    return { source: "github", revision, text: sections.join("\n"), report: source.report };
   }
 }
