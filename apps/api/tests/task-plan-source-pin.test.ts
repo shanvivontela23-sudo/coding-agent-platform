@@ -46,6 +46,7 @@ function task(): TaskDetail {
 }
 
 class RecordedGateway implements TaskModelGateway {
+  readonly systemMessages = new Map<string, string>();
   private readonly responses: unknown[] = [
     { jobType: "bug_fix", questions: [] },
     {
@@ -55,7 +56,8 @@ class RecordedGateway implements TaskModelGateway {
     },
   ];
   async startTaskRun(): Promise<void> {}
-  async call(): Promise<unknown> {
+  async call(_taskId: string, purpose: string, messages: readonly { readonly role: "system" | "user"; readonly content: string }[]): Promise<unknown> {
+    this.systemMessages.set(purpose, messages[0]?.content ?? "");
     const response = this.responses.shift();
     if (response === undefined) throw new Error("missing response");
     return response;
@@ -76,25 +78,28 @@ describe("task plan source pin", () => {
           source: "github" as const,
           revision: commitSha,
           text: `source at ${commitSha}`,
+          report: { languages: [], frameworks: [], packageManager: "pnpm", installCommand: "pnpm install --frozen-lockfile", buildCommand: null, testCommand: "pnpm test", stackSkill: "typescript-node", stackSkillVersion: "1.0.0", manifests: ["package.json", "pnpm-lock.yaml"] },
           pin: { source: "github" as const, commitSha },
         };
       },
     } as unknown as ProjectCodeReader;
 
     let savedPin: unknown;
+    let savedSkill: unknown;
     const database = {
       async createTask() { return { taskId }; },
       async saveClarification() {},
       async unresolvedQuestionCount() { return 0; },
       async getTask() { return task(); },
-      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, pin?: unknown) { savedPin = pin; },
+      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, pin?: unknown, skill?: unknown) { savedPin = pin; savedSkill = skill; },
       async recordModelCall() {},
     } as unknown as TaskDatabase;
 
+    const gateway = new RecordedGateway();
     const service = createTaskPlanningService({
       database,
       codeReader,
-      gateway: new RecordedGateway(),
+      gateway,
       cipher,
       modelBudgetUsd: 0.5,
     });
@@ -102,5 +107,30 @@ describe("task plan source pin", () => {
 
     expect(reads).toBe(2);
     expect(savedPin).toEqual({ source: "github", commitSha: planningCommit });
+    expect(savedSkill).toEqual({ id: "typescript-node", version: "1.0.0" });
+    expect(gateway.systemMessages.get("clarify")).toContain("TypeScript / Node");
+    expect(gateway.systemMessages.get("clarify")).not.toContain("Work with the repository's existing Node.js package manager");
+    expect(gateway.systemMessages.get("plan")).toContain("Work with the repository's existing Node.js package manager");
+  });
+  it("records no planning skill and adds no guide for a generic project", async () => {
+    const codeReader = {
+      async readContext() {
+        return { source: "github" as const, revision: "c".repeat(40), text: "source", report: { languages: [], frameworks: [], packageManager: null, installCommand: null, buildCommand: null, testCommand: null, stackSkill: "generic", manifests: [] } };
+      },
+    } as unknown as ProjectCodeReader;
+    let savedSkill: unknown = "unset";
+    const database = {
+      async createTask() { return { taskId }; },
+      async saveClarification() {},
+      async unresolvedQuestionCount() { return 0; },
+      async getTask() { return task(); },
+      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, _pin?: unknown, skill?: unknown) { savedSkill = skill; },
+      async recordModelCall() {},
+    } as unknown as TaskDatabase;
+    const gateway = new RecordedGateway();
+    await createTaskPlanningService({ database, codeReader, gateway, cipher, modelBudgetUsd: 0.5 }).create(session, projectId, "Fix retry behavior");
+    expect(savedSkill).toBeNull();
+    expect(gateway.systemMessages.get("plan")).not.toContain("TRUSTED_STACK_SKILL");
+    expect(gateway.systemMessages.get("clarify")).not.toContain("Stack:");
   });
 });

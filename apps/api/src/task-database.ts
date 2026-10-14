@@ -3,8 +3,11 @@ import { assertUuid, type MemberRole, type TenantPool, withTenant } from "./data
 import { AppError } from "./errors.js";
 import type { CostRecord } from "../../../evals/src/gateway/types.js";
 import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.js";
+import type { ProjectReport } from "./repository-analysis.js";
 
 export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved";
+// The built-in stack skill that shaped the accepted plan; null for generic planning.
+export type PlanningSkill = { readonly id: string; readonly version: string };
 export type PlannedSourcePin =
   | { readonly source: "github"; readonly commitSha: string }
   | { readonly source: "upload"; readonly versionId: string };
@@ -24,7 +27,23 @@ export type TaskListItem = {
   readonly maskedTicket: string;
   readonly updatedAt: string;
 };
+// The stack fields the task page shows (display name and commands only).
+export type TaskProjectStack = Pick<ProjectReport, "stackSkill" | "stackDisplayName" | "installCommand" | "testCommand" | "buildCommand" | "lintCommand" | "commandSources">;
+export function taskProjectStack(report: ProjectReport | null | undefined): TaskProjectStack | null {
+  if (!report || typeof report !== "object" || typeof report.stackSkill !== "string") return null;
+  return {
+    stackSkill: report.stackSkill,
+    ...(report.stackDisplayName ? { stackDisplayName: report.stackDisplayName } : {}),
+    installCommand: report.installCommand ?? null,
+    testCommand: report.testCommand ?? null,
+    buildCommand: report.buildCommand ?? null,
+    lintCommand: report.lintCommand ?? null,
+    ...(report.commandSources ? { commandSources: report.commandSources } : {}),
+  };
+}
+
 export type TaskDetail = TaskListItem & {
+  readonly projectStack?: TaskProjectStack | null;
   readonly planningAttempt: number;
   readonly repositoryId: string | null;
   readonly jobType: string | null;
@@ -52,6 +71,7 @@ export type TaskProjectSource = {
   readonly githubRepositoryId: number;
   readonly installationId: number;
   readonly installationStatus: "connected" | "disconnected";
+  readonly report: ProjectReport;
 };
 
 export interface TaskDatabase {
@@ -63,7 +83,7 @@ export interface TaskDatabase {
   saveClarification(session: SessionIdentity, taskId: string, jobType: string, questions: readonly TaskQuestion[], stats?: QuestionFilterStats): Promise<void>;
   answerQuestion(session: SessionIdentity, taskId: string, questionId: string, answer: string, developerNeeded: boolean): Promise<void>;
   unresolvedQuestionCount(session: SessionIdentity, taskId: string): Promise<number>;
-  savePlan(session: SessionIdentity, taskId: string, plan: TaskPlan, sourcePin: PlannedSourcePin): Promise<void>;
+  savePlan(session: SessionIdentity, taskId: string, plan: TaskPlan, sourcePin: PlannedSourcePin, planningSkill?: PlanningSkill | null): Promise<void>;
   approveTask(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
   recordModelCall(session: SessionIdentity, taskId: string, cost: CostRecord): Promise<void>;
 }
@@ -108,13 +128,13 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
       assertUuid(taskId, "taskId");
       return await withTenant(pool, session, async (database) => {
         const result = await database.query<{
-          id: string; project_id: string; project_name: string; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; planning_attempt: number | null; updated_at: Date | string; current_user_role: MemberRole;
-        }>(`SELECT t.id,t.project_id,p.name AS project_name,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.planning_attempt,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
+          id: string; project_id: string; project_name: string; project_report: ProjectReport | null; repository_id: string | null; status: TaskStatus; requested_by_user_id: string; masked_ticket: string | null; requirement: string; original_ticket_encrypted: string | null; job_type: string | null; what_i_understand: string | null; proposed_approach: string | null; job_size: TaskPlan["size"] | null; estimated_cost_usd: string | number | null; estimated_time_minutes: number | null; estimated_cost_usd_min: string | number | null; estimated_cost_usd_max: string | number | null; estimated_time_minutes_min: number | null; estimated_time_minutes_max: number | null; clarification_filtered_count: number; clarification_rephrased_count: number; confirmed_requirement: string | null; confirmed_plan: string | null; task_model_budget_usd: string | number; planning_attempt: number | null; updated_at: Date | string; current_user_role: MemberRole;
+        }>(`SELECT t.id,t.project_id,p.name AS project_name,pr.report AS project_report,t.repository_id,t.status,t.requested_by_user_id,t.masked_ticket,t.requirement,t.original_ticket_encrypted,t.job_type,t.what_i_understand,t.proposed_approach,t.job_size,t.estimated_cost_usd,t.estimated_time_minutes,t.estimated_cost_usd_min,t.estimated_cost_usd_max,t.estimated_time_minutes_min,t.estimated_time_minutes_max,t.clarification_filtered_count,t.clarification_rephrased_count,t.confirmed_requirement,t.confirmed_plan,t.task_model_budget_usd,t.planning_attempt,t.updated_at,m.role AS current_user_role FROM tasks t JOIN projects p ON p.organization_id=t.organization_id AND p.id=t.project_id LEFT JOIN project_reports pr ON pr.organization_id=t.organization_id AND pr.project_id=t.project_id JOIN organization_memberships m ON m.organization_id=t.organization_id AND m.user_id=$3 WHERE t.organization_id=$1 AND t.id=$2 LIMIT 1`, [session.organizationId, taskId, session.userId]);
         const row = result.rows[0];
         if (!row) return null;
         const questions = await database.query<{ id: string; ordinal: number; question: string; suggested_answer: string; answer: string | null; answer_status: TaskQuestionRecord["answerStatus"]; routed_to_user_id: string | null }>(`SELECT id,ordinal,question,suggested_answer,answer,answer_status,routed_to_user_id FROM task_questions WHERE organization_id=$1 AND task_id=$2 ORDER BY ordinal`, [session.organizationId, taskId]);
         return {
-          id: row.id, projectId: row.project_id, projectName: row.project_name, repositoryId: row.repository_id, status: row.status,
+          id: row.id, projectId: row.project_id, projectName: row.project_name, projectStack: taskProjectStack(row.project_report), repositoryId: row.repository_id, status: row.status,
           requestedByUserId: row.requested_by_user_id, maskedTicket: row.masked_ticket ?? row.requirement, updatedAt: iso(row.updated_at),
           jobType: row.job_type, whatIUnderstand: row.what_i_understand, proposedApproach: row.proposed_approach, jobSize: row.job_size,
           estimatedCostUsd: number(row.estimated_cost_usd), estimatedTimeMinutes: row.estimated_time_minutes,
@@ -130,9 +150,9 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
     async getProjectSource(session, projectId) {
       assertUuid(projectId, "projectId");
       return await withTenant(pool, session, async (database) => {
-        const result = await database.query<{ project_id: string; repository_id: string; github_repository_id: string | number; installation_id: string | number; installation_status: "connected" | "disconnected" }>(`SELECT p.id AS project_id,r.id AS repository_id,r.github_repository_id,gi.installation_id,gi.status AS installation_status FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id JOIN github_installations gi ON gi.organization_id=p.organization_id WHERE p.organization_id=$1 AND p.id=$2 AND r.github_repository_id IS NOT NULL LIMIT 1`, [session.organizationId, projectId]);
+        const result = await database.query<{ project_id: string; repository_id: string; github_repository_id: string | number; installation_id: string | number; installation_status: "connected" | "disconnected"; report: ProjectReport }>(`SELECT p.id AS project_id,r.id AS repository_id,r.github_repository_id,gi.installation_id,gi.status AS installation_status,pr.report FROM projects p JOIN repositories r ON r.organization_id=p.organization_id AND r.project_id=p.id JOIN github_installations gi ON gi.organization_id=p.organization_id JOIN project_reports pr ON pr.organization_id=p.organization_id AND pr.project_id=p.id WHERE p.organization_id=$1 AND p.id=$2 AND r.github_repository_id IS NOT NULL LIMIT 1`, [session.organizationId, projectId]);
         const row = result.rows[0];
-        return row ? { projectId: row.project_id, repositoryId: row.repository_id, githubRepositoryId: Number(row.github_repository_id), installationId: Number(row.installation_id), installationStatus: row.installation_status } : null;
+        return row ? { projectId: row.project_id, repositoryId: row.repository_id, githubRepositoryId: Number(row.github_repository_id), installationId: Number(row.installation_id), installationStatus: row.installation_status, report: row.report } : null;
       });
     },
 
@@ -203,15 +223,15 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
       });
     },
 
-    async savePlan(session, taskId, plan, sourcePin) {
+    async savePlan(session, taskId, plan, sourcePin, planningSkill) {
       assertUuid(taskId, "taskId");
       const [plannedCommit, plannedVersion] = sourcePinColumns(sourcePin);
       const midpointCost = (plan.estimate.costUsdMin + plan.estimate.costUsdMax) / 2;
       const midpointMinutes = Math.round((plan.estimate.timeMinutesMin + plan.estimate.timeMinutesMax) / 2);
       await withTenant(pool, session, async (database) => {
         await database.query(
-          `UPDATE tasks SET what_i_understand=$3,proposed_approach=$4,job_size=$5,estimated_cost_usd=$6,estimated_time_minutes=$7,estimated_cost_usd_min=$8,estimated_cost_usd_max=$9,estimated_time_minutes_min=$10,estimated_time_minutes_max=$11,planned_source_commit_sha=$12,planned_source_version_id=$13,status='plan_ready',updated_at=now() WHERE organization_id=$1 AND id=$2`,
-          [session.organizationId, taskId, plan.whatIUnderstand, plan.proposedApproach, plan.size, midpointCost, midpointMinutes, plan.estimate.costUsdMin, plan.estimate.costUsdMax, plan.estimate.timeMinutesMin, plan.estimate.timeMinutesMax, plannedCommit, plannedVersion],
+          `UPDATE tasks SET what_i_understand=$3,proposed_approach=$4,job_size=$5,estimated_cost_usd=$6,estimated_time_minutes=$7,estimated_cost_usd_min=$8,estimated_cost_usd_max=$9,estimated_time_minutes_min=$10,estimated_time_minutes_max=$11,planned_source_commit_sha=$12,planned_source_version_id=$13,planning_skill_id=$14,planning_skill_version=$15,status='plan_ready',updated_at=now() WHERE organization_id=$1 AND id=$2`,
+          [session.organizationId, taskId, plan.whatIUnderstand, plan.proposedApproach, plan.size, midpointCost, midpointMinutes, plan.estimate.costUsdMin, plan.estimate.costUsdMax, plan.estimate.timeMinutesMin, plan.estimate.timeMinutesMax, plannedCommit, plannedVersion, planningSkill?.id ?? null, planningSkill?.version ?? null],
         );
       });
     },

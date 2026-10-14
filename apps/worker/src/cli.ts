@@ -4,6 +4,7 @@ import { runFakeTaskExecutionWorker, runTaskExecutionWorker } from "./main.js";
 import { PostgresZipResultArtifactStore, PostgresZipResultBuildQueue } from "./postgres-zip-result-build-queue.js";
 import { createRealProductExecutionRunner } from "./real-worker.js";
 import { loadRealWorkerConfig } from "./worker-config.js";
+import { validateBuiltInStackSkillsAtStartup } from "../../../packages/skills/src/registry.js";
 import { createZipResultBuilder } from "./zip-result-builder.js";
 
 function required(name: string): string {
@@ -24,6 +25,8 @@ function assertWorkerDatabaseUrl(databaseUrl: string): void {
 }
 
 async function main(): Promise<void> {
+  // Before configuration, pools and loops, and in fake mode too.
+  const skills = validateBuiltInStackSkillsAtStartup("Worker");
   const fake = process.env.TASK_EXECUTION_FAKE_RUNNER === "1";
   const realConfig = fake ? null : loadRealWorkerConfig(process.env);
   const databaseUrl = realConfig?.databaseUrl ?? required("DATABASE_URL");
@@ -41,7 +44,7 @@ async function main(): Promise<void> {
       await runFakeTaskExecutionWorker({ pool, databaseUsername: "coding_agent_worker", workerId, signal: controller.signal, env: process.env });
       return;
     }
-    const runner = createRealProductExecutionRunner({ config: realConfig!, pool, env: process.env });
+    const runner = createRealProductExecutionRunner({ config: realConfig!, pool, env: process.env, skills });
     const zipResultBuildQueue = new PostgresZipResultBuildQueue(pool);
     const zipResultBuild = createZipResultBuilder({
       storage: new LocalProjectStorage({ rootDir: realConfig!.projectStorageRoot }),

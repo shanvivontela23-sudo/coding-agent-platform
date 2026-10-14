@@ -71,6 +71,11 @@ describe("deterministic repository archive analysis", () => {
     expect(report.buildCommand).toBe("pnpm build");
     expect(report.testCommand).toBe("pnpm test");
     expect(report.stackSkill).toBe("typescript-node");
+    expect(report.stackSkillVersion).toBe("1.0.0");
+    expect(report.stackDisplayName).toBe("TypeScript / Node");
+    expect(report.commandSources).toEqual({ install: "repo", test: "repo", build: "repo" });
+    expect(report.testRunner).toBe("vitest");
+    expect(report.testSingleCommand).toBe("{test} --run {path}");
     expect(report.manifests).toEqual(["package.json", "pnpm-lock.yaml"]);
     expect(JSON.stringify(report)).not.toContain("export const a");
     expect(JSON.stringify(report)).not.toContain("src/a.ts");
@@ -79,6 +84,19 @@ describe("deterministic repository archive analysis", () => {
   it("falls back to the generic stack skill when no supported stack is detected", async () => {
     const report = await analyseRepositoryArchive(archive([{ name: "repo/readme.txt", contents: "hello" }]), generousLimits);
     expect(report.stackSkill).toBe("generic");
+    expect(report.stackSkillVersion).toBeUndefined();
+  });
+
+  it("uses a detected runner directly but does not invent absent build or lint scripts", async () => {
+    const report = await analyseRepositoryArchive(archive([
+      { name: "repo/package.json", contents: JSON.stringify({ devDependencies: { typescript: "5", vitest: "3" } }) },
+      { name: "repo/pnpm-lock.yaml", contents: "lockfileVersion: '9.0'\n" },
+      { name: "repo/src/index.ts", contents: "export const value = true;" },
+    ]), generousLimits);
+    expect(report.testCommand).toBe("pnpm exec vitest run");
+    expect(report.buildCommand).toBeNull();
+    expect(report.lintCommand).toBeNull();
+    expect(report.commandSources).toEqual({ install: "repo", test: "skill" });
   });
 
   it("skips path traversal and absolute-path entries instead of exposing them", async () => {

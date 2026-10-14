@@ -2,6 +2,7 @@ import type { HarnessRunner } from "../../../evals/src/harness/types.js";
 import type { SandboxProvider } from "../../../evals/src/sandbox/types.js";
 import type { PreparedExecutionSource } from "./execution-source.js";
 import { testPathsFromPatch } from "./patch-parser.js";
+import { focusedTestCommand } from "../../../packages/skills/src/profile.js";
 
 export type ProductCodingResult = {
   readonly patch: string;
@@ -33,14 +34,36 @@ type Options = {
   readonly readCostUsd: () => Promise<number>;
 };
 
-function shellArg(value: string): string {
-  return /^[A-Za-z0-9_./:@+-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
 function reproductionCommand(source: PreparedExecutionSource, patch: string): string | null {
   if (source.jobType !== "bug_fix" || !source.commands.test) return null;
-  const testPath = testPathsFromPatch(patch).find((path) => path.length > 0);
-  return testPath ? `${source.commands.test} ${shellArg(testPath)}` : null;
+  const template = source.executionProfile?.testSingleTemplate ?? null;
+  for (const path of testPathsFromPatch(patch)) {
+    const command = focusedTestCommand({ testCommand: source.commands.test, testSingleTemplate: template, path });
+    if (command) return command;
+  }
+  return null;
+}
+
+// The coding task: trusted stack guidance and the pinned command hints first,
+// then the approved requirement and plan, then the reproduce-first rule. Only
+// commands that exist are listed; lint is a hint and is never run by
+// verification.
+export function codingTaskText(source: PreparedExecutionSource): string {
+  const sections: string[] = [];
+  const profile = source.executionProfile;
+  if (profile?.guide && profile.skillId && profile.skillVersion) {
+    sections.push(`Stack guidance (${profile.displayName ?? profile.skillId}, skill ${profile.skillId}@${profile.skillVersion}):\n${profile.guide}`);
+  }
+  const hints: string[] = [];
+  const commands = profile?.commands ?? { ...source.commands, lint: null };
+  if (commands.install) hints.push(`- Install: ${commands.install}`);
+  if (commands.test) hints.push(`- Test: ${commands.test}`);
+  if (commands.test && profile?.testSingleTemplate) hints.push(`- Single test: ${profile.testSingleTemplate.replace("{test}", () => commands.test!).replace("{path}", "<test file>")}`);
+  if (commands.build) hints.push(`- Build: ${commands.build}`);
+  if (commands.lint) hints.push(`- Lint (advisory only): ${commands.lint}`);
+  if (profile && hints.length > 0) sections.push(`Project commands:\n${hints.join("\n")}`);
+  sections.push(`${source.requirement}\n\nApproved plan:\n${source.plan}\n\nFor bug fixes, add a focused regression test that fails before the fix and passes after it.`);
+  return sections.join("\n\n");
 }
 
 // Live run: the change note's "What changed and why" said only "codex
@@ -94,7 +117,7 @@ export class ProductCodingRunner {
 
     try {
       assertActive();
-      session = await this.options.sandboxProvider.create({ taskId, repository: source.repository, gatewayUrl: this.options.route.gatewayUrl, timeoutMs: remainingMs() });
+      session = await this.options.sandboxProvider.create({ taskId, repository: source.repository, gatewayUrl: this.options.route.gatewayUrl, timeoutMs: remainingMs(), ...(source.executionProfile ? { template: source.executionProfile.sandboxTemplateId } : {}) });
       assertActive();
       await session.setNetworkPhase("dependency-setup");
       phase = "dependency-setup";
@@ -113,7 +136,7 @@ export class ProductCodingRunner {
       assertActive();
 
       const harnessPromise = this.options.harnessRunner.run(session, {
-        ticketText: `${source.requirement}\n\nApproved plan:\n${source.plan}\n\nFor bug fixes, add a focused regression test that fails before the fix and passes after it.`,
+        ticketText: codingTaskText(source),
         model: this.options.route.model,
         gatewayUrl: this.options.route.gatewayUrl,
         runToken: this.options.route.runToken,

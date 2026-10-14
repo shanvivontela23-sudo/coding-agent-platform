@@ -9,7 +9,7 @@ const taskId = "40000000-0000-4000-8000-000000000001";
 const projectId = "20000000-0000-4000-8000-000000000001";
 const session: SessionIdentity = { userId: "10000000-0000-4000-8000-000000000001", organizationId: "00000000-0000-4000-8000-000000000001", expiresAtMs: Date.now() + 60_000 };
 const cipher = createTicketCipher("test-task-ticket-secret-that-is-long-enough-12345");
-const codeReader = { readContext: async () => ({ text: "ctx", source: "upload" as const, revision: "50000000-0000-4000-8000-000000000001" }) };
+const codeReader = { readContext: async () => ({ text: "ctx", source: "upload" as const, revision: "50000000-0000-4000-8000-000000000001", report: { languages: [], frameworks: [], packageManager: null, installCommand: null, buildCommand: null, testCommand: null, stackSkill: "generic", manifests: [] } }) };
 
 class KeyGateway implements TaskModelGateway {
   readonly started: string[] = [];

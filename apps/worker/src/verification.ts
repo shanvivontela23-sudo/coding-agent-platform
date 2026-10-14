@@ -75,6 +75,29 @@ function failingTestNames(result: SandboxCommandResult): readonly string[] {
   }
   return [...names];
 }
+type CheckRole = "test" | "build";
+// Check order and environment patterns come from the pinned execution profile;
+// generic and legacy sources keep today's test-then-build order with no
+// patterns. Install is setup, never a check; lint is never run here.
+function checkOrder(source: PreparedExecutionSource): readonly CheckRole[] {
+  const order = source.executionProfile?.verification?.map((check) => check.commandRole).filter((role): role is CheckRole => role === "test" || role === "build");
+  return order && order.length > 0 ? order : ["test", "build"];
+}
+function environmentFailure(source: PreparedExecutionSource, role: CheckRole, result: SandboxCommandResult): boolean {
+  if (result.exitCode === 0) return false;
+  const patterns = source.executionProfile?.verification?.find((check) => check.commandRole === role)?.environmentFailurePatterns ?? [];
+  const text = output(result).slice(-20_000);
+  return patterns.some((pattern) => new RegExp(pattern, "i").test(text));
+}
+function commandTimeoutMs(source: PreparedExecutionSource, role: "install" | CheckRole, remaining: () => number): number {
+  const limits = source.executionProfile?.limits;
+  const limit = role === "install" ? limits?.installTimeoutMs : role === "test" ? limits?.testTimeoutMs : limits?.buildTimeoutMs;
+  return limit ? Math.max(1, Math.min(limit, remaining())) : remaining();
+}
+function sandboxTemplate(source: PreparedExecutionSource): { readonly template?: string } {
+  return source.executionProfile ? { template: source.executionProfile.sandboxTemplateId } : {};
+}
+export const verificationSetupFailureText = "Dhara couldn't set up the project for verification.";
 function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
 async function collectVerifiedFiles(session: SandboxSession, patch: string, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<readonly VerifiedFile[]> {
   const files: VerifiedFile[] = [];
@@ -117,7 +140,7 @@ async function prepareSession(session: SandboxSession, source: PreparedExecution
     await session.setNetworkPhase("offline");
     return { complete: false, reason: "Project analysis did not provide a dependency install command for this stack." };
   }
-  const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: timeoutMs() });
+  const install = await session.exec({ command: source.commands.install, cwd: session.workspacePath, timeoutMs: commandTimeoutMs(source, "install", timeoutMs) });
   assertNotAborted(signal, timedOut());
   await session.setNetworkPhase("offline");
   assertNotAborted(signal, timedOut());
@@ -129,8 +152,12 @@ async function prepareSession(session: SandboxSession, source: PreparedExecution
 }
 async function runGeneralChecks(session: SandboxSession, source: PreparedExecutionSource, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<GeneralRun> {
   const checks = new Map<string, SandboxCommandResult>();
-  if (source.commands.test) { checks.set("test", await session.exec({ command: source.commands.test, cwd: session.workspacePath, timeoutMs: timeoutMs() })); assertNotAborted(signal, timedOut()); }
-  if (source.commands.build) { checks.set("build", await session.exec({ command: source.commands.build, cwd: session.workspacePath, timeoutMs: timeoutMs() })); assertNotAborted(signal, timedOut()); }
+  for (const role of checkOrder(source)) {
+    const command = source.commands[role];
+    if (!command) continue;
+    checks.set(role, await session.exec({ command, cwd: session.workspacePath, timeoutMs: commandTimeoutMs(source, role, timeoutMs) }));
+    assertNotAborted(signal, timedOut());
+  }
   return { checks };
 }
 async function runReproduction(session: SandboxSession, command: string | null, timeoutMs: () => number, signal: AbortSignal, timedOut: () => boolean): Promise<SandboxCommandResult | null> {
@@ -168,7 +195,7 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
 
   try {
     assertNotAborted(signal, timedOut());
-    const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs() });
+    const baseline = await options.sandboxProvider.create({ taskId: `${options.taskId}-baseline`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs(), ...sandboxTemplate(options.source) });
     let baselineChecks: GeneralRun | null = null;
     let baselineReproduction: SandboxCommandResult | null = null;
     let baselineSetup: SetupResult = { complete: false, reason: "Baseline setup did not complete." };
@@ -184,7 +211,7 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     if (!baselineSetup.complete) return incomplete(baselineSetup.reason, options.reproductionCommand);
 
     assertNotAborted(signal, timedOut());
-    const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs() });
+    const patched = await options.sandboxProvider.create({ taskId: `${options.taskId}-patched`, repository: options.source.repository, gatewayUrl: verificationGatewayPlaceholder, timeoutMs: remainingMs(), ...sandboxTemplate(options.source) });
     let patchedChecks: GeneralRun | null = null;
     let patchedReproduction: SandboxCommandResult | null = null;
     let patchedSetup: SetupResult = { complete: false, reason: "Patched setup did not complete." };
@@ -203,11 +230,17 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
     const patchedRun = patchedChecks as GeneralRun | null;
     if (!baselineRun || !patchedRun) throw new Error("Verification checks did not complete");
     const checks: VerificationCheck[] = [];
-    for (const [name, command] of [["test", options.source.commands.test], ["build", options.source.commands.build]] as const) {
+    const environmentChecks: CheckRole[] = [];
+    for (const name of checkOrder(options.source)) {
+      const command = options.source.commands[name];
       if (!command) continue;
       const before = baselineRun.checks.get(name);
       const after = patchedRun.checks.get(name);
       if (!before || !after) throw new Error(`Missing ${name} verification result`);
+      // Baseline-anchored: only a baseline that itself could not run the command
+      // counts as a setup problem. A failure that appears only after the patch
+      // (even "Cannot find module") stays a code failure below.
+      if (environmentFailure(options.source, name, before)) environmentChecks.push(name);
       const beforeNames = failingTestNames(before);
       const afterNames = failingTestNames(after);
       let status: VerificationCheck["status"];
@@ -229,7 +262,9 @@ export async function verifyExecution(options: { readonly sandboxProvider: Sandb
       checks,
       hasNewFailures: checks.some((check) => check.status === "failed"),
       complete,
-      incompleteReason: complete ? null : "No test or build command completed successfully on the approved baseline.",
+      incompleteReason: complete ? null : environmentChecks.length > 0
+        ? `${verificationSetupFailureText} The ${environmentChecks.join(" and ")} command could not run on the approved baseline (a missing script, tool or module), so this is not a judgement on the fix.`
+        : "No test or build command completed successfully on the approved baseline.",
       reproduce: { command: options.reproductionCommand, baselineExitCode: baselineProof?.exitCode ?? null, patchedExitCode: patchedProof?.exitCode ?? null, baselineOutput: output(baselineProof), patchedOutput: output(patchedProof), baselineClassification, patchedClassification, reproduced, reason },
       verifiedFiles,
     };

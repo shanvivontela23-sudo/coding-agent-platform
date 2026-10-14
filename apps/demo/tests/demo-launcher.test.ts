@@ -3,8 +3,9 @@ import { createDemoLaunchPlan, publicLaunchPlan } from "../src/launcher.js";
 import { loadDemoEnvironment } from "../src/config.js";
 
 const secret = "demo-secret-that-must-not-print";
-function config() {
+function config(extra: Record<string, string> = {}) {
   const result = loadDemoEnvironment({
+    ...extra,
     DEMO_DATABASE_ADMIN_URL: "postgresql://postgres:postgres@127.0.0.1:5432/coding_agent",
     DEMO_API_DATABASE_URL: "postgresql://coding_agent_api:api@127.0.0.1:5432/coding_agent",
     DEMO_WORKER_DATABASE_URL: "postgresql://coding_agent_worker:worker@127.0.0.1:5432/coding_agent",
@@ -36,6 +37,15 @@ function config() {
 }
 
 describe("demo launcher plan", () => {
+  it("starts with only E2B_TEMPLATE_ID and forwards optional per-stack templates to the worker", () => {
+    const plain = createDemoLaunchPlan(config(), "https://demo-tunnel.ngrok.app");
+    expect(plain.worker.env.E2B_TEMPLATE_ID).toBe("tmpl-test");
+    expect(Object.keys(plain.worker.env).filter((name) => name.startsWith("E2B_TEMPLATE_"))).toEqual(["E2B_TEMPLATE_ID"]);
+    const keyed = createDemoLaunchPlan(config({ E2B_TEMPLATE_TYPESCRIPT_NODE: "tmpl-ts" }), "https://demo-tunnel.ngrok.app");
+    expect(keyed.worker.env.E2B_TEMPLATE_TYPESCRIPT_NODE).toBe("tmpl-ts");
+    expect(keyed.api.env.E2B_TEMPLATE_TYPESCRIPT_NODE).toBeUndefined();
+  });
+
   it("starts API 3101, web 3000, and the real worker against the HTTPS gateway tunnel", () => {
     const plan = createDemoLaunchPlan(config(), "https://demo-tunnel.ngrok.app");
     expect(plan.api.env).toMatchObject({ PORT: "3101", API_ORIGIN: "http://localhost:3101", DEMO_MODE: "1", TASK_MODEL_BUDGET_USD: "1", TASK_EXECUTION_BUDGET_USD: "2" });

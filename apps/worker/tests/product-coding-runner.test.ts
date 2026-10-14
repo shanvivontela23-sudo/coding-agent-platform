@@ -3,6 +3,9 @@ import type { HarnessRunOutcome, HarnessRunRequest, HarnessRunner } from "../../
 import type { SandboxCommand, SandboxCommandResult, SandboxCreateRequest, SandboxNetworkPhase, SandboxPatch, SandboxProvider, SandboxSession, SandboxSnapshot } from "../../../evals/src/sandbox/types.js";
 import type { PreparedExecutionSource } from "../src/execution-source.js";
 import { CodingRunError, ProductCodingRunner } from "../src/product-coding-runner.js";
+import { buildExecutionProfile } from "../../../packages/skills/src/profile.js";
+import { loadBuiltInStackSkillsSync } from "../../../packages/skills/src/registry.js";
+import { applyExecutionProfile } from "../src/execution-source.js";
 
 const source: PreparedExecutionSource = {
   repository: { pinnedCommit: "d".repeat(40), archiveSha256: "e".repeat(64), archive: new Uint8Array([1, 2, 3]) },
@@ -76,6 +79,17 @@ describe("ProductCodingRunner", () => {
     expectWithinStageBudget(harness.request?.timeoutMs, 12_000);
     expect(result.reproductionCommand).toBe("pnpm test src/retry.test.ts");
     expect(result.costUsd).toBe(0.37);
+  });
+
+  it("creates the coding sandbox on the pinned template and uses the pinned focused-test template", async () => {
+    const provider = new Provider();
+    const harness = new Harness();
+    const profile = buildExecutionProfile({ report: { stackSkill: "typescript-node", stackSkillVersion: "1.0.0", packageManager: "pnpm", installCommand: "pnpm install --offline", testCommand: "pnpm test", buildCommand: "pnpm build", testRunner: "vitest", manifests: ["package.json"] }, skills: loadBuiltInStackSkillsSync(), planningSkill: null, sandboxTemplateId: () => "tpl-pinned" });
+    const runner = new ProductCodingRunner({ sandboxProvider: provider, harnessRunner: harness, route: { gatewayUrl: "http://gateway.local/v1", runToken: "token", model: "model" }, readCostUsd: async () => 0.1 });
+    const result = await runner.run("50000000-0000-4000-8000-000000000242", applyExecutionProfile(source, profile), { signal: new AbortController().signal, timeoutMs: 12_000 });
+    expect(provider.request?.template).toBe("tpl-pinned");
+    expect(harness.request?.ticketText).toContain("typescript-node@1.0.0");
+    expect(result.reproductionCommand).toBe("pnpm test --run src/retry.test.ts");
   });
 
   it("reconciles and exposes cost when the harness ends non-completed", async () => {

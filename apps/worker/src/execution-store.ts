@@ -3,6 +3,7 @@ import { type TenantPool, withTenant } from "../../api/src/database.js";
 import type { ClaimedExecution } from "./postgres-execution-queue.js";
 import type { PatchSafetyResult } from "./patch-safety.js";
 import type { VerificationResult } from "./verification.js";
+import { parseExecutionProfile, type ExecutionProfile } from "../../../packages/skills/src/profile.js";
 
 export type ExecutionProgress = {
   readonly sourcePreparedAt: string | null;
@@ -17,6 +18,9 @@ export type ExecutionProgress = {
 export interface ExecutionStore {
   getProgress(execution: ClaimedExecution): Promise<ExecutionProgress>;
   markSourcePrepared(execution: ClaimedExecution): Promise<void>;
+  // Stores the candidate only if no profile is pinned yet, and returns the
+  // pinned one. A reclaimed execution therefore keeps its original profile.
+  pinExecutionProfile?(execution: ClaimedExecution, candidate: ExecutionProfile): Promise<ExecutionProfile>;
   markCodingStarted(execution: ClaimedExecution): Promise<void>;
   saveCost(execution: ClaimedExecution, costUsd: number | null): Promise<void>;
   saveSafeCodingOutput(execution: ClaimedExecution, input: {
@@ -62,6 +66,28 @@ export class PostgresExecutionStore implements ExecutionStore {
       const row = result.rows[0];
       if (!row) throw new Error("execution is not visible in claimed tenant");
       return { sourcePreparedAt: iso(row.source_prepared_at), codingStartedAt: iso(row.coding_started_at), codingFinishedAt: iso(row.coding_finished_at), patchExportedAt: iso(row.patch_exported_at), verifiedAt: iso(row.verified_at), resultPatch: row.result_patch, resultMetadata: row.result_metadata ?? {} };
+    });
+  }
+
+  async pinExecutionProfile(execution: ClaimedExecution, candidate: ExecutionProfile): Promise<ExecutionProfile> {
+    const profile = parseExecutionProfile(candidate);
+    return await withTenant(this.pool, tenant(execution), async (database) => {
+      const result = await database.query<{ execution_profile: unknown }>(
+        `UPDATE task_executions
+            SET execution_profile=COALESCE(execution_profile,$4::jsonb),
+                implementation_skill_id=CASE WHEN execution_profile IS NULL THEN $5 ELSE implementation_skill_id END,
+                implementation_skill_version=CASE WHEN execution_profile IS NULL THEN $6 ELSE implementation_skill_version END,
+                planning_skill_id=CASE WHEN execution_profile IS NULL THEN $7 ELSE planning_skill_id END,
+                planning_skill_version=CASE WHEN execution_profile IS NULL THEN $8 ELSE planning_skill_version END,
+                sandbox_template_id=CASE WHEN execution_profile IS NULL THEN $9 ELSE sandbox_template_id END,
+                updated_at=now()
+          WHERE organization_id=$1 AND id=$2 AND task_id=$3
+          RETURNING execution_profile`,
+        [execution.organizationId, execution.executionId, execution.taskId, JSON.stringify(profile), profile.skillId, profile.skillVersion, profile.planningSkillId, profile.planningSkillVersion, profile.sandboxTemplateId],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error("execution is not visible in claimed tenant");
+      return parseExecutionProfile(row.execution_profile);
     });
   }
 
