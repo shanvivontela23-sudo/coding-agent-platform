@@ -26,6 +26,23 @@ function metadataString(value: unknown): string | null { return typeof value ===
 function metadataCost(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null; }
 function abortError(): Error { return new Error("execution aborted"); }
 
+const checkStatusText: Readonly<Record<string, string>> = {
+  passed: "passed",
+  failed: "failed",
+  pre_existing: "failing before and after (pre-existing)",
+  pre_existing_unverified: "failing before and after (not compared by test name)",
+  skipped: "skipped",
+};
+
+// Live runs: the change note said only "Verification completed with at least
+// one passing baseline test or build." Name each check and its outcome on the
+// clean copy so a reviewer can see what was actually proven.
+export function describeCompletedVerification(checks: readonly { readonly name: string; readonly status: string }[]): string {
+  if (checks.length === 0) return "Verified on a clean copy of the approved source; no test or build command was configured.";
+  const parts = checks.map((check) => `${check.name} ${checkStatusText[check.status] ?? check.status}`);
+  return `Verified on a clean copy of the approved source with the patch applied: ${parts.join(", ")}.`;
+}
+
 export class ProductExecutionOrchestrator implements CodingRunner {
   private readonly options: OrchestratorOptions;
   constructor(options: OrchestratorOptions) {
@@ -103,7 +120,7 @@ export class ProductExecutionOrchestrator implements CodingRunner {
       ? `Fail-before/pass-after proof: ${verification.reproduce.command ?? "reproduction check"}. Baseline classification: ${verification.reproduce.baselineClassification}; patched classification: ${verification.reproduce.patchedClassification}.`
       : bugTask ? `Fix not reproduced: ${verification.reproduce.reason ?? "no valid fail-before/pass-after proof was produced."}` : "Not required for this task type.";
     const reviewFocus = unverifiedPreExisting ? `${source.reviewFocus} Pre-existing failures could not be compared by test name; those checks remain unverified.` : source.reviewFocus;
-    const verificationStatus = verificationComplete ? "Verification completed with at least one passing baseline test or build." : `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}`;
+    const verificationStatus = verificationComplete ? describeCompletedVerification(verification.checks) : `Verification incomplete: ${verification.incompleteReason ?? "Dhara could not establish a passing baseline test or build."}`;
     const changeDocument = buildChangeDocument({ asked: source.requirement, changed: codingSummary, files: safety.files, checks: verification.checks.map((check) => ({ name: check.name, status: check.status })), verificationStatus, reproduceProof, costUsd, reviewFocus });
     await this.options.store.saveVerification(execution, { verification, changeDocument, costUsd });
 
