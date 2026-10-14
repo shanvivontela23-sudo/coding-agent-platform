@@ -44,8 +44,7 @@ export async function loadBuiltInStackSkills(): Promise<ReadonlyMap<string, Stac
   return await loadStackSkillsFromDirectory(new URL("../stacks/", import.meta.url));
 }
 
-export function loadBuiltInStackSkillsSync(): ReadonlyMap<string, StackSkill> {
-  const root = new URL("../stacks/", import.meta.url);
+export function loadBuiltInStackSkillsSync(root: URL = new URL("../stacks/", import.meta.url)): ReadonlyMap<string, StackSkill> {
   const registry = new Map<string, StackSkill>();
   for (const entry of readdirSync(root, { withFileTypes: true }).filter((candidate) => candidate.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
     const directory = new URL(`${encodeURIComponent(entry.name)}/`, root);
@@ -62,4 +61,15 @@ export function loadBuiltInStackSkillsSync(): ReadonlyMap<string, StackSkill> {
     registry.set(skill.id, skill);
   }
   return registry;
+}
+
+// Process entry points call this before opening database pools, listeners or
+// worker loops, so a broken built-in skill stops the API or worker at startup
+// instead of surfacing mid-task. Errors name the file and schema path only.
+export function validateBuiltInStackSkillsAtStartup(processName: string, root?: URL): ReadonlyMap<string, StackSkill> {
+  try {
+    return loadBuiltInStackSkillsSync(root);
+  } catch (error) {
+    throw new Error(`${processName} cannot start: ${error instanceof Error ? error.message : "built-in stack skills failed validation"}`, { cause: error });
+  }
 }

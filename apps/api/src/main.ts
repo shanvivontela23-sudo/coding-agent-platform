@@ -35,6 +35,7 @@ import { createTaskZipResultService } from "./task-zip-result.js";
 import { createTicketCipher } from "./ticket-crypto.js";
 import { createUploadProjectDatabase } from "./upload-project-database.js";
 import type { UploadArchiveLimits } from "./upload-archive.js";
+import { validateBuiltInStackSkillsAtStartup } from "../../../packages/skills/src/registry.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -51,6 +52,9 @@ function positiveInteger(name: string, fallback: number): number {
   if (!Number.isSafeInteger(value)) throw new Error(`${name} must be a positive integer`);
   return value;
 }
+
+// Before any pool or listener: a broken built-in stack skill stops startup.
+validateBuiltInStackSkillsAtStartup("API");
 
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("PORT must be a valid TCP port");

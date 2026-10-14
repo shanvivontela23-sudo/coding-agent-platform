@@ -1,4 +1,4 @@
-export { loadBuiltInStackSkills, loadBuiltInStackSkillsSync, loadStackSkillsFromDirectory } from "./registry.js";
+export { loadBuiltInStackSkills, loadBuiltInStackSkillsSync, loadStackSkillsFromDirectory, validateBuiltInStackSkillsAtStartup } from "./registry.js";
 export { resolveRepositorySkill, resolveStoredProjectReport } from "./resolution.js";
 export type { CommandSource, RepositorySkillEvidence, ResolvedStackSkill, StoredProjectReport } from "./resolution.js";
 export { stackPromptContext } from "./prompt.js";
