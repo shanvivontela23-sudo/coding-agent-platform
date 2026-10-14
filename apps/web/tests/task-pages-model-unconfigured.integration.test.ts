@@ -42,10 +42,20 @@ async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
   }
 }
 
+// Next.js allows one dev server per app directory. When a developer's own
+// `pnpm demo` is running from this checkout, the test's server exits with this
+// message; skip locally instead of failing. CI never has a second server.
+const anotherDevServer = "Another next dev server is already running";
+
+class AnotherDevServerRunning extends Error {}
+
 async function waitForWeb(url: string, child: ChildProcessWithoutNullStreams, logs: () => string): Promise<void> {
   const deadline = Date.now() + 25_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`Next.js exited before becoming ready:\n${logs()}`);
+    if (child.exitCode !== null) {
+      if (logs().includes(anotherDevServer) && !process.env.CI) throw new AnotherDevServerRunning(anotherDevServer);
+      throw new Error(`Next.js exited before becoming ready:\n${logs()}`);
+    }
     try {
       const response = await fetch(url);
       if (response.status > 0) return;
@@ -111,7 +121,7 @@ const readService = {
 };
 
 describe("signed-in task pages with task planning unconfigured", () => {
-  it("keeps read pages usable, shows planning unavailable inline, and renders project sources", async () => {
+  it("keeps read pages usable, shows planning unavailable inline, and renders project sources", async (context) => {
     const apiServer = createApiServer({
       webOrigin: "http://127.0.0.1:3000",
       apiOrigin: "http://127.0.0.1:3001",
@@ -148,7 +158,12 @@ describe("signed-in task pages with task planning unconfigured", () => {
     const request = (path: string) => fetch(`http://127.0.0.1:${webPort}${path}`, { headers: { cookie: `tenant_session=${encodeURIComponent(token)}` } });
 
     try {
-      await waitForWeb(`http://127.0.0.1:${webPort}/`, child, () => output);
+      try {
+        await waitForWeb(`http://127.0.0.1:${webPort}/`, child, () => output);
+      } catch (error) {
+        if (error instanceof AnotherDevServerRunning) { context.skip(`${anotherDevServer} in this checkout (local only; runs in CI)`); return; }
+        throw error;
+      }
       const tasksResponse = await request("/tasks");
       const tasksHtml = await tasksResponse.text();
       const newTaskResponse = await request(`/projects/${githubProjectId}/tasks/new`);
