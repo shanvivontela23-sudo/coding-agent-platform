@@ -5,6 +5,8 @@ import { loadDemoEnvironment, publicDemoSummary, readRootDotEnv, redactDemoSecre
 import { createDemoLaunchPlan, type DemoProcessPlan } from "./launcher.js";
 import { ensureDemoMigrations, runCommand } from "./migrations.js";
 import { createLiveDemoPreflight, runDemoPreflight } from "./preflight.js";
+import { startShareProxy } from "./share-proxy.js";
+import type { Server } from "node:http";
 
 function cleanEnv(env: Readonly<Record<string, string | undefined>>): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
@@ -37,6 +39,25 @@ async function discoverNgrokTunnel(): Promise<string> {
   throw new Error("ngrok did not publish an HTTPS tunnel for port 8080");
 }
 
+const shareProxyPort = 3080;
+
+// cloudflared prints the quick-tunnel URL in its log output.
+async function startShareTunnel(config: DemoConfig): Promise<{ readonly child: ChildProcess; readonly origin: string }> {
+  const child = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${shareProxyPort}`], { env: runtimeEnv({}), stdio: ["ignore", "pipe", "pipe"] });
+  const origin = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("cloudflared did not publish a share URL within 30s")), 30_000);
+    const scan = (chunk: Buffer) => {
+      const match = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(chunk));
+      if (match) { clearTimeout(timer); resolve(match[0]); }
+    };
+    child.stdout?.on("data", scan);
+    child.stderr?.on("data", scan);
+    child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`cloudflared exited (${code ?? "signal"}) before publishing a share URL`)); });
+  });
+  child.stderr?.on("data", (chunk: Buffer) => { if (/ERR|error/i.test(String(chunk))) process.stderr.write(`[share] ${redactDemoSecrets(String(chunk), config)}`); });
+  return { child, origin };
+}
+
 function startProcess(label: string, plan: DemoProcessPlan, config: DemoConfig): ChildProcess {
   const child = spawn(plan.command, [...plan.args], { env: runtimeEnv(plan.env), stdio: ["ignore", "pipe", "pipe"] });
   const write = (target: NodeJS.WriteStream, chunk: Buffer | string) => target.write(`[${label}] ${redactDemoSecrets(String(chunk), config)}`);
@@ -61,6 +82,7 @@ async function main(): Promise<void> {
   const loaded = loadDemoEnvironment({ ...process.env, ...dotenv });
   if (!loaded.ok) throw new Error(loaded.message);
   const config = loaded.config;
+  const share = (process.env.DEMO_SHARE ?? dotenv.DEMO_SHARE ?? "").trim() === "1";
   process.stdout.write(`${publicDemoSummary(config)}\n`);
 
   await Promise.all([
@@ -68,6 +90,7 @@ async function main(): Promise<void> {
     checkCommand("psql", ["--version"]),
     checkCommand("ngrok", ["version"]),
     checkCommand("pnpm", ["--version"]),
+    ...(share ? [checkCommand("cloudflared", ["--version"])] : []),
   ]);
   await mkdir(join(process.cwd(), ".local", "gateway-state"), { recursive: true });
   const migration = await ensureDemoMigrations(config.values.DEMO_DATABASE_ADMIN_URL ?? "");
@@ -80,11 +103,14 @@ async function main(): Promise<void> {
   let api: ChildProcess | null = null;
   let web: ChildProcess | null = null;
   let worker: ChildProcess | null = null;
+  let shareTunnel: ChildProcess | null = null;
+  let shareProxy: Server | null = null;
   let shuttingDown = false;
   const down = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await Promise.all([stopChild(worker), stopChild(web), stopChild(api), stopChild(ngrok)]);
+    await Promise.all([stopChild(worker), stopChild(web), stopChild(api), stopChild(ngrok), stopChild(shareTunnel)]);
+    shareProxy?.close();
     await runCommand("docker", ["compose", "--env-file", ".env", "-f", "evals/deploy/http-gateway/compose.local.yaml", "down"], { env: runtimeEnv(placeholderPlan.compose.env) }).catch(() => undefined);
   };
   const requestShutdown = () => { void down().finally(() => process.exit(0)); };
@@ -94,7 +120,14 @@ async function main(): Promise<void> {
   try {
     ngrok = startProcess("ngrok", placeholderPlan.ngrok, config);
     const tunnelUrl = await discoverNgrokTunnel();
-    const plan = createDemoLaunchPlan(config, tunnelUrl);
+    let publicOrigin: string | undefined;
+    if (share) {
+      shareProxy = await startShareProxy({ port: shareProxyPort, apiPort: config.apiPort, webPort: config.webPort });
+      const started = await startShareTunnel(config);
+      shareTunnel = started.child;
+      publicOrigin = started.origin;
+    }
+    const plan = createDemoLaunchPlan(config, tunnelUrl, process.cwd(), publicOrigin);
     const preflight = await runDemoPreflight(createLiveDemoPreflight(config, tunnelUrl));
     for (const result of preflight) process.stdout.write(`${result.ok ? "✓" : "✗"} ${result.name}: ${redactDemoSecrets(result.message, config)}\n`);
     const failed = preflight.filter((result) => !result.ok);
@@ -103,11 +136,13 @@ async function main(): Promise<void> {
     api = startProcess("api", plan.api, config);
     web = startProcess("web", plan.web, config);
     worker = startProcess("worker", plan.worker, config);
-    process.stdout.write(`Dhara demo ready: http://localhost:${config.webPort}\nGateway tunnel: ${tunnelUrl}\n`);
+    process.stdout.write(`Dhara demo ready: ${publicOrigin ?? `http://localhost:${config.webPort}`}\nGateway tunnel: ${tunnelUrl}\n`);
+    if (publicOrigin) process.stdout.write(`Share link (works while this command runs): ${publicOrigin}\n`);
     await Promise.race([
       new Promise<void>((resolve) => api?.once("exit", () => resolve())),
       new Promise<void>((resolve) => web?.once("exit", () => resolve())),
       new Promise<void>((resolve) => worker?.once("exit", () => resolve())),
+      ...(shareTunnel ? [new Promise<void>((resolve) => shareTunnel?.once("exit", () => resolve()))] : []),
     ]);
     throw new Error("A demo process exited; shutting down the stack");
   } finally {

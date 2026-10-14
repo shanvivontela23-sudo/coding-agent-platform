@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   createOnboardingToken,
   createSessionToken,
+  SignUpRejected,
   verifyOnboardingToken,
   type OnboardingIdentity,
   type SessionIdentity,
@@ -72,6 +73,22 @@ function webLocation(origin: string, path: string, error?: string): string {
   if (error) url.searchParams.set("error", error);
   return url.toString().replace(/\/$/, path === "/" ? "" : "/");
 }
+const signUpEmail = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+const signUpMessages: Readonly<Record<SignUpRejected["reason"], string>> = {
+  weak_password: "Choose a stronger password: at least 8 characters, mixing letters and numbers.",
+  invalid_email: "Enter a valid email address.",
+  rate_limited: "Too many sign-up attempts. Wait a few minutes and try again.",
+  disabled: "New sign-ups are turned off for this Dhara workspace.",
+  email_not_allowed: "Dhara can't send a confirmation email to that address yet. Ask the person who shared Dhara to finish email setup.",
+  failed: "Sign-up failed. Please try again.",
+};
+// Validates before calling Supabase; returns a user-facing message or null.
+export function signUpFormError(email: string, password: string, confirm: string): string | null {
+  if (!signUpEmail.test(email)) return "Enter a valid email address.";
+  if (password.length < 8 || password.length > 128) return "Use a password of 8 to 128 characters.";
+  if (password !== confirm) return "The two passwords don't match.";
+  return null;
+}
 function sessionFromMembership(membership: Pick<Membership, "userId" | "organizationId">, durationMs: number) {
   return { userId: membership.userId, organizationId: membership.organizationId, expiresAtMs: Date.now() + durationMs };
 }
@@ -83,6 +100,7 @@ function onboardingSessionFromRequest(request: IncomingMessage, secret: string):
 }
 function fallbackCode(pathname: string): SafeErrorCode {
   if (pathname === "/auth/email") return "AUTH_SIGN_IN_FAILED";
+  if (pathname === "/auth/sign-up") return "AUTH_SIGN_UP_FAILED";
   if (pathname.includes("github")) return "GITHUB_FORBIDDEN";
   return "INTERNAL_ERROR";
 }
@@ -196,6 +214,20 @@ export function createApiServer(options: ApiServerOptions) {
         const form = new URLSearchParams(await body(request));
         const identity = await options.auth.signInWithPassword(form.get("email") ?? "", form.get("password") ?? "");
         await finishIdentity(identity, response); return;
+      }
+      if (request.method === "POST" && url.pathname === "/auth/sign-up") {
+        const form = new URLSearchParams(await body(request));
+        const email = (form.get("email") ?? "").trim().toLowerCase();
+        const password = form.get("password") ?? "";
+        const problem = signUpFormError(email, password, form.get("confirmPassword") ?? "");
+        if (problem) { redirect(response, webLocation(options.webOrigin, "/signup", problem)); return; }
+        if (!options.auth.signUpWithPassword) throw new AppError("AUTH_SIGN_UP_FAILED", "Sign-up is not available.", 503);
+        const result = await options.auth.signUpWithPassword(email, password, webLocation(options.webOrigin, "/"));
+        if (result.status === "signed_in") { await finishIdentity(result.identity, response); return; }
+        // Same answer whether or not the address was already registered.
+        const notice = new URL("/", options.webOrigin);
+        notice.searchParams.set("notice", "Check your email for a confirmation link, then sign in here.");
+        redirect(response, notice.toString()); return;
       }
       if (request.method === "GET" && url.pathname === "/auth/github/start") {
         const flow = options.auth.startGitHubOAuth(`${apiOrigin}/auth/github/callback`);
@@ -327,6 +359,7 @@ export function createApiServer(options: ApiServerOptions) {
         return;
       }
       if (request.method === "POST" && url.pathname === "/auth/email") { redirect(response, webLocation(options.webOrigin, "/", "Sign-in failed. Check your email and password.")); return; }
+      if (request.method === "POST" && url.pathname === "/auth/sign-up") { redirect(response, webLocation(options.webOrigin, "/signup", error instanceof SignUpRejected ? signUpMessages[error.reason] : error instanceof AppError ? error.publicMessage : signUpMessages.failed)); return; }
       if (url.pathname === "/auth/github/installation/callback" || url.pathname === "/github/connect/start") { redirect(response, webLocation(options.webOrigin, "/home", "Unable to connect that GitHub installation.")); return; }
       if (url.pathname === "/auth/github/start" || url.pathname === "/auth/github/callback") { redirect(response, webLocation(options.webOrigin, "/", "GitHub sign-in failed. Please try again.")); return; }
       if (request.method === "POST" && url.pathname === "/onboarding/organization") { redirect(response, webLocation(options.webOrigin, "/onboarding", "Organization name must be 2 to 80 characters, or this account is already configured.")); return; }

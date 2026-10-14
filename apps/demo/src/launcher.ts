@@ -26,8 +26,13 @@ function pick(config: DemoConfig, names: readonly string[]): Record<string, stri
   }));
 }
 
-export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd = process.cwd()): DemoLaunchPlan {
+// publicOrigin (DEMO_SHARE=1): one public HTTPS origin in front of the share
+// proxy, so browsers on other machines reach both web and API under one host.
+export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd = process.cwd(), publicOrigin?: string): DemoLaunchPlan {
   if (!/^https:\/\//.test(tunnelUrl)) throw new Error("Demo gateway tunnel must use HTTPS");
+  if (publicOrigin !== undefined && !/^https:\/\/[^/]+$/.test(publicOrigin)) throw new Error("Demo share origin must be an HTTPS origin with no path");
+  const apiOrigin = publicOrigin ?? `http://localhost:${config.apiPort}`;
+  const webOrigin = publicOrigin ?? `http://localhost:${config.webPort}`;
   const storageRoot = value(config, "PROJECT_STORAGE_ROOT", join(homedir(), ".dhara", "storage"));
   const gatewayState = join(cwd, ".local", "gateway-state");
   const apiEnv: Record<string, string | undefined> = {
@@ -38,8 +43,8 @@ export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd 
     ]),
     DATABASE_URL: value(config, "DEMO_API_DATABASE_URL"),
     PORT: String(config.apiPort),
-    API_ORIGIN: `http://localhost:${config.apiPort}`,
-    WEB_ORIGIN: `http://localhost:${config.webPort}`,
+    API_ORIGIN: apiOrigin,
+    WEB_ORIGIN: webOrigin,
     DEMO_MODE: "1",
     TASK_MODEL_GATEWAY_BASE_URL: "http://127.0.0.1:4000",
     TASK_MODEL_GATEWAY_ADMIN_TOKEN: value(config, "LITELLM_MASTER_KEY"),
@@ -50,7 +55,12 @@ export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd 
     TASK_TICKET_ENCRYPTION_SECRET: value(config, "TASK_TICKET_ENCRYPTION_SECRET", value(config, "SESSION_SIGNING_SECRET")),
     PROJECT_STORAGE_ROOT: storageRoot,
   };
-  const webEnv: Record<string, string | undefined> = { NEXT_PUBLIC_API_ORIGIN: `http://localhost:${config.apiPort}`, PORT: String(config.webPort) };
+  const webEnv: Record<string, string | undefined> = {
+    NEXT_PUBLIC_API_ORIGIN: apiOrigin,
+    PORT: String(config.webPort),
+    // Next.js dev blocks its dev assets for non-localhost origins unless listed.
+    ...(publicOrigin ? { NEXT_ALLOWED_DEV_ORIGINS: new URL(publicOrigin).hostname } : {}),
+  };
   const workerEnv: Record<string, string | undefined> = {
     ...pick(config, ["E2B_API_KEY", "E2B_TEMPLATE_ID", "TASK_EXECUTION_MODEL", "TASK_EXECUTION_CODEX_VERSION", "MODEL_GATEWAY_RUN_TOKEN_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]),
     DATABASE_URL: value(config, "DEMO_WORKER_DATABASE_URL"),
