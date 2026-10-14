@@ -42,7 +42,7 @@ beforeAll(async () => {
   await rootPool.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
   await rootPool.query(`CREATE DATABASE ${integrationDb}`);
   adminPool = testPool({ connectionString: databaseUrlFor(integrationDb) });
-  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql", "0009_github_publication.sql"]) {
+  for (const name of ["0001_tenant_core.sql", "0002_organization_invitations.sql", "0003_github_projects.sql", "0004_task_intake.sql", "0005_zip_projects_and_task_review_fixes.sql", "0006_task_execution.sql", "0007_task_execution_b2.sql", "0008_verification_incomplete.sql", "0009_github_publication.sql", "0010_zip_results.sql", "0011_zip_result_build_lifecycle.sql", "0012_demo_schema_preflight.sql", "0013_stack_skill_execution.sql", "0014_project_decisions.sql"]) {
     await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   }
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
@@ -120,6 +120,8 @@ describe.skipIf(!baseDatabaseUrl)("concurrent GitHub publication", () => {
       const first = await firstPromise;
       expect(first.status).toBe(200);
       expect(operation.createPullRequest).toHaveBeenCalledTimes(1);
+      const memories = await adminPool!.query<{ kind: string; source: string; count: string }>(`SELECT kind,source,count(*)::text AS count FROM project_decisions WHERE organization_id=$1 AND task_id=$2 AND superseded_by IS NULL GROUP BY kind,source`, [org, task]);
+      expect(memories.rows).toEqual([{ kind: "reviewer_accepted", source: "publication", count: "1" }]);
     } finally {
       releaseCreate();
       server.close();

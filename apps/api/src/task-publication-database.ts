@@ -4,6 +4,7 @@ import { AppError } from "./errors.js";
 import type { PublicationResult } from "./github-publication.js";
 import type { PublicationClaim, TaskPublicationDatabase, TaskPublishContext } from "./task-publication-service.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
+import { recordProjectDecision } from "./project-decision-database.js";
 
 export type TaskPublicationRecord = {
   readonly executionId: string;
@@ -159,11 +160,17 @@ export function createTaskPublicationDatabase(pool: TenantPool): TaskPublication
     },
     async markPublished(session, taskId, result: PublishedResult) {
       await withTenant(pool, session, async (database) => {
-        await database.query(
+        const published = await database.query<{ project_id: string; execution_id: string }>(
           `UPDATE task_execution_publications p SET status='published',current_head_sha=$3,branch_head_sha=$4,base_moved_commits=$5,pull_request_number=$6,pull_request_url=$7,failure_code=NULL,failure_message=NULL,published_at=COALESCE(published_at,now()),updated_at=now()
-            FROM task_executions e WHERE p.organization_id=$1 AND e.organization_id=p.organization_id AND e.id=p.execution_id AND e.task_id=$2 AND p.status='publishing'`,
+            FROM task_executions e WHERE p.organization_id=$1 AND e.organization_id=p.organization_id AND e.id=p.execution_id AND e.task_id=$2 AND p.status='publishing'
+            RETURNING e.project_id,p.execution_id`,
           [session.organizationId, taskId, result.currentHeadSha, result.branchHeadSha, result.baseMovedCommits, result.pullRequestNumber, result.pullRequestUrl],
         );
+        const row = published.rows[0];
+        if (row) await recordProjectDecision(database, session.organizationId, {
+          projectId: row.project_id, taskId, kind: "reviewer_accepted", summary: `Published pull request #${result.pullRequestNumber}.`,
+          detail: { executionId: row.execution_id, pullRequestNumber: result.pullRequestNumber }, source: "publication", memoryKey: `publication:${row.execution_id}`,
+        });
       });
       return await getRow(session, taskId);
     },

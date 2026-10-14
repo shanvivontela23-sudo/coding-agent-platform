@@ -14,6 +14,7 @@ export interface TaskReadService {
   list(session: SessionIdentity): Promise<readonly TaskListItem[]>;
   get(session: SessionIdentity, taskId: string): Promise<TaskView | null>;
   approve(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
+  reject(session: SessionIdentity, taskId: string, reason: string): Promise<void>;
 }
 
 export interface TaskPlanningService {
@@ -42,6 +43,11 @@ export function createTaskReadService(options: {
     },
 
     async approve(session, taskId, input) { await options.database.approveTask(session, taskId, input); },
+    async reject(session, taskId, reasonValue) {
+      const reason = reasonValue.trim();
+      if (!reason || reason.length > 1_000) throw new Error("rejection reason must be between 1 and 1000 characters");
+      await options.database.rejectTask(session, taskId, maskPersonalData(reason));
+    },
   };
 }
 
@@ -81,7 +87,7 @@ export function createTaskPlanningService(options: {
   const makePlanIfReady = async (session: SessionIdentity, taskId: string): Promise<void> => {
     if (await options.database.unresolvedQuestionCount(session, taskId) !== 0) return;
     const task = await options.database.getTask(session, taskId);
-    if (!task || task.status === "approved") return;
+    if (!task || task.status === "approved" || task.status === "rejected") return;
     const [context, projectHistory] = await Promise.all([options.codeReader.readContext(session, task.projectId, task.maskedTicket), loadProjectHistory(session, task.projectId)]);
     const stack = stackPromptContext(context.report, skills);
     const sourcePin: PlannedSourcePin = context.source === "github"
