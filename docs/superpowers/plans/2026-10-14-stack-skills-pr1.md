@@ -140,21 +140,26 @@ Every task that touches these boundaries must include the named regression test:
 - Modify: `apps/worker/src/execution-store.ts`
 - Modify: `apps/worker/src/product-execution-orchestrator.ts`
 - Modify: `apps/worker/src/real-worker.ts`
+- Modify: `.env.example`
+- Modify: `docs/DEMO_RUNBOOK.md`
 - Test: `apps/worker/tests/worker-config.test.ts`
 - Test: `apps/worker/tests/product-execution-source.test.ts`
 - Test: `apps/worker/tests/execution-store.test.ts`
 - Test: `apps/worker/tests/product-execution-orchestrator.test.ts`
+- Test: `apps/demo/tests/launcher.test.ts`
 
 - [ ] Define `ResolvedExecutionProfile` with implementation and planning skill id/version, resolved install/test/build/lint commands and sources, runner/single-test template, ordered verification metadata/timeouts, bounded guide snapshot, and the final sandbox template id.
 - [ ] Write failing config tests proving key `typescript-node` reads `E2B_TEMPLATE_TYPESCRIPT_NODE`, an unset/blank key falls back to required `E2B_TEMPLATE_ID`, a generic/legacy report also falls back, and no compare-and-swap/template-not-found retry exists.
 - [ ] Write failing store/orchestrator tests proving `pinExecutionProfile(execution, candidate)` persists before `markSourcePrepared`, returns an existing stored profile on reclaim, ignores later environment/registry changes, and never starts a sandbox/model when persistence fails.
 - [ ] Run `pnpm vitest run apps/worker/tests/worker-config.test.ts apps/worker/tests/execution-store.test.ts apps/worker/tests/product-execution-orchestrator.test.ts`; expect failure.
 - [ ] Extend worker config with optional keyed template values while retaining `E2B_TEMPLATE_ID` as the required universal fallback; expose a pure key-to-env resolver that never logs ids or credentials.
+- [ ] Add `E2B_TEMPLATE_TYPESCRIPT_NODE` as an optional commented `.env.example` entry. Document in `docs/DEMO_RUNBOOK.md` that an unset key falls back to `E2B_TEMPLATE_ID`, and that migration `0013` must be applied to an existing local database before `pnpm demo` because the launcher rejects partially migrated databases.
+- [ ] Add a demo-launcher preflight test proving configuration with only `E2B_TEMPLATE_ID` still passes and a missing per-stack template key is never reported as a preflight failure.
 - [ ] Make `ProductExecutionSourceProvider.prepare()` return repository/report facts needed for resolution but stop independently deciding mutable commands after a profile has been pinned.
 - [ ] Implement tenant-scoped `PostgresExecutionStore.pinExecutionProfile()` as one atomic `UPDATE ... SET profile = COALESCE(profile, candidate) ... RETURNING` operation that validates/deserializes the returned snapshot and records queryable planning/implementation versions and template id consistently.
 - [ ] Update the orchestrator to resolve a candidate once, pin/load it before `source_prepared_at`, and attach the stored profile to `PreparedExecutionSource` for every later stage.
 - [ ] Change sandbox creation calls to pass `template: source.executionProfile.sandboxTemplateId`; retain the provider default only for unrelated legacy callers. Use the same stored id for coding, baseline, and patched verification.
-- [ ] Run `pnpm vitest run apps/worker/tests/worker-config.test.ts apps/worker/tests/product-execution-source.test.ts apps/worker/tests/execution-store.test.ts apps/worker/tests/product-execution-orchestrator.test.ts`; expect pass.
+- [ ] Run `pnpm vitest run apps/worker/tests/worker-config.test.ts apps/worker/tests/product-execution-source.test.ts apps/worker/tests/execution-store.test.ts apps/worker/tests/product-execution-orchestrator.test.ts apps/demo/tests/launcher.test.ts`; expect pass.
 - [ ] Commit with `git commit -am "feat: pin stack execution profiles"`.
 
 ## Task 6: Safely enrich implementation prompts and focused tests
@@ -264,6 +269,7 @@ Every task that touches these boundaries must include the named regression test:
 - [ ] Confirm `git status --short`, `git log --oneline a7b9841db1b086f4ad8863b964ff20b7227875f5..HEAD`, and the final diff contain only PR 1 scope.
 - [ ] Push `feat/stack-skills-pr1` and open one PR against `main`; do not merge it.
 - [ ] In the PR body record migration `0013`, planning and implementation prompt-growth bounds, exact validation commands/results, that PostgreSQL integration tests were not run locally, and that no paid model/E2B/template build was performed.
+- [ ] Confirm the PR diff includes the optional commented `E2B_TEMPLATE_TYPESCRIPT_NODE` example, the demo migration/fallback runbook note, and the only-`E2B_TEMPLATE_ID` launcher-preflight regression test.
 - [ ] Include the owner-only future template build command as documentation, clearly marked **not run**, without credentials or an environment-specific template id.
 - [ ] Attach the PR to this task, report the URL and validation evidence, then stop. Do not start PR 2 until the user reviews and merges PR 1.
 
