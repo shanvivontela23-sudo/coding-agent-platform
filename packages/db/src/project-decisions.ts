@@ -71,7 +71,8 @@ export function formatProjectHistory(
     const separator = lines.length === 0 ? 0 : 1;
     const available = contentBudget - used - separator;
     if (available <= prefix.length) break;
-    const line = `${prefix}${decision.summary.replace(/\s+/g, " ").trim()}`.slice(0, available).trimEnd();
+    const safeSummary = decision.summary.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\s+/g, " ").trim();
+    const line = `${prefix}${safeSummary}`.slice(0, available).trimEnd();
     if (line.length <= prefix.length) break;
     lines.push(line);
     used += separator + line.length;

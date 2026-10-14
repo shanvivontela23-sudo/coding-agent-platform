@@ -72,7 +72,8 @@ const databaseUrl = assertRestrictedDatabaseUrl(required("DATABASE_URL"));
 const pool = handlePoolErrors(new Pool({ connectionString: databaseUrl }));
 const tenantPool = pool as unknown as TenantPool;
 const database = createProductDatabase(tenantPool);
-const projectDecisionService = createProjectDecisionService({ database: createProjectDecisionDatabase(tenantPool) });
+const projectDecisionDatabase = createProjectDecisionDatabase(tenantPool);
+const projectDecisionService = createProjectDecisionService({ database: projectDecisionDatabase });
 const auth = createSupabaseAuthClient({
   supabaseUrl: required("SUPABASE_URL"),
   anonKey: required("SUPABASE_ANON_KEY"),
@@ -153,6 +154,7 @@ if (taskGatewayAdminToken) {
     gateway: taskModelGateway,
     cipher: taskCipher,
     modelBudgetUsd: planningBudgetUsd,
+    projectDecisions: projectDecisionDatabase,
   });
 }
 

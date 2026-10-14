@@ -57,25 +57,31 @@ describe("task intake privacy and prompt boundaries", () => {
   });
 
   it("keeps ticket, repository context and prior model output out of the system role", () => {
-    const clarification = buildClarificationPrompt({ maskedTicket: "ticket-secret", repositoryContext: "repo-secret", stackDisplayName: "TypeScript / Node" });
+    const projectHistory = "<PROJECT_HISTORY>\n- 2026-10-14 · Command worked: history-secret\n</PROJECT_HISTORY>";
+    const clarification = buildClarificationPrompt({ maskedTicket: "ticket-secret", repositoryContext: "repo-secret", stackDisplayName: "TypeScript / Node", projectHistory });
     expect(clarification[0]?.role).toBe("system");
     expect(clarification[0]?.content).not.toContain("ticket-secret");
     expect(clarification[0]?.content).not.toContain("repo-secret");
+    expect(clarification[0]?.content).not.toContain("history-secret");
     expect(clarification[0]?.content).toContain("TypeScript / Node");
     expect(clarification[0]?.content).not.toMatch(/pnpm|vitest|install command|build command/i);
     expect(clarification[1]?.role).toBe("user");
     expect(clarification[1]?.content).toContain("<UNTRUSTED_TICKET>");
     expect(clarification[1]?.content).toContain("<UNTRUSTED_REPOSITORY_CONTEXT>");
+    expect(clarification[1]?.content).toContain(projectHistory);
+    expect(clarification[1]!.content.indexOf("</UNTRUSTED_REPOSITORY_CONTEXT>")).toBeLessThan(clarification[1]!.content.indexOf("<PROJECT_HISTORY>"));
 
     const trustedStackGuide = '<TRUSTED_STACK_SKILL id="typescript-node" version="1.0.0">\nGUIDE_SENTINEL\n</TRUSTED_STACK_SKILL>';
-    const plan = buildPlanPrompt({ maskedTicket: "ticket-secret", repositoryContext: "repo-secret", answers: [{ question: "q", answer: "model-or-user-output" }], trustedStackGuide });
+    const plan = buildPlanPrompt({ maskedTicket: "ticket-secret", repositoryContext: "repo-secret", answers: [{ question: "q", answer: "model-or-user-output" }], trustedStackGuide, projectHistory });
     expect(plan[0]?.content).not.toContain("model-or-user-output");
     expect(plan[0]?.content).not.toContain("costUsd");
     expect(plan[0]?.content).not.toContain("timeMinutes");
     expect(plan[0]?.content).toContain("GUIDE_SENTINEL");
+    expect(plan[0]?.content).not.toContain("history-secret");
     expect(plan[0]!.content.indexOf("You turn confirmed behavior")).toBeLessThan(plan[0]!.content.indexOf("GUIDE_SENTINEL"));
     expect(plan[0]!.content.indexOf("GUIDE_SENTINEL")).toBeLessThan(plan[0]!.content.indexOf("Return JSON only"));
     expect(plan[1]?.content).toContain("<UNTRUSTED_ANSWERS>");
+    expect(plan[1]?.content).toContain(projectHistory);
   });
 });
 

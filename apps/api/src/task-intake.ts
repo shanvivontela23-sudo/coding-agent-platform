@@ -109,10 +109,10 @@ const planOutputSystem = [
   "Respond with a single JSON object only, with no markdown fences or commentary.",
 ].join(" ");
 
-export function buildClarificationPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null }): readonly PromptMessage[] {
+export function buildClarificationPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null; readonly projectHistory?: string }): readonly PromptMessage[] {
   return [
     { role: "system", content: `${clarificationSystem}${input.stackDisplayName ? ` Stack: ${input.stackDisplayName}.` : ""}` },
-    { role: "user", content: `<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>\n<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>` },
+    { role: "user", content: [`<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>`, `<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>`, input.projectHistory?.trim()].filter(Boolean).join("\n") },
   ];
 }
 
@@ -139,10 +139,10 @@ export function buildRephrasePrompt(question: TaskQuestion): readonly PromptMess
   ];
 }
 
-export function buildPlanPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string }): readonly PromptMessage[] {
+export function buildPlanPrompt(input: { readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string }): readonly PromptMessage[] {
   return [
     { role: "system", content: [planRoleSystem, input.trustedStackGuide?.trim(), planOutputSystem].filter(Boolean).join(" ") },
-    { role: "user", content: `<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>\n<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>\n<UNTRUSTED_ANSWERS>\n${JSON.stringify(input.answers)}\n</UNTRUSTED_ANSWERS>` },
+    { role: "user", content: [`<UNTRUSTED_TICKET>\n${input.maskedTicket}\n</UNTRUSTED_TICKET>`, `<UNTRUSTED_REPOSITORY_CONTEXT>\n${input.repositoryContext}\n</UNTRUSTED_REPOSITORY_CONTEXT>`, input.projectHistory?.trim(), `<UNTRUSTED_ANSWERS>\n${JSON.stringify(input.answers)}\n</UNTRUSTED_ANSWERS>`].filter(Boolean).join("\n") },
   ];
 }
 
@@ -213,7 +213,7 @@ export class TaskPlanner {
     this.spendCapUsd = options.spendCapUsd;
   }
 
-  async clarify(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null }): Promise<{ readonly jobType: string; readonly questions: readonly TaskQuestion[]; readonly questionFilterStats: QuestionFilterStats }> {
+  async clarify(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null; readonly projectHistory?: string }): Promise<{ readonly jobType: string; readonly questions: readonly TaskQuestion[]; readonly questionFilterStats: QuestionFilterStats }> {
     await this.gateway.startTaskRun(input.taskId, this.spendCapUsd);
     try {
       return await this.clarifyInRun(input);
@@ -231,7 +231,7 @@ export class TaskPlanner {
     }
   }
 
-  private async clarifyInRun(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null }): Promise<{ readonly jobType: string; readonly questions: readonly TaskQuestion[]; readonly questionFilterStats: QuestionFilterStats }> {
+  private async clarifyInRun(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly stackDisplayName?: string | null; readonly projectHistory?: string }): Promise<{ readonly jobType: string; readonly questions: readonly TaskQuestion[]; readonly questionFilterStats: QuestionFilterStats }> {
     const raw = object(await this.gateway.call(input.taskId, "clarify", buildClarificationPrompt(input)));
     const jobType = normalizeJobType(raw.jobType);
     const questions: TaskQuestion[] = [];
@@ -255,7 +255,7 @@ export class TaskPlanner {
     return { jobType, questions, questionFilterStats: { filteredCount, rephrasedCount } };
   }
 
-  async plan(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string }): Promise<TaskPlan> {
+  async plan(input: { readonly taskId: string; readonly maskedTicket: string; readonly repositoryContext: string; readonly answers: readonly { readonly question: string; readonly answer: string }[]; readonly trustedStackGuide?: string; readonly projectHistory?: string }): Promise<TaskPlan> {
     let result: TaskPlan;
     try {
       result = normalizePlan(await this.gateway.call(input.taskId, "plan", buildPlanPrompt(input)));
