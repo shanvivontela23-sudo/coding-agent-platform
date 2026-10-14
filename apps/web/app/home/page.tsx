@@ -9,6 +9,9 @@ import { Input } from "../../components/ui/input";
 import { PageTitle, SectionTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 
 type HomeProjectSource =
   | { readonly type: "github"; readonly fullName: string; readonly defaultBranch: string }
@@ -35,7 +38,7 @@ const howItWorks = [
 async function loadHome(): Promise<HomePayload> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; ");
-  const response = await fetch(`${apiOrigin}/api/home`, { headers: cookieHeader ? { cookie: cookieHeader } : {}, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/home`, { headers: cookieHeader ? { cookie: cookieHeader } : {}, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load your organization.");
   return await response.json() as HomePayload;

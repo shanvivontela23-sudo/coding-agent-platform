@@ -57,6 +57,9 @@ export function createDemoLaunchPlan(config: DemoConfig, tunnelUrl: string, cwd 
   };
   const webEnv: Record<string, string | undefined> = {
     NEXT_PUBLIC_API_ORIGIN: apiOrigin,
+    // The web server's own API calls stay on this machine; going out through
+    // the share tunnel and back is slow and gets rate-limited (HTTP 429).
+    API_INTERNAL_ORIGIN: `http://127.0.0.1:${config.apiPort}`,
     PORT: String(config.webPort),
     // Next.js dev blocks its dev assets for non-localhost origins unless listed.
     ...(publicOrigin ? { NEXT_ALLOWED_DEV_ORIGINS: new URL(publicOrigin).hostname } : {}),

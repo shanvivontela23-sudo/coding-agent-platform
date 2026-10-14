@@ -10,6 +10,9 @@ import type { StackReportFields } from "../../../src/stack-badge";
 import { ProjectDecisions, type ProjectDecisionView } from "../../../components/project-decisions";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
+// Server-side fetches reach the API directly; in share mode the public origin
+// is a tunnel back to this machine and gets rate-limited.
+const serverApiOrigin = process.env.API_INTERNAL_ORIGIN?.trim() || apiOrigin;
 
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly email: string | null } };
 type WorkspaceCommand = { readonly name: string; readonly path: string; readonly buildCommand: string | null; readonly testCommand: string | null };
@@ -40,13 +43,13 @@ async function requestHeaders(): Promise<{ cookie?: string }> {
   return cookie ? { cookie } : {};
 }
 async function loadHome(headers: { cookie?: string }): Promise<HomePayload> {
-  const response = await fetch(`${apiOrigin}/api/home`, { headers, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/home`, { headers, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (!response.ok) throw new Error("Unable to load your organization.");
   return await response.json() as HomePayload;
 }
 async function loadProject(projectId: string, headers: { cookie?: string }): Promise<ProjectPayload> {
-  const response = await fetch(`${apiOrigin}/api/projects/${encodeURIComponent(projectId)}`, { headers, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/projects/${encodeURIComponent(projectId)}`, { headers, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error("Unable to load project report.");
@@ -63,7 +66,7 @@ async function loadProject(projectId: string, headers: { cookie?: string }): Pro
   return { project: raw.project, source: { type: "github", fullName: raw.repository.fullName, defaultBranch: raw.repository.defaultBranch, lastAnalysedCommit: raw.repository.lastAnalysedCommit, status: raw.installation.status }, report: raw.report, ...(raw.currentUserRole ? { currentUserRole: raw.currentUserRole } : {}) };
 }
 async function loadDecisions(projectId: string, headers: { cookie?: string }): Promise<DecisionsPayload> {
-  const response = await fetch(`${apiOrigin}/api/projects/${encodeURIComponent(projectId)}/decisions`, { headers, cache: "no-store" });
+  const response = await fetch(`${serverApiOrigin}/api/projects/${encodeURIComponent(projectId)}/decisions`, { headers, cache: "no-store" });
   if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error("Unable to load project learning.");
