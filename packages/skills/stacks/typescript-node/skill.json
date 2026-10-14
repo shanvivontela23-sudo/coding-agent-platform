@@ -1,0 +1,64 @@
+{
+  "id": "typescript-node",
+  "version": "1.0.0",
+  "displayName": "TypeScript / Node",
+  "detect": {
+    "manifests": ["package.json"],
+    "markers": ["typescript", "javascript"]
+  },
+  "sandboxTemplateKey": "typescript-node",
+  "defaults": {
+    "install": {
+      "pnpm": "pnpm install --frozen-lockfile",
+      "npm": "npm ci",
+      "yarn": "yarn install --frozen-lockfile",
+      "bun": "bun install --frozen-lockfile"
+    },
+    "build": {
+      "pnpm": "pnpm build",
+      "npm": "npm run build",
+      "yarn": "yarn build",
+      "bun": "bun run build"
+    },
+    "test": {
+      "pnpm": "pnpm test",
+      "npm": "npm test",
+      "yarn": "yarn test",
+      "bun": "bun test"
+    },
+    "lint": {
+      "pnpm": "pnpm lint",
+      "npm": "npm run lint",
+      "yarn": "yarn lint",
+      "bun": "bun run lint"
+    },
+    "testSingle": {
+      "vitest": "{test} --run {path}",
+      "jest": "{test} --runTestsByPath {path}",
+      "mocha": "{test} {path}",
+      "node:test": "{test} {path}"
+    }
+  },
+  "verification": [
+    {
+      "name": "install",
+      "commandRole": "install",
+      "environmentFailurePatterns": ["command not found", "not recognized as an internal or external command"]
+    },
+    {
+      "name": "test",
+      "commandRole": "test",
+      "environmentFailurePatterns": ["command not found", "Cannot find module", "MODULE_NOT_FOUND", "not recognized as an internal or external command"]
+    },
+    {
+      "name": "build",
+      "commandRole": "build",
+      "environmentFailurePatterns": ["command not found", "Cannot find module", "MODULE_NOT_FOUND", "not recognized as an internal or external command"]
+    }
+  ],
+  "limits": {
+    "installTimeoutMs": 300000,
+    "testTimeoutMs": 300000,
+    "buildTimeoutMs": 300000
+  }
+}
