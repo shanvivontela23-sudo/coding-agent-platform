@@ -183,3 +183,18 @@ docker compose --env-file .env \
 ```
 
 Then verify no stale demo API/web/worker/ngrok process is still listening before the next run.
+
+## Share the demo with someone on another computer
+
+```bash
+DEMO_SHARE=1 pnpm demo
+```
+
+This also starts a single-origin proxy on `127.0.0.1:3080` and a Cloudflare quick tunnel to it, and prints `Share link (works while this command runs): https://<random>.trycloudflare.com`. Web pages, form posts and API calls all go through that one address, because sessions are host-only cookies. The link changes every time the command restarts and stops working when it exits or the Mac sleeps. `cloudflared` must be installed.
+
+Before sending the link:
+
+1. **Sign-up email.** New people sign up at `/signup`. Supabase's built-in mailer only sends confirmation emails to members of your Supabase team, so for anyone else either turn off **Authentication → Providers → Email → Confirm email** in Supabase (sign-up then logs them straight in) or configure custom SMTP.
+2. **Joining your organization.** Invite their email from **Members** first. After sign-up and sign-in they land on the invitation. Without an invite they create their own organization.
+3. **Spend.** Anyone with the link can sign up and run tasks on your Anthropic and E2B credits. The caps are per run ($1 planning, $2 implementation), not totals; keep a spend limit on the Anthropic workspace.
+4. **GitHub sign-in** needs the GitHub provider enabled in Supabase, plus `https://*.trycloudflare.com/**` in Supabase's redirect URLs. Email sign-up doesn't need either.

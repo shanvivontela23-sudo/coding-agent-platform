@@ -8,12 +8,13 @@ import { cn } from "../src/ui-utils";
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
 type LoginPageProps = {
-  readonly searchParams: Promise<{ readonly error?: string | string[] }>;
+  readonly searchParams: Promise<{ readonly error?: string | string[]; readonly notice?: string | string[] }>;
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const error = Array.isArray(params.error) ? params.error[0] : params.error;
+  const notice = Array.isArray(params.notice) ? params.notice[0] : params.notice;
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-6">
@@ -35,6 +36,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             ) : null}
+            {notice ? (
+              <Alert>
+                <AlertDescription>{notice}</AlertDescription>
+              </Alert>
+            ) : null}
 
             <form action={`${apiOrigin}/auth/email`} method="post" className="space-y-4">
               <div className="space-y-2">
@@ -47,6 +53,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               </div>
               <Button type="submit" className="w-full">Sign in</Button>
             </form>
+
+            <p className="text-center text-sm text-muted-foreground">
+              New to {PRODUCT_NAME}? <a href="/signup" className="font-medium text-foreground underline underline-offset-4">Create an account</a>
+            </p>
 
             <div className="flex items-center gap-3" aria-hidden="true">
               <div className="h-px flex-1 bg-border" />

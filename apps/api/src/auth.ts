@@ -3,9 +3,25 @@ import { createHash, createHmac, randomBytes as nodeRandomBytes, timingSafeEqual
 export type SessionIdentity = { readonly userId: string; readonly organizationId: string; readonly expiresAtMs: number };
 export type OnboardingIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly emailConfirmed?: boolean; readonly expiresAtMs: number };
 export type SupabaseIdentity = { readonly supabaseUserId: string; readonly email: string | null; readonly emailConfirmed?: boolean; readonly provider: "email" | "github" };
+// confirmationRequired: Supabase sent a confirmation email and returned no
+// session. Supabase also answers this way for an address that is already
+// registered, so the caller must not reveal which case it was.
+export type SignUpResult =
+  | { readonly status: "signed_in"; readonly identity: SupabaseIdentity }
+  | { readonly status: "confirmation_required" };
+
+export class SignUpRejected extends Error {
+  constructor(readonly reason: "weak_password" | "invalid_email" | "rate_limited" | "disabled" | "email_not_allowed" | "failed") {
+    super(`Supabase sign-up rejected: ${reason}`);
+    this.name = "SignUpRejected";
+  }
+}
+
 export type GitHubOAuthFlow = { readonly authorizationUrl: string; readonly flowId: string; readonly flowCookie: string };
 export type SupabaseAuthClient = {
   signInWithPassword(email: string, password: string): Promise<SupabaseIdentity>;
+  /** Optional so existing fakes need not implement it; the API answers 503 without it. */
+  signUpWithPassword?(email: string, password: string, emailRedirectTo: string): Promise<SignUpResult>;
   startGitHubOAuth(callbackUrl: string): GitHubOAuthFlow;
   completeGitHubOAuth(input: { readonly code: string; readonly flowId: string; readonly flowCookie: string }): Promise<SupabaseIdentity>;
 };
@@ -68,6 +84,25 @@ export function createSupabaseAuthClient(options: SupabaseAuthClientOptions): Su
   });
   return {
     signInWithPassword: async (email, password) => readIdentity(await post(`${base}/auth/v1/token?grant_type=password`, { email, password }), "email"),
+    signUpWithPassword: async (email, password, emailRedirectTo) => {
+      const response = await post(`${base}/auth/v1/signup?redirect_to=${encodeURIComponent(emailRedirectTo)}`, { email, password });
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({})) as { error_code?: unknown; code?: unknown; msg?: unknown };
+        const code = typeof failure.error_code === "string" ? failure.error_code : "";
+        if (code === "weak_password") throw new SignUpRejected("weak_password");
+        if (code === "email_address_invalid" || code === "validation_failed") throw new SignUpRejected("invalid_email");
+        if (response.status === 429 || code.includes("rate_limit")) throw new SignUpRejected("rate_limited");
+        if (code === "signup_disabled" || code === "email_provider_disabled") throw new SignUpRejected("disabled");
+        // Supabase's built-in mailer only sends confirmations to the project's team.
+        if (code === "email_address_not_authorized") throw new SignUpRejected("email_not_allowed");
+        throw new SignUpRejected("failed");
+      }
+      const body = await response.json() as { access_token?: unknown; user?: { id?: unknown; email?: unknown; email_confirmed_at?: unknown } };
+      if (typeof body.access_token === "string" && body.access_token && typeof body.user?.id === "string") {
+        return { status: "signed_in", identity: { supabaseUserId: body.user.id, email: typeof body.user.email === "string" ? body.user.email : null, provider: "email", ...(typeof body.user.email_confirmed_at === "string" && body.user.email_confirmed_at ? { emailConfirmed: true } : {}) } };
+      }
+      return { status: "confirmation_required" };
+    },
     startGitHubOAuth: (callbackUrl) => {
       const codeVerifier = b64(random());
       const flowId = b64(random()).slice(0, 48);
