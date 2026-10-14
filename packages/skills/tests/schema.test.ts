@@ -43,18 +43,20 @@ describe("stack skill schema", () => {
     expect(estimateConservativeTokens("€")).toBe(1);
   });
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- fixtures deliberately mutate arbitrary JSON
+  type MutableDefinition = Record<string, any>;
   it.each([
     ["unknown keys", (value: Record<string, unknown>) => { value.extra = true; }],
     ["invalid id", (value: Record<string, unknown>) => { value.id = "Type Script"; }],
     ["invalid version", (value: Record<string, unknown>) => { value.version = "v1"; }],
-    ["empty command", (value: Record<string, any>) => { value.defaults.test.pnpm = "  "; }],
-    ["duplicate verification step", (value: Record<string, any>) => { value.verification[2].name = "test"; value.verification[2].commandRole = "test"; }],
-    ["mismatched verification role", (value: Record<string, any>) => { value.verification[1].commandRole = "build"; }],
-    ["malformed environment pattern", (value: Record<string, any>) => { value.verification[1].environmentFailurePatterns = ["("]; }],
-    ["missing path placeholder", (value: Record<string, any>) => { value.defaults.testSingle.vitest = "{test} --run"; }],
-    ["repeated path placeholder", (value: Record<string, any>) => { value.defaults.testSingle.vitest = "{test} {path} {path}"; }],
-    ["unsafe multiline template", (value: Record<string, any>) => { value.defaults.testSingle.vitest = "{test} {path}\nwhoami"; }],
-    ["non-positive limit", (value: Record<string, any>) => { value.limits.testTimeoutMs = 0; }],
+    ["empty command", (value: MutableDefinition) => { value.defaults.test.pnpm = "  "; }],
+    ["duplicate verification step", (value: MutableDefinition) => { value.verification[2].name = "test"; value.verification[2].commandRole = "test"; }],
+    ["mismatched verification role", (value: MutableDefinition) => { value.verification[1].commandRole = "build"; }],
+    ["malformed environment pattern", (value: MutableDefinition) => { value.verification[1].environmentFailurePatterns = ["("]; }],
+    ["missing path placeholder", (value: MutableDefinition) => { value.defaults.testSingle.vitest = "{test} --run"; }],
+    ["repeated path placeholder", (value: MutableDefinition) => { value.defaults.testSingle.vitest = "{test} {path} {path}"; }],
+    ["unsafe multiline template", (value: MutableDefinition) => { value.defaults.testSingle.vitest = "{test} {path}\nwhoami"; }],
+    ["non-positive limit", (value: MutableDefinition) => { value.limits.testTimeoutMs = 0; }],
   ])("rejects %s", (_name, mutate) => {
     const value = validDefinition();
     mutate(value);
