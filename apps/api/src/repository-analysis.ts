@@ -1,5 +1,8 @@
 import { Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
+import { loadBuiltInStackSkillsSync } from "../../../packages/skills/src/registry.js";
+import { resolveRepositorySkill, type CommandSource, type TestRunner } from "../../../packages/skills/src/resolution.js";
+import type { StackSkillDefinition } from "../../../packages/skills/src/schema.js";
 
 export type RepositoryAnalysisLimits = {
   readonly maxCompressedBytes: number;
@@ -23,7 +26,16 @@ export type ProjectReport = {
   readonly buildCommand: string | null;
   readonly testCommand: string | null;
   readonly workspaceCommands?: readonly WorkspaceCommand[];
-  readonly stackSkill: "typescript-node" | "generic";
+  readonly stackSkill: string;
+  readonly stackSkillVersion?: string;
+  readonly stackDisplayName?: string;
+  readonly sandboxTemplateKey?: string;
+  readonly commandSources?: Readonly<Partial<Record<"install" | "test" | "build" | "lint", CommandSource>>>;
+  readonly testRunner?: TestRunner | null;
+  readonly testSingleCommand?: string | null;
+  readonly lintCommand?: string | null;
+  readonly verification?: StackSkillDefinition["verification"];
+  readonly stackSkillLimits?: StackSkillDefinition["limits"];
   readonly manifests: readonly string[];
 };
 
@@ -63,7 +75,7 @@ type PackageInfo = {
   readonly manifest: SeenManifest;
   readonly name: string;
   readonly dependencies: ReadonlySet<string>;
-  readonly scripts: ReadonlySet<string>;
+  readonly scripts: ReadonlyMap<string, string>;
   readonly hasTypescript: boolean;
   readonly workspacePatterns: readonly string[];
 };
@@ -190,7 +202,7 @@ function packageInfo(manifest: SeenManifest): PackageInfo | null {
       const section = parsed[key]; if (typeof section !== "object" || section === null || Array.isArray(section)) continue;
       for (const dependency of Object.keys(section as Record<string, unknown>)) dependencies.add(dependency);
     }
-    const scripts = new Set<string>(); if (typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) for (const script of Object.keys(parsed.scripts as Record<string, unknown>)) scripts.add(script);
+    const scripts = new Map<string, string>(); if (typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) for (const [script, command] of Object.entries(parsed.scripts as Record<string, unknown>)) if (typeof command === "string") scripts.set(script, command);
     const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : manifest.directory || "package";
     return { manifest, name, dependencies, scripts, hasTypescript: dependencies.has("typescript"), workspacePatterns: workspacePatterns(parsed.workspaces) };
   } catch { return null; }
@@ -281,8 +293,23 @@ export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEnt
   }
   const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
   const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const installCommand = detectInstallCommand(manifestNames, packageManager); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager); const stackSkill: ProjectReport["stackSkill"] = manifestNames.has("package.json") && (packageData.hasTypescript || languageCounts.has("TypeScript") || languageCounts.has("JavaScript")) ? "typescript-node" : "generic";
-  return { languages, frameworks, packageManager, installCommand, buildCommand: commands.buildCommand, testCommand: commands.testCommand, workspaceCommands, stackSkill, manifests: [...manifestNames] };
+  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const installCommand = detectInstallCommand(manifestNames, packageManager); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager);
+  const dependencies = [...new Set(packageData.packages.flatMap((item) => [...item.dependencies]))];
+  const resolved = resolveRepositorySkill({ manifests: [...manifestNames], languages: languages.map((language) => language.name), packageManager, scripts: Object.fromEntries(packageData.root?.scripts ?? []), dependencies, buildTools: [], commands: { install: installCommand, test: commands.testCommand, build: commands.buildCommand } }, loadBuiltInStackSkillsSync());
+  const report: ProjectReport = { languages, frameworks, packageManager, installCommand: resolved.commands.install, buildCommand: resolved.commands.build, testCommand: resolved.commands.test, workspaceCommands, stackSkill: resolved.skillId, manifests: [...manifestNames] };
+  if (!resolved.skillVersion) return report;
+  return {
+    ...report,
+    stackSkillVersion: resolved.skillVersion,
+    ...(resolved.displayName ? { stackDisplayName: resolved.displayName } : {}),
+    ...(resolved.sandboxTemplateKey ? { sandboxTemplateKey: resolved.sandboxTemplateKey } : {}),
+    commandSources: resolved.commandSources,
+    testRunner: resolved.testRunner,
+    testSingleCommand: resolved.testSingleCommand,
+    lintCommand: resolved.commands.lint,
+    ...(resolved.verification ? { verification: resolved.verification } : {}),
+    ...(resolved.limits ? { stackSkillLimits: resolved.limits } : {}),
+  };
 }
 
 export async function readRepositoryAnalysisEntries(input: Uint8Array, limits: RepositoryAnalysisLimits): Promise<readonly RepositoryAnalysisEntry[]> {

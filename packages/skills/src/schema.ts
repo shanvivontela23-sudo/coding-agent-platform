@@ -13,6 +13,12 @@ const managerCommandsSchema = z.object({
   yarn: commandSchema.optional(),
   bun: commandSchema.optional(),
 }).strict().refine((commands) => Object.values(commands).some(Boolean), "must configure at least one package manager command");
+const runnerCommandsSchema = z.object({
+  vitest: managerCommandsSchema.optional(),
+  jest: managerCommandsSchema.optional(),
+  mocha: managerCommandsSchema.optional(),
+  "node:test": managerCommandsSchema.optional(),
+}).strict();
 
 const testSingleTemplateSchema = commandSchema.superRefine((template, context) => {
   const pathPlaceholders = template.match(/\{path\}/g)?.length ?? 0;
@@ -36,6 +42,7 @@ const definitionSchema = z.object({
     install: managerCommandsSchema.optional(),
     build: managerCommandsSchema.optional(),
     test: managerCommandsSchema.optional(),
+    testRunner: runnerCommandsSchema.default({}),
     lint: managerCommandsSchema.optional(),
     testSingle: z.object({
       vitest: testSingleTemplateSchema.optional(),

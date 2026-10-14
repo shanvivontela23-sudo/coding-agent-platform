@@ -12,6 +12,7 @@ function validDefinition(): Record<string, unknown> {
       install: { pnpm: "pnpm install --frozen-lockfile", npm: "npm ci" },
       build: { pnpm: "pnpm build", npm: "npm run build" },
       test: { pnpm: "pnpm test", npm: "npm test" },
+      testRunner: { vitest: { pnpm: "pnpm exec vitest run", npm: "npm exec -- vitest run" } },
       lint: { pnpm: "pnpm lint", npm: "npm run lint" },
       testSingle: {
         vitest: "{test} --run {path}",
@@ -34,6 +35,7 @@ describe("stack skill schema", () => {
     const parsed = parseStackSkillDefinition(validDefinition(), "Prefer the repository's package manager.", "fixture/skill.json");
     expect(parsed).toMatchObject({ id: "typescript-node", version: "1.0.0", displayName: "TypeScript / Node", guideTokenEstimate: 14 });
     expect(parsed.defaults.testSingle.vitest).toBe("{test} --run {path}");
+    expect(parsed.defaults.testRunner.vitest?.pnpm).toBe("pnpm exec vitest run");
   });
 
   it("uses the gateway's conservative one-token-per-three-UTF-8-bytes estimate", () => {

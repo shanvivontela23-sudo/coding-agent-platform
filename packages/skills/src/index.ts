@@ -1,4 +1,6 @@
-export { loadBuiltInStackSkills, loadStackSkillsFromDirectory } from "./registry.js";
+export { loadBuiltInStackSkills, loadBuiltInStackSkillsSync, loadStackSkillsFromDirectory } from "./registry.js";
+export { resolveRepositorySkill, resolveStoredProjectReport } from "./resolution.js";
+export type { CommandSource, RepositorySkillEvidence, ResolvedStackSkill } from "./resolution.js";
 export {
   estimateConservativeTokens,
   parseStackSkillDefinition,

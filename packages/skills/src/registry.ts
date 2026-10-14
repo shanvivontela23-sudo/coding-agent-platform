@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { parseStackSkillDefinition, type StackSkill } from "./schema.js";
 
@@ -41,4 +42,24 @@ export async function loadStackSkillsFromDirectory(root: URL): Promise<ReadonlyM
 
 export async function loadBuiltInStackSkills(): Promise<ReadonlyMap<string, StackSkill>> {
   return await loadStackSkillsFromDirectory(new URL("../stacks/", import.meta.url));
+}
+
+export function loadBuiltInStackSkillsSync(): ReadonlyMap<string, StackSkill> {
+  const root = new URL("../stacks/", import.meta.url);
+  const registry = new Map<string, StackSkill>();
+  for (const entry of readdirSync(root, { withFileTypes: true }).filter((candidate) => candidate.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
+    const directory = new URL(`${encodeURIComponent(entry.name)}/`, root);
+    const jsonUrl = new URL("skill.json", directory);
+    const guideUrl = new URL("guide.md", directory);
+    let input: unknown;
+    try { input = JSON.parse(readFileSync(jsonUrl, "utf8")) as unknown; }
+    catch (error) { throw new Error(`Invalid stack skill ${displayPath(jsonUrl)}: ${error instanceof SyntaxError ? "invalid JSON" : "could not be read"}`, { cause: error }); }
+    let guide: string;
+    try { guide = readFileSync(guideUrl, "utf8"); }
+    catch (error) { throw new Error(`Invalid stack skill ${displayPath(guideUrl)}: guide could not be read`, { cause: error }); }
+    const skill = parseStackSkillDefinition(input, guide, displayPath(jsonUrl));
+    if (registry.has(skill.id)) throw new Error(`Invalid stack skill registry: duplicate skill id ${skill.id}`);
+    registry.set(skill.id, skill);
+  }
+  return registry;
 }

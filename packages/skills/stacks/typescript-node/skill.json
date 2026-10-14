@@ -26,6 +26,32 @@
       "yarn": "yarn test",
       "bun": "bun test"
     },
+    "testRunner": {
+      "vitest": {
+        "pnpm": "pnpm exec vitest run",
+        "npm": "npm exec -- vitest run",
+        "yarn": "yarn exec vitest run",
+        "bun": "bun x vitest run"
+      },
+      "jest": {
+        "pnpm": "pnpm exec jest",
+        "npm": "npm exec -- jest",
+        "yarn": "yarn exec jest",
+        "bun": "bun x jest"
+      },
+      "mocha": {
+        "pnpm": "pnpm exec mocha",
+        "npm": "npm exec -- mocha",
+        "yarn": "yarn exec mocha",
+        "bun": "bun x mocha"
+      },
+      "node:test": {
+        "pnpm": "node --test",
+        "npm": "node --test",
+        "yarn": "node --test",
+        "bun": "node --test"
+      }
+    },
     "lint": {
       "pnpm": "pnpm lint",
       "npm": "npm run lint",
