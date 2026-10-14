@@ -257,7 +257,7 @@ function nonNodeDependencyNames(manifests: readonly SeenManifest[]): string[] {
   for (const manifest of manifests) {
     if (manifest.name === "package.json") continue;
     const text = manifest.contents.slice(0, 200_000);
-    if (pythonManifestNames.has(manifest.name)) for (const match of text.matchAll(/(?:^|[\s"'\[,(])([A-Za-z][A-Za-z0-9_.-]{1,80})(?=\s*(?:[<>=~!;\[\]"',)]|$))/gm)) names.add(match[1]!.toLowerCase());
+    if (pythonManifestNames.has(manifest.name)) for (const match of text.matchAll(/(?:^|[\s"'[,(])([A-Za-z][A-Za-z0-9_.-]{1,80})(?=\s*(?:[<>=~!;[\]"',)]|$))/gm)) names.add(match[1]!.toLowerCase());
     if (manifest.name === "pom.xml") for (const match of text.matchAll(/<artifactId>\s*([A-Za-z0-9_.-]{1,120})\s*<\/artifactId>/g)) names.add(match[1]!.toLowerCase());
     if (manifest.name.startsWith("build.gradle")) for (const match of text.matchAll(/["']([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[^"']*)?["']/g)) names.add(match[2]!.toLowerCase());
     if (manifest.name.toLowerCase().endsWith(".csproj")) for (const match of text.matchAll(/<PackageReference\s+Include="([A-Za-z0-9_.-]{1,120})"/g)) names.add(match[1]!.toLowerCase());
