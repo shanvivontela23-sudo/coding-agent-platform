@@ -68,9 +68,9 @@ describe("repository stack skill resolution", () => {
   });
 
   it("falls back to generic when no skill has matching manifest and language evidence", () => {
-    const resolved = resolveRepositorySkill(evidence({ manifests: ["pyproject.toml"], languages: ["Python"], packageManager: "uv", dependencies: [], commands: { install: "uv sync --frozen", test: "pytest", build: null } }), skills);
+    const resolved = resolveRepositorySkill(evidence({ manifests: ["go.mod"], languages: ["Go"], packageManager: "go modules", dependencies: [], commands: { install: "go mod download", test: "go test ./...", build: null } }), skills);
     expect(resolved).toMatchObject({ skillId: "generic", skillVersion: null, displayName: null, sandboxTemplateKey: null });
-    expect(resolved.commands.test).toBe("pytest");
+    expect(resolved.commands.test).toBe("go test ./...");
     expect(resolved.commandSources.test).toBe("repo");
   });
 });

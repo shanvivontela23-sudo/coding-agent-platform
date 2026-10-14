@@ -36,6 +36,8 @@ export type ProjectReport = {
   readonly lintCommand?: string | null;
   readonly verification?: StackSkillDefinition["verification"];
   readonly stackSkillLimits?: StackSkillDefinition["limits"];
+  // Display names of other stacks also detected (only the primary one is used).
+  readonly otherStacks?: readonly string[];
   readonly manifests: readonly string[];
 };
 
@@ -66,6 +68,7 @@ const recognizedManifestNames = new Set([
   "package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "bun.lockb", "pyproject.toml",
   "requirements.txt", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock", "pom.xml", "build.gradle",
   "build.gradle.kts", "gradlew", "go.mod", "Cargo.toml", "Gemfile",
+  "mvnw", "setup.py", "setup.cfg", "tox.ini", "requirements-dev.txt", "requirements-test.txt",
 ]);
 const generatedSegments = new Set([".git", ".next", ".venv", "build", "coverage", "dist", "node_modules", "obj", "target", "vendor", "venv"]);
 
@@ -174,7 +177,7 @@ function detectPackageManager(names: ReadonlySet<string>): string | null {
   if (names.has("Cargo.toml")) return "cargo";
   return names.has("package.json") ? "npm" : null;
 }
-function detectInstallCommand(names: ReadonlySet<string>, manager: string | null): string | null {
+function detectInstallCommand(names: ReadonlySet<string>, manager: string | null, dotnetTarget: string | null = null): string | null {
   if (manager === "pnpm") return "pnpm install --frozen-lockfile";
   if (manager === "yarn") return "yarn install --frozen-lockfile";
   if (manager === "bun") return "bun install --frozen-lockfile";
@@ -182,10 +185,16 @@ function detectInstallCommand(names: ReadonlySet<string>, manager: string | null
   if (manager === "uv") return "uv sync --frozen";
   if (manager === "poetry") return "poetry install --no-interaction";
   if (manager === "pipenv") return "pipenv sync";
-  if (names.has("requirements.txt")) return "python -m pip install -r requirements.txt";
+  if (names.has("requirements.txt")) {
+    // Test tools usually live in a dev/test requirements file; without them pytest is missing.
+    const extra = ["requirements-dev.txt", "requirements-test.txt"].filter((name) => names.has(name)).map((name) => ` -r ${name}`).join("");
+    return `python -m pip install -r requirements.txt${extra}`;
+  }
   if (names.has("pyproject.toml")) return "python -m pip install .";
-  if (names.has("pom.xml")) return "mvn -q -DskipTests dependency:go-offline";
-  if (names.has("build.gradle") || names.has("build.gradle.kts")) return names.has("gradlew") ? "./gradlew dependencies" : "gradle dependencies";
+  // Wrappers run through sh: ZIP uploads drop the executable bit.
+  if (names.has("pom.xml")) return names.has("mvnw") ? "sh ./mvnw -B -q -DskipTests dependency:go-offline" : "mvn -B -q -DskipTests dependency:go-offline";
+  if (names.has("build.gradle") || names.has("build.gradle.kts")) return names.has("gradlew") ? "sh ./gradlew --no-daemon testClasses" : "gradle --no-daemon testClasses";
+  if (dotnetTarget) return `dotnet restore ${dotnetTarget}`;
   if (names.has("go.mod")) return "go mod download";
   if (names.has("Cargo.toml")) return "cargo fetch";
   if (names.has("Gemfile")) return "bundle install";
@@ -235,22 +244,46 @@ function detectFrameworks(manifests: readonly SeenManifest[], packages: readonly
   }
   return [...found].sort((a, b) => a.localeCompare(b));
 }
+const pythonManifestNames = new Set(["pyproject.toml", "requirements.txt", "requirements-dev.txt", "requirements-test.txt", "setup.py", "setup.cfg", "tox.ini", "Pipfile"]);
+// The shallowest solution, else the shallowest project.
+function dotnetTarget(manifests: readonly SeenManifest[]): string | null {
+  const byDepth = (suffix: string) => manifests.filter((manifest) => manifest.name.toLowerCase().endsWith(suffix)).sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))[0];
+  return (byDepth(".sln") ?? byDepth(".csproj"))?.path ?? null;
+}
+// Dependency names from Python, JVM and .NET manifests, used only to detect a
+// test runner (pytest, JUnit, xUnit...). Bounded; never stored in the report.
+function nonNodeDependencyNames(manifests: readonly SeenManifest[]): string[] {
+  const names = new Set<string>();
+  for (const manifest of manifests) {
+    if (manifest.name === "package.json") continue;
+    const text = manifest.contents.slice(0, 200_000);
+    if (pythonManifestNames.has(manifest.name)) for (const match of text.matchAll(/(?:^|[\s"'\[,(])([A-Za-z][A-Za-z0-9_.-]{1,80})(?=\s*(?:[<>=~!;\[\]"',)]|$))/gm)) names.add(match[1]!.toLowerCase());
+    if (manifest.name === "pom.xml") for (const match of text.matchAll(/<artifactId>\s*([A-Za-z0-9_.-]{1,120})\s*<\/artifactId>/g)) names.add(match[1]!.toLowerCase());
+    if (manifest.name.startsWith("build.gradle")) for (const match of text.matchAll(/["']([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[^"']*)?["']/g)) names.add(match[2]!.toLowerCase());
+    if (manifest.name.toLowerCase().endsWith(".csproj")) for (const match of text.matchAll(/<PackageReference\s+Include="([A-Za-z0-9_.-]{1,120})"/g)) names.add(match[1]!.toLowerCase());
+    if (names.size > 2_000) break;
+  }
+  return [...names];
+}
 function detectCommands(manifests: readonly SeenManifest[], manager: string | null, rootPackage: PackageInfo | null) {
   if (rootPackage) {
     const buildCommand = rootPackage.scripts.has("build") ? commandForScript(manager, "build") : null; const testCommand = rootPackage.scripts.has("test") ? commandForScript(manager, "test") : null;
     if (buildCommand || testCommand) return { buildCommand, testCommand };
   }
-  const solution = manifests.filter((manifest) => manifest.name.toLowerCase().endsWith(".sln")).sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))[0];
-  if (solution) return { buildCommand: `dotnet build ${solution.path}`, testCommand: `dotnet test ${solution.path}` };
-  const project = manifests.filter((manifest) => manifest.name.toLowerCase().endsWith(".csproj")).sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))[0];
-  if (project) return { buildCommand: `dotnet build ${project.path}`, testCommand: `dotnet test ${project.path}` };
+  // Install restores; build and test then run without a second (online) restore.
+  const dotnet = dotnetTarget(manifests);
+  if (dotnet) return { buildCommand: `dotnet build ${dotnet} --no-restore`, testCommand: `dotnet test ${dotnet} --no-restore` };
   const names = new Set(manifests.map((manifest) => manifest.name));
-  if (names.has("pom.xml")) return { buildCommand: "mvn package", testCommand: "mvn test" };
-  if (names.has("build.gradle") || names.has("build.gradle.kts")) return { buildCommand: names.has("gradlew") ? "./gradlew build" : "gradle build", testCommand: names.has("gradlew") ? "./gradlew test" : "gradle test" };
+  if (names.has("pom.xml")) { const mvn = names.has("mvnw") ? "sh ./mvnw -B" : "mvn -B"; return { buildCommand: `${mvn} -DskipTests package`, testCommand: `${mvn} test` }; }
+  if (names.has("build.gradle") || names.has("build.gradle.kts")) { const gradle = names.has("gradlew") ? "sh ./gradlew --no-daemon" : "gradle --no-daemon"; return { buildCommand: `${gradle} assemble`, testCommand: `${gradle} test` }; }
   if (names.has("go.mod")) return { buildCommand: "go build ./...", testCommand: "go test ./..." };
   if (names.has("Cargo.toml")) return { buildCommand: "cargo build", testCommand: "cargo test" };
-  const python = manifests.find((manifest) => manifest.name === "pyproject.toml" || manifest.name === "requirements.txt");
-  if (python) { const lower = python.contents.toLowerCase(); return { buildCommand: names.has("pyproject.toml") && lower.includes("[build-system]") ? "python -m build" : null, testCommand: lower.includes("pytest") ? "pytest" : null }; }
+  const python = manifests.filter((manifest) => pythonManifestNames.has(manifest.name));
+  if (python.length > 0) {
+    const pyproject = python.find((manifest) => manifest.path === "pyproject.toml");
+    const usesPytest = python.some((manifest) => /\bpytest\b/i.test(manifest.contents));
+    return { buildCommand: pyproject && pyproject.contents.toLowerCase().includes("[build-system]") ? "python -m build" : null, testCommand: usesPytest ? "python -m pytest" : null };
+  }
   return { buildCommand: null, testCommand: null };
 }
 function parsePnpmWorkspacePatterns(manifests: readonly SeenManifest[]): string[] {
@@ -293,8 +326,8 @@ export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEnt
   }
   const totalLanguageFiles = [...languageCounts.values()].reduce((sum, count) => sum + count, 0);
   const languages = [...languageCounts.entries()].map(([name, count]) => ({ name, fileCount: count, percentage: totalLanguageFiles === 0 ? 0 : Math.round((count / totalLanguageFiles) * 10_000) / 100 })).sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
-  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const installCommand = detectInstallCommand(manifestNames, packageManager); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager);
-  const dependencies = [...new Set(packageData.packages.flatMap((item) => [...item.dependencies]))];
+  const packageData = parsePackageJson(manifests); const packageManager = detectPackageManager(manifestNames); const installCommand = detectInstallCommand(manifestNames, packageManager, dotnetTarget(manifests)); const frameworks = detectFrameworks(manifests, packageData.packages, sourcePaths); const commands = detectCommands(manifests, packageManager, packageData.root); const workspaceCommands = detectWorkspaceCommands(packageData, manifests, packageManager);
+  const dependencies = [...new Set([...packageData.packages.flatMap((item) => [...item.dependencies]), ...nonNodeDependencyNames(manifests)])];
   const resolved = resolveRepositorySkill({ manifests: [...manifestNames], languages: languages.map((language) => language.name), packageManager, scripts: Object.fromEntries(packageData.root?.scripts ?? []), dependencies, buildTools: [], commands: { install: installCommand, test: commands.testCommand, build: commands.buildCommand } }, loadBuiltInStackSkillsSync());
   const report: ProjectReport = { languages, frameworks, packageManager, installCommand: resolved.commands.install, buildCommand: resolved.commands.build, testCommand: resolved.commands.test, workspaceCommands, stackSkill: resolved.skillId, manifests: [...manifestNames] };
   if (!resolved.skillVersion) return report;
@@ -309,6 +342,7 @@ export function analyseRepositoryEntries(entries: readonly RepositoryAnalysisEnt
     lintCommand: resolved.commands.lint,
     ...(resolved.verification ? { verification: resolved.verification } : {}),
     ...(resolved.limits ? { stackSkillLimits: resolved.limits } : {}),
+    ...(resolved.otherStacks.length > 0 ? { otherStacks: resolved.otherStacks } : {}),
   };
 }
 

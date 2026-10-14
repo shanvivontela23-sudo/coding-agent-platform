@@ -87,3 +87,26 @@ describe("focused test commands from untrusted patch paths", () => {
     expect(focusedTestCommand({ testCommand: "pnpm test", testSingleTemplate: null, path: "./src/a.test.ts" })).toBe("pnpm test src/a.test.ts");
   });
 });
+
+describe("class-based focused tests (JVM and .NET)", () => {
+  it("selects the test class from the file name", () => {
+    expect(focusedTestCommand({ testCommand: "sh ./mvnw -B test", testSingleTemplate: "{test} -Dtest={class} -Dsurefire.failIfNoSpecifiedTests=false", path: "src/test/java/demo/RefundServiceTest.java" })).toBe("sh ./mvnw -B test -Dtest=RefundServiceTest -Dsurefire.failIfNoSpecifiedTests=false");
+    expect(focusedTestCommand({ testCommand: "sh ./gradlew --no-daemon test", testSingleTemplate: "{test} --tests {class}", path: "src/test/kotlin/demo/AppTest.kt" })).toBe("sh ./gradlew --no-daemon test --tests AppTest");
+    expect(focusedTestCommand({ testCommand: "dotnet test Demo.sln --no-restore", testSingleTemplate: "{test} --filter FullyQualifiedName~{class}", path: "tests/Demo.Tests/RefundServiceTests.cs" })).toBe("dotnet test Demo.sln --no-restore --filter FullyQualifiedName~RefundServiceTests");
+  });
+
+  it("refuses file names that are not plain class identifiers", () => {
+    expect(focusedTestCommand({ testCommand: "mvn -B test", testSingleTemplate: "{test} -Dtest={class}", path: "src/test/java/a;b/Evil$Test.java" })).toBeNull();
+    expect(focusedTestCommand({ testCommand: "mvn -B test", testSingleTemplate: "{test} -Dtest={class}", path: "src/test/java/My Test.java" })).toBeNull();
+    expect(focusedTestCommand({ testCommand: "mvn -B test", testSingleTemplate: "{test} -Dtest={class}", path: "src/test/resources/data.json" })).toBeNull();
+    expect(focusedTestCommand({ testCommand: "mvn -B test", testSingleTemplate: "{test} -Dtest={class}", path: "../x/FooTest.java" })).toBeNull();
+  });
+
+  it("uses the file path for pytest", () => {
+    expect(focusedTestCommand({ testCommand: "python -m pytest", testSingleTemplate: "{test} {path}", path: "tests/test_refunds.py" })).toBe("python -m pytest tests/test_refunds.py");
+  });
+
+  it("validates every built-in skill's focused templates", () => {
+    for (const skill of skills.values()) for (const template of Object.values(skill.defaults.testSingle)) expect(template).toMatch(/\{(path|class)\}/);
+  });
+});

@@ -31,13 +31,13 @@ describe("project report install commands", () => {
     expect(analyseRepositoryEntries([
       entry("pom.xml", "<project></project>"),
       entry("src/main/java/App.java", ""),
-    ]).installCommand).toBe("mvn -q -DskipTests dependency:go-offline");
+    ]).installCommand).toBe("mvn -B -q -DskipTests dependency:go-offline");
 
     expect(analyseRepositoryEntries([
       entry("build.gradle", "plugins {}"),
       entry("gradlew", ""),
       entry("src/main/java/App.java", ""),
-    ]).installCommand).toBe("./gradlew dependencies");
+    ]).installCommand).toBe("sh ./gradlew --no-daemon testClasses");
 
     expect(analyseRepositoryEntries([
       entry("go.mod", "module example.com/demo\n"),

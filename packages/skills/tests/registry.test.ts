@@ -40,7 +40,7 @@ describe("stack skill registry", () => {
     const outside = await mkdtemp(join(tmpdir(), "dhara-skills-cwd-"));
     process.chdir(outside);
     const registry = await loadBuiltInStackSkills();
-    expect([...registry.keys()]).toEqual(["typescript-node"]);
+    expect([...registry.keys()]).toEqual(["dotnet", "java-spring", "python", "typescript-node"]);
     expect(registry.get("typescript-node")).toMatchObject({ version: "1.0.0", displayName: "TypeScript / Node" });
   });
 

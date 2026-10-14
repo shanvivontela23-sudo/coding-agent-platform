@@ -103,6 +103,14 @@ function argumentPassingCommand(testCommand: string): string {
   return /^npm (?:test|t|run(?:-script)? \S+)$/.test(testCommand.trim()) ? `${testCommand.trim()} --` : testCommand;
 }
 
+// JVM and .NET runners select tests by class: the file's base name, which must
+// be a plain identifier (no shell metacharacters can get through).
+export function testClassName(path: string): string | null {
+  const base = path.split("/").at(-1) ?? "";
+  const name = base.replace(/\.(?:java|kt|kts|scala|groovy|cs|fs|vb)$/i, "");
+  return name !== base && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : null;
+}
+
 export function focusedTestCommand(input: { readonly testCommand: string | null; readonly testSingleTemplate: string | null; readonly path: string }): string | null {
   if (!input.testCommand) return null;
   const path = safeWorkspaceRelativePath(input.path);
@@ -110,6 +118,10 @@ export function focusedTestCommand(input: { readonly testCommand: string | null;
   const quoted = shellArg(path);
   const test = argumentPassingCommand(input.testCommand);
   // Function replacers: a command or path containing "$&" must not be expanded.
+  if (input.testSingleTemplate?.includes("{class}")) {
+    const className = testClassName(path);
+    return className ? input.testSingleTemplate.replace("{test}", () => test).replace("{class}", () => className) : null;
+  }
   if (input.testSingleTemplate) return input.testSingleTemplate.replace("{test}", () => test).replace("{path}", () => quoted);
   return `${test} ${quoted}`;
 }
