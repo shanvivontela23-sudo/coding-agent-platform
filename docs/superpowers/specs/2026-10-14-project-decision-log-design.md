@@ -34,7 +34,7 @@ The worker source provider loads the same bounded history in the transaction tha
 
 Only deterministic application code writes entries:
 
-- Verification writes `command_worked` for a passed clean-copy check and `command_failed` for a newly failed check. When a command changes outcome, the previous current entry for the same command is superseded atomically.
+- Verification records what the command does on the unchanged baseline: `command_worked` when it passes there, `command_failed` when it does not. A failure that only the patch introduced is about that fix, not the command, and never marks the command as failed. When a command changes outcome, the previous current entry for the same command is superseded atomically.
 - Successful GitHub publication writes `reviewer_accepted` describing the created pull request. ZIP promotion writes `reviewer_accepted` describing the promoted version. Retries remain idempotent.
 - Rejecting a ready plan requires the requesting representative to provide a reason. Dhara masks it, records `reviewer_rejected`, updates the task to `rejected`, and audits the transition in one tenant transaction.
 
