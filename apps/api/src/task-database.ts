@@ -4,8 +4,10 @@ import { AppError } from "./errors.js";
 import type { CostRecord } from "../../../evals/src/gateway/types.js";
 import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.js";
 import type { ProjectReport } from "./repository-analysis.js";
+import { recordProjectDecision } from "./project-decision-database.js";
+import { normalizeDecisionSummary } from "../../../packages/db/src/project-decisions.js";
 
-export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved";
+export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved" | "rejected";
 // The built-in stack skill that shaped the accepted plan; null for generic planning.
 export type PlanningSkill = { readonly id: string; readonly version: string };
 export type PlannedSourcePin =
@@ -85,6 +87,7 @@ export interface TaskDatabase {
   unresolvedQuestionCount(session: SessionIdentity, taskId: string): Promise<number>;
   savePlan(session: SessionIdentity, taskId: string, plan: TaskPlan, sourcePin: PlannedSourcePin, planningSkill?: PlanningSkill | null): Promise<void>;
   approveTask(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
+  rejectTask(session: SessionIdentity, taskId: string, reason: string): Promise<void>;
   recordModelCall(session: SessionIdentity, taskId: string, cost: CostRecord): Promise<void>;
 }
 
@@ -245,6 +248,25 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
         if (task.rows[0]?.requested_by_user_id !== session.userId) throw new Error("only the requesting representative can approve this plan");
         await database.query(`UPDATE tasks SET what_i_understand=$3,proposed_approach=$4,confirmed_requirement=$3,confirmed_plan=$4,status='approved',approved_at=now(),updated_at=now() WHERE organization_id=$1 AND id=$2`, [session.organizationId, taskId, requirement, plan]);
         await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'task_plan_approved','{}'::jsonb)`, [session.organizationId, session.userId, taskId]);
+      });
+    },
+
+    async rejectTask(session, taskId, reason) {
+      assertUuid(taskId, "taskId");
+      await withTenant(pool, session, async (database) => {
+        const rejected = await database.query<{ project_id: string }>(
+          `UPDATE tasks SET status='rejected',updated_at=now()
+            WHERE organization_id=$1 AND id=$2 AND status='plan_ready' AND requested_by_user_id=$3
+            RETURNING project_id`,
+          [session.organizationId, taskId, session.userId],
+        );
+        const projectId = rejected.rows[0]?.project_id;
+        if (!projectId) throw new AppError("TASK_REJECTION_NOT_ALLOWED", "Only the person who requested this task can reject its ready plan.", 409);
+        await recordProjectDecision(database, session.organizationId, {
+          projectId, taskId, kind: "reviewer_rejected", summary: normalizeDecisionSummary(`The requester rejected a proposed plan: ${reason}`, (value) => value),
+          detail: { reason, taskId }, source: "plan_review", memoryKey: `plan-rejection:${taskId}`,
+        });
+        await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'task_plan_rejected',jsonb_build_object('reason',$4::text))`, [session.organizationId, session.userId, taskId, reason]);
       });
     },
 

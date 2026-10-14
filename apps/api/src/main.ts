@@ -36,6 +36,9 @@ import { createTicketCipher } from "./ticket-crypto.js";
 import { createUploadProjectDatabase } from "./upload-project-database.js";
 import type { UploadArchiveLimits } from "./upload-archive.js";
 import { validateBuiltInStackSkillsAtStartup } from "../../../packages/skills/src/registry.js";
+import { createProjectDecisionDatabase } from "./project-decision-database.js";
+import { attachProjectDecisionRoutes } from "./project-decision-http.js";
+import { createProjectDecisionService } from "./project-decision-service.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -69,6 +72,8 @@ const databaseUrl = assertRestrictedDatabaseUrl(required("DATABASE_URL"));
 const pool = handlePoolErrors(new Pool({ connectionString: databaseUrl }));
 const tenantPool = pool as unknown as TenantPool;
 const database = createProductDatabase(tenantPool);
+const projectDecisionDatabase = createProjectDecisionDatabase(tenantPool);
+const projectDecisionService = createProjectDecisionService({ database: projectDecisionDatabase });
 const auth = createSupabaseAuthClient({
   supabaseUrl: required("SUPABASE_URL"),
   anonKey: required("SUPABASE_ANON_KEY"),
@@ -149,6 +154,7 @@ if (taskGatewayAdminToken) {
     gateway: taskModelGateway,
     cipher: taskCipher,
     modelBudgetUsd: planningBudgetUsd,
+    projectDecisions: projectDecisionDatabase,
   });
 }
 
@@ -163,7 +169,8 @@ const productServer = createApiServer({
   githubApp,
 });
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
-const taskServer = attachTaskRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
+const projectDecisionServer = attachProjectDecisionRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, service: projectDecisionService });
+const taskServer = attachTaskRoutes(projectDecisionServer, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
 const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService, demoBudgetCaps });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });

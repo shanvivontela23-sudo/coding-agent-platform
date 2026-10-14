@@ -5,6 +5,8 @@ import type { ProjectCodeReader } from "./project-code-reader.js";
 import type { PlannedSourcePin, TaskDatabase, TaskDetail, TaskListItem } from "./task-database.js";
 import { maskPersonalData, planningRunKey, TaskPlanner, type TaskModelGateway } from "./task-intake.js";
 import type { TicketCipher } from "./ticket-crypto.js";
+import { formatProjectHistory } from "../../../packages/db/src/project-decisions.js";
+import type { ProjectDecisionDatabase } from "./project-decision-database.js";
 
 export type TaskView = Omit<TaskDetail, "originalTicketEncrypted"> & { readonly originalTicket?: string };
 
@@ -12,6 +14,7 @@ export interface TaskReadService {
   list(session: SessionIdentity): Promise<readonly TaskListItem[]>;
   get(session: SessionIdentity, taskId: string): Promise<TaskView | null>;
   approve(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
+  reject(session: SessionIdentity, taskId: string, reason: string): Promise<void>;
 }
 
 export interface TaskPlanningService {
@@ -40,6 +43,11 @@ export function createTaskReadService(options: {
     },
 
     async approve(session, taskId, input) { await options.database.approveTask(session, taskId, input); },
+    async reject(session, taskId, reasonValue) {
+      const reason = reasonValue.trim();
+      if (!reason || reason.length > 1_000) throw new Error("rejection reason must be between 1 and 1000 characters");
+      await options.database.rejectTask(session, taskId, maskPersonalData(reason));
+    },
   };
 }
 
@@ -58,10 +66,17 @@ export function createTaskPlanningService(options: {
   readonly gateway: TaskModelGateway;
   readonly cipher: TicketCipher;
   readonly modelBudgetUsd: number;
+  readonly projectDecisions?: Pick<ProjectDecisionDatabase, "listCurrent">;
 }): TaskPlanningService {
   if (!Number.isFinite(options.modelBudgetUsd) || options.modelBudgetUsd <= 0) throw new Error("task model budget must be greater than zero");
   const planner = new TaskPlanner({ gateway: options.gateway, spendCapUsd: options.modelBudgetUsd });
   const skills = loadBuiltInStackSkillsSync();
+  const loadProjectHistory = async (session: SessionIdentity, projectId: string): Promise<string> => {
+    if (!options.projectDecisions) return "";
+    const decisions = await options.projectDecisions.listCurrent(session, projectId, 15);
+    if (decisions === null) throw new Error("task project is not visible while loading project history");
+    return formatProjectHistory(decisions);
+  };
 
   // Gateway costs are collected per planning run key; they are recorded
   // against the real task id.
@@ -72,8 +87,8 @@ export function createTaskPlanningService(options: {
   const makePlanIfReady = async (session: SessionIdentity, taskId: string): Promise<void> => {
     if (await options.database.unresolvedQuestionCount(session, taskId) !== 0) return;
     const task = await options.database.getTask(session, taskId);
-    if (!task || task.status === "approved") return;
-    const context = await options.codeReader.readContext(session, task.projectId, task.maskedTicket);
+    if (!task || task.status === "approved" || task.status === "rejected") return;
+    const [context, projectHistory] = await Promise.all([options.codeReader.readContext(session, task.projectId, task.maskedTicket), loadProjectHistory(session, task.projectId)]);
     const stack = stackPromptContext(context.report, skills);
     const sourcePin: PlannedSourcePin = context.source === "github"
       ? { source: "github", commitSha: context.revision }
@@ -81,7 +96,7 @@ export function createTaskPlanningService(options: {
     const answers = task.questions.filter((question) => question.answerStatus === "answered" && question.answer).map((question) => ({ question: question.question, answer: question.answer! }));
     const runKey = planningRunKey(taskId, task.planningAttempt);
     try {
-      const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers, trustedStackGuide: stack.trustedGuidePrefix });
+      const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers, trustedStackGuide: stack.trustedGuidePrefix, projectHistory });
       await persistCosts(session, taskId, runKey);
       await options.database.savePlan(session, taskId, plan, sourcePin, stack.planningSkillId && stack.planningSkillVersion ? { id: stack.planningSkillId, version: stack.planningSkillVersion } : null);
     } catch (error) {
@@ -96,10 +111,10 @@ export function createTaskPlanningService(options: {
       if (!ticket || ticket.length > 50_000) throw new Error("task ticket must be between 1 and 50000 characters");
       const maskedTicket = maskPersonalData(ticket);
       const created = await options.database.createTask(session, { projectId, encryptedTicket: options.cipher.encrypt(ticket), maskedTicket, modelBudgetUsd: options.modelBudgetUsd });
-      const context = await options.codeReader.readContext(session, projectId, maskedTicket);
+      const [context, projectHistory] = await Promise.all([options.codeReader.readContext(session, projectId, maskedTicket), loadProjectHistory(session, projectId)]);
       const stack = stackPromptContext(context.report, skills);
       try {
-        const clarification = await planner.clarify({ taskId: created.taskId, maskedTicket, repositoryContext: context.text, stackDisplayName: stack.clarificationLabel });
+        const clarification = await planner.clarify({ taskId: created.taskId, maskedTicket, repositoryContext: context.text, stackDisplayName: stack.clarificationLabel, projectHistory });
         await persistCosts(session, created.taskId);
         await options.database.saveClarification(session, created.taskId, clarification.jobType, clarification.questions, clarification.questionFilterStats);
         if (clarification.questions.length === 0) await makePlanIfReady(session, created.taskId);
@@ -114,10 +129,10 @@ export function createTaskPlanningService(options: {
       const retry = await options.database.beginClarificationRetry(session, taskId);
       if (!retry) return;
       const runKey = planningRunKey(taskId, retry.planningAttempt);
-      const context = await options.codeReader.readContext(session, retry.projectId, retry.maskedTicket);
+      const [context, projectHistory] = await Promise.all([options.codeReader.readContext(session, retry.projectId, retry.maskedTicket), loadProjectHistory(session, retry.projectId)]);
       const stack = stackPromptContext(context.report, skills);
       try {
-        const clarification = await planner.clarify({ taskId: runKey, maskedTicket: retry.maskedTicket, repositoryContext: context.text, stackDisplayName: stack.clarificationLabel });
+        const clarification = await planner.clarify({ taskId: runKey, maskedTicket: retry.maskedTicket, repositoryContext: context.text, stackDisplayName: stack.clarificationLabel, projectHistory });
         await persistCosts(session, taskId, runKey);
         await options.database.saveClarification(session, taskId, clarification.jobType, clarification.questions, clarification.questionFilterStats);
         if (clarification.questions.length === 0) await makePlanIfReady(session, taskId);
@@ -142,6 +157,7 @@ export function createTaskService(options: {
   readonly gateway: TaskModelGateway;
   readonly cipher: TicketCipher;
   readonly modelBudgetUsd: number;
+  readonly projectDecisions?: Pick<ProjectDecisionDatabase, "listCurrent">;
 }): TaskService {
   return {
     ...createTaskReadService({ database: options.database, cipher: options.cipher }),

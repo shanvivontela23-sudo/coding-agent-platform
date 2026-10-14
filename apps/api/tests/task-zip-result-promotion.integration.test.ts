@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { testPool } from "./helpers/test-pool.js";
@@ -41,7 +41,7 @@ beforeAll(async () => {
   rootPool = testPool({ connectionString: baseDatabaseUrl });
   await rootPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`); await rootPool.query(`CREATE DATABASE ${databaseName}`);
   adminPool = testPool({ connectionString: urlFor(databaseName) });
-  for (const name of ["0001_tenant_core.sql","0002_organization_invitations.sql","0003_github_projects.sql","0004_task_intake.sql","0005_zip_projects_and_task_review_fixes.sql","0006_task_execution.sql","0007_task_execution_b2.sql","0008_verification_incomplete.sql","0009_github_publication.sql","0010_zip_results.sql"]) await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
+  for (const name of (await readdir("packages/db/migrations")).filter((file) => /^\d{4}_.+\.sql$/.test(file)).sort()) await adminPool.query(await readFile(join("packages/db/migrations", name), "utf8"));
   await adminPool.query(`ALTER ROLE coding_agent_api PASSWORD '${apiPassword}'`);
   const artifactMetadata = JSON.stringify({ sourceVersionId: sourceVersion, artifactVersionId: resultVersion, fileCount: 3 }).replaceAll("'", "''");
   const driftMetadata = JSON.stringify({ sourceVersionId: driftSource, artifactVersionId: driftResult, fileCount: 3 }).replaceAll("'", "''");
@@ -87,6 +87,8 @@ describe.skipIf(!baseDatabaseUrl)("B4 ZIP promotion database boundary", () => {
     expect(versions.rows).toEqual([{ id: sourceVersion, version_number: 1 }, { id: resultVersion, version_number: 2 }]);
     const audits = await adminPool!.query<{ count: string }>(`SELECT count(*)::text AS count FROM audit_events WHERE organization_id=$1 AND task_id=$2 AND event_type='project_version_promoted'`, [org, task]);
     expect(audits.rows[0]!.count).toBe("1");
+    const memories = await adminPool!.query<{ kind: string; source: string; count: string }>(`SELECT kind,source,count(*)::text AS count FROM project_decisions WHERE organization_id=$1 AND task_id=$2 AND superseded_by IS NULL GROUP BY kind,source`, [org, task]);
+    expect(memories.rows).toEqual([{ kind: "reviewer_accepted", source: "zip_promotion", count: "1" }]);
   });
 
   it("refuses promotion when current source moved beyond the approved version", async () => {

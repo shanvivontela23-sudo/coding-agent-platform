@@ -7,9 +7,9 @@ import { PageTitle } from "../../components/ui/heading";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 type HomePayload = { readonly organization: { readonly name: string }; readonly user: { readonly email: string | null } };
-type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved";
+type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved" | "rejected";
 type TaskItem = { readonly id: string; readonly projectName: string; readonly status: TaskStatus; readonly maskedTicket: string; readonly updatedAt: string };
-const statusLabel: Record<TaskStatus, string> = { draft: "Draft", waiting_for_answers: "Waiting for answers", plan_ready: "Plan ready", approved: "Approved" };
+const statusLabel: Record<TaskStatus, string> = { draft: "Draft", waiting_for_answers: "Waiting for answers", plan_ready: "Plan ready", approved: "Approved", rejected: "Rejected" };
 
 async function headers(): Promise<{ cookie?: string }> {
   const store = await cookies(); const value = store.getAll().map(({ name, value }) => `${name}=${encodeURIComponent(value)}`).join("; "); return value ? { cookie: value } : {};

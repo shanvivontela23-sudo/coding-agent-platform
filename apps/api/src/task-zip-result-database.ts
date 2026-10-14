@@ -2,6 +2,7 @@ import { assertUuid, type TenantPool, withTenant } from "./database.js";
 import { AppError } from "./errors.js";
 import type { VerifiedFile } from "../../worker/src/verification.js";
 import type { TaskZipResultArtifact, TaskZipResultBuildState, TaskZipResultContext, TaskZipResultDatabase, ZipResultBuildCompletion, ZipResultBuildStatus } from "./task-zip-result.js";
+import { recordProjectDecision } from "./project-decision-database.js";
 
 type ContextRow = {
   execution_id: string; task_id: string; project_id: string; status: "succeeded" | "fix_not_reproduced"; source_version_id: string;
@@ -177,6 +178,10 @@ export function createTaskZipResultDatabase(pool: TenantPool): TaskZipResultData
         await database.query(`INSERT INTO project_versions (id,organization_id,project_id,version_number,storage_key,size_bytes,file_count,sha256,uploaded_by_user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [input.artifactVersionId, session.organizationId, input.projectId, next, input.storageKey, input.sizeBytes, input.fileCount, input.sha256, session.userId]);
         const updated = await database.query<ArtifactRow>(`UPDATE task_execution_artifacts a SET metadata=a.metadata || $3::jsonb WHERE a.organization_id=$1 AND a.execution_id=$2 AND a.kind='zip_result' RETURNING a.execution_id,a.task_id,(SELECT project_id FROM task_executions e WHERE e.organization_id=a.organization_id AND e.id=a.execution_id) AS project_id,a.storage_key,a.sha256,a.size_bytes,a.metadata`, [session.organizationId, input.executionId, JSON.stringify({ promotedVersionId: input.artifactVersionId, promotedVersionNumber: next })]);
         await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'project_version_promoted',jsonb_build_object('execution_id',$4::text,'project_id',$5::text,'source_version_id',$6::text,'version_id',$7::text,'version_number',$8::int))`, [session.organizationId, session.userId, input.taskId, input.executionId, input.projectId, input.sourceVersionId, input.artifactVersionId, next]);
+        await recordProjectDecision(database, session.organizationId, {
+          projectId: input.projectId, taskId: input.taskId, kind: "reviewer_accepted", summary: `Promoted the updated ZIP as project version ${next}.`,
+          detail: { executionId: input.executionId, versionNumber: next }, source: "zip_promotion", memoryKey: `zip-promotion:${input.executionId}`,
+        });
         if (!updated.rows[0]) throw new Error("ZIP result promotion did not update artifact");
         return artifact(updated.rows[0]);
       });

@@ -15,6 +15,7 @@ export type PreparedExecutionSource = {
   readonly plan: string;
   readonly commands: ExecutionCommands;
   readonly reviewFocus: string;
+  readonly projectHistory?: string;
   // Facts used to resolve the execution profile once. After pinning, commands
   // above are replaced by the profile's and executionProfile is set; every later
   // stage reads only the pinned values.

@@ -6,7 +6,7 @@ describe("task intake and clarification UI", () => {
     const shell = await readFile("apps/web/components/app-shell.tsx", "utf8");
     const tasks = await readFile("apps/web/app/tasks/page.tsx", "utf8");
     expect(shell).toContain('{ label: "Tasks", href: "/tasks" }');
-    for (const status of ["Draft", "Waiting for answers", "Plan ready", "Approved"]) expect(tasks).toContain(status);
+    for (const status of ["Draft", "Waiting for answers", "Plan ready", "Approved", "Rejected"]) expect(tasks).toContain(status);
   });
 
   it("offers New task from a project and accepts English Hindi or mixed ticket text", async () => {
@@ -27,6 +27,11 @@ describe("task intake and clarification UI", () => {
     expect(detail).toContain("Estimated cost");
     expect(detail).toContain("Estimated time");
     expect(detail).toContain("Approve plan");
+    expect(detail).toContain("Reject plan");
+    expect(detail).toContain('name="reason"');
+    expect(detail).toContain("/reject");
+    const execution = await readFile("apps/web/components/task-execution-status.tsx", "utf8");
+    expect(execution).toContain("This plan was rejected. Create a new task to propose a different approach.");
   });
 
   it("does not expose the encrypted original ticket broadly", async () => {

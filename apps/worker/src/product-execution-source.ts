@@ -5,6 +5,7 @@ import type { ProjectStorage } from "../../api/src/project-storage.js";
 import type { ProjectReport } from "../../api/src/repository-analysis.js";
 import { readNormalizedZipFiles, type UploadArchiveLimits } from "../../api/src/upload-archive.js";
 import type { ExecutionSourceProvider, PreparedExecutionSource } from "./execution-source.js";
+import { formatProjectHistory, type ProjectDecision, type ProjectDecisionKind, type ProjectDecisionSource } from "../../../packages/db/src/project-decisions.js";
 
 export type GitHubPinnedArchiveReader = {
   read(input: { readonly installationId: number; readonly repositoryFullName: string; readonly commitSha: string; readonly maxBytes: number }): Promise<{ readonly archive: Uint8Array; readonly sha256: string }>;
@@ -24,6 +25,14 @@ type SourceRow = {
   version_storage_key: string | null;
   version_sha256: string | null;
 };
+
+type DecisionRow = {
+  id: string; organization_id: string; project_id: string; task_id: string | null; kind: ProjectDecisionKind; summary: string;
+  detail: Record<string, unknown>; source: ProjectDecisionSource; created_at: Date | string; superseded_by: string | null;
+};
+function projectDecision(row: DecisionRow): ProjectDecision {
+  return { id: row.id, organizationId: row.organization_id, projectId: row.project_id, taskId: row.task_id, kind: row.kind, summary: row.summary, detail: row.detail, source: row.source, createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at, supersededBy: row.superseded_by };
+}
 
 function base64urlJson(value: unknown): string { return Buffer.from(JSON.stringify(value)).toString("base64url"); }
 function githubJwt(appId: string, privateKey: string, nowSeconds = Math.floor(Date.now() / 1_000)): string {
@@ -116,7 +125,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
   }) {}
 
   async prepare(input: { readonly organizationId: string; readonly taskId: string; readonly projectId: string; readonly sourceCommitSha: string | null; readonly sourceVersionId: string | null }): Promise<PreparedExecutionSource> {
-    const row = await withTenant(this.options.pool, { organizationId: input.organizationId }, async (database) => {
+    const loaded = await withTenant(this.options.pool, { organizationId: input.organizationId }, async (database) => {
       const result = await database.query<SourceRow>(
         `SELECT t.status,t.confirmed_requirement,t.confirmed_plan,t.job_type,t.planning_skill_id,t.planning_skill_version,pr.report,
                 r.full_name AS repository_full_name,gi.installation_id,
@@ -130,8 +139,19 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
           LIMIT 1`,
         [input.organizationId, input.taskId, input.projectId, input.sourceVersionId],
       );
-      return result.rows[0] ?? null;
+      const row = result.rows[0] ?? null;
+      if (!row) return { row: null, projectHistory: "" };
+      const history = await database.query<DecisionRow>(
+        `SELECT id,organization_id,project_id,task_id,kind,summary,detail,source,created_at,superseded_by
+           FROM project_decisions
+          WHERE organization_id=$1 AND project_id=$2 AND superseded_by IS NULL
+          ORDER BY created_at DESC,id DESC
+          LIMIT 15`,
+        [input.organizationId, input.projectId],
+      );
+      return { row, projectHistory: formatProjectHistory(history.rows.map(projectDecision)) };
     });
+    const row = loaded.row;
     if (!row) throw new Error("Approved task source is not visible to the worker");
     if (row.status !== "approved" || !row.confirmed_requirement || !row.confirmed_plan) throw new Error("Task is not approved with a confirmed requirement and plan");
     if (!row.report || typeof row.report !== "object") throw new Error("Project report is unavailable for execution");
@@ -160,6 +180,7 @@ export class ProductExecutionSourceProvider implements ExecutionSourceProvider {
       plan: row.confirmed_plan,
       commands: { install: row.report.installCommand ?? null, test: row.report.testCommand, build: row.report.buildCommand },
       reviewFocus: "Review the generated patch against the approved plan, verification evidence, dependency changes, and any unverified pre-existing failures.",
+      ...(loaded.projectHistory ? { projectHistory: loaded.projectHistory } : {}),
       report: row.report,
       planningSkill: row.planning_skill_id && row.planning_skill_version ? { id: row.planning_skill_id, version: row.planning_skill_version } : null,
     };

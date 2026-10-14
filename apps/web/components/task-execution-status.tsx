@@ -48,7 +48,7 @@ type ZipResultBuild = {
 type DemoBudgetCaps = { readonly planningUsd: number; readonly executionUsd: number };
 type Props = {
   readonly taskId: string;
-  readonly taskStatus: "draft" | "waiting_for_answers" | "plan_ready" | "approved";
+  readonly taskStatus: "draft" | "waiting_for_answers" | "plan_ready" | "approved" | "rejected";
   readonly currentUserRole: "owner" | "developer" | "rep";
   readonly currentUserId: string;
   readonly requestedByUserId: string;
@@ -154,7 +154,8 @@ export function TaskExecutionStatus({ taskId, taskStatus, currentUserRole, curre
         {publication?.status === "published" && publication.pullRequestUrl ? <Alert><AlertDescription><a className="font-medium underline" href={publication.pullRequestUrl} target="_blank" rel="noreferrer">Pull request #{publication.pullRequestNumber}</a>{publication.baseMovedCommits !== null ? ` · base moved ${publication.baseMovedCommits} commit${publication.baseMovedCommits === 1 ? "" : "s"}` : ""}{publication.unproven ? " · unproven fix" : ""}</AlertDescription></Alert> : null}
         {publication?.status === "source_changed" ? <Alert variant="destructive"><AlertDescription>Source changed in a file named by the approved plan or patch. Re-plan before publishing.</AlertDescription></Alert> : null}
         {publication?.status === "failed" ? <Alert variant="destructive"><AlertDescription>{publication.failureMessage || "GitHub publication failed. Retry publication without starting a new implementation attempt."}</AlertDescription></Alert> : null}
-        {canControl && taskStatus !== "approved" && !execution ? <p className="text-sm text-muted-foreground">Approve the plan before starting implementation.</p> : null}
+        {taskStatus === "rejected" && !execution ? <p className="text-sm text-muted-foreground">This plan was rejected. Create a new task to propose a different approach.</p> : null}
+        {canControl && taskStatus !== "approved" && taskStatus !== "rejected" && !execution ? <p className="text-sm text-muted-foreground">Approve the plan before starting implementation.</p> : null}
         {canControl && loaded && taskStatus === "approved" && !active(execution) && !implementationBlocker ? <Button type="button" disabled={busy} onClick={() => void act("start")}>{busy ? "Starting…" : "Start implementation"}</Button> : null}
         {canControl && active(execution) ? <Button type="button" variant="outline" disabled={busy || Boolean(execution?.cancelRequestedAt)} onClick={() => void act("cancel")}>{busy ? "Cancelling…" : "Cancel implementation"}</Button> : null}
         {canPublish && publishable && publication?.status !== "published" && publication?.status !== "source_changed" ? <Button type="button" disabled={busy || publication?.status === "publishing"} onClick={() => void act("publish")}>{publication?.status === "publishing" ? "Publishing…" : publishLabel}</Button> : null}

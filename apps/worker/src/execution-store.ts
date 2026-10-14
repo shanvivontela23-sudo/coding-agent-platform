@@ -4,6 +4,10 @@ import type { ClaimedExecution } from "./postgres-execution-queue.js";
 import type { PatchSafetyResult } from "./patch-safety.js";
 import type { VerificationResult } from "./verification.js";
 import { parseExecutionProfile, type ExecutionProfile } from "../../../packages/skills/src/profile.js";
+import { recordProjectDecision } from "../../api/src/project-decision-database.js";
+import { maskPersonalData } from "../../api/src/task-intake.js";
+import { normalizeDecisionSummary } from "../../../packages/db/src/project-decisions.js";
+import { sanitizeChangeNoteText } from "./change-document.js";
 
 export type ExecutionProgress = {
   readonly sourcePreparedAt: string | null;
@@ -146,6 +150,21 @@ export class PostgresExecutionStore implements ExecutionStore {
            ON CONFLICT (organization_id,execution_id,phase,check_key) DO UPDATE SET status=EXCLUDED.status,command=EXCLUDED.command,details=EXCLUDED.details,finished_at=now()`,
           [execution.organizationId, execution.taskId, execution.executionId, check.name, check.status, check.command, JSON.stringify({ baselineExitCode: check.baselineExitCode, patchedExitCode: check.patchedExitCode, baselineFailingTests: check.baselineFailingTests, patchedFailingTests: check.patchedFailingTests })],
         );
+        // What the project learns is whether the command itself works on the
+        // unchanged source (the baseline). A failure the patch introduced is about
+        // that fix, not the command, so it must not be remembered as "command failed".
+        if (check.status === "skipped") continue;
+        const safeCommand = maskPersonalData(sanitizeChangeNoteText(check.command));
+        const worked = check.baselineExitCode === 0;
+        await recordProjectDecision(database, execution.organizationId, {
+          projectId: execution.projectId,
+          taskId: execution.taskId,
+          kind: worked ? "command_worked" : "command_failed",
+          summary: normalizeDecisionSummary(`${safeCommand} ${worked ? "runs successfully on the unchanged project" : "does not pass on the unchanged project"} (clean verification).`, maskPersonalData),
+          detail: { command: safeCommand, check: check.name, baselineExitCode: check.baselineExitCode, patchedExitCode: check.patchedExitCode, taskId: execution.taskId },
+          source: "verification",
+          memoryKey: `command:${check.name}:${createHash("sha256").update(safeCommand).digest("hex")}`,
+        });
       }
       const reproduceStatus = input.verification.reproduce.command === null ? "skipped" : input.verification.reproduce.reproduced ? "passed" : "failed";
       await database.query(

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { PageTitle, SectionTitle } from "../../../components/ui/heading";
 import { StackSkillBadge } from "../../../components/stack-skill-badge";
 import type { StackReportFields } from "../../../src/stack-badge";
+import { ProjectDecisions, type ProjectDecisionView } from "../../../components/project-decisions";
 
 const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:3001";
 
@@ -31,6 +32,7 @@ type ProjectPayload = {
   readonly currentUserRole?: "owner" | "developer" | "rep";
 };
 type ProjectPageProps = { readonly params: Promise<{ readonly projectId: string }>; readonly searchParams?: Promise<Record<string, string | string[] | undefined>> };
+type DecisionsPayload = { readonly decisions: readonly ProjectDecisionView[]; readonly currentUserRole: "owner" | "developer" | "rep" };
 
 async function requestHeaders(): Promise<{ cookie?: string }> {
   const store = await cookies();
@@ -60,6 +62,13 @@ async function loadProject(projectId: string, headers: { cookie?: string }): Pro
   if (!raw.repository || !raw.installation) throw new Error("Project source is missing.");
   return { project: raw.project, source: { type: "github", fullName: raw.repository.fullName, defaultBranch: raw.repository.defaultBranch, lastAnalysedCommit: raw.repository.lastAnalysedCommit, status: raw.installation.status }, report: raw.report, ...(raw.currentUserRole ? { currentUserRole: raw.currentUserRole } : {}) };
 }
+async function loadDecisions(projectId: string, headers: { cookie?: string }): Promise<DecisionsPayload> {
+  const response = await fetch(`${apiOrigin}/api/projects/${encodeURIComponent(projectId)}/decisions`, { headers, cache: "no-store" });
+  if (response.status === 401) redirect("/?error=Please%20sign%20in%20to%20continue.");
+  if (response.status === 404) notFound();
+  if (!response.ok) throw new Error("Unable to load project learning.");
+  return await response.json() as DecisionsPayload;
+}
 
 function ValueCard({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent>{children}</CardContent></Card>;
@@ -75,7 +84,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
   const query = searchParams ? await searchParams : {};
   const errorValue = Array.isArray(query.error) ? query.error[0] : query.error;
   const headers = await requestHeaders();
-  const [home, project] = await Promise.all([loadHome(headers), loadProject(projectId, headers)]);
+  const [home, project, learning] = await Promise.all([loadHome(headers), loadProject(projectId, headers), loadDecisions(projectId, headers)]);
   const workspaceCommands = project.report.workspaceCommands ?? [];
   const commitUrl = project.source.type === "github" ? `https://github.com/${project.source.fullName}/commit/${project.source.lastAnalysedCommit}` : null;
   return (
@@ -128,6 +137,8 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
             <ValueCard title="Stack skill"><StackSkillBadge report={project.report} /></ValueCard>
           </div>
         </section>
+
+        <ProjectDecisions projectId={projectId} decisions={learning.decisions} currentUserRole={learning.currentUserRole} apiOrigin={apiOrigin} />
 
         {project.source.type === "upload" && project.currentUserRole === "owner" ? (
           <section className="border-t border-border pt-6"><form action={`${apiOrigin}/projects/${projectId}/delete`} method="post"><Button type="submit" variant="outline">Delete project</Button></form></section>
