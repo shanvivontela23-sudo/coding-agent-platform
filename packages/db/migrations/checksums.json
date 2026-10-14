@@ -12,5 +12,5 @@
   "0011_zip_result_build_lifecycle.sql": "effdc8c8ce92424611e1b4997552812625bfe472d93c2b11fc2f2ea3be3bcf73",
   "0012_task_planning_attempt.sql": "6ca9ed6dbf62c95855d53dd5b4243d9ea12f2a26ee2e68b040cddf91ad5a38d0",
   "0013_stack_skill_execution_profile.sql": "626d91e7ab8d711ec671dd006b4b8be4c510a88f64394e30d9f109d83fd71e5a",
-  "0014_project_decisions.sql": "9d86acf6f3ab882d0f49fe50f67374bd933cc041c54355ec5843b39a66909d4e"
+  "0014_project_decisions.sql": "3a2fd1452d3c23a2f2463dc75476f8ad9bb0f1b1fb6e76bf1048be08a9d30642"
 }

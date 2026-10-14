@@ -40,6 +40,9 @@ CREATE TABLE project_decisions (
 CREATE INDEX project_decisions_current_project_idx
   ON project_decisions (organization_id, project_id, created_at DESC, id DESC)
   WHERE superseded_by IS NULL;
+CREATE UNIQUE INDEX project_decisions_one_current_memory_key
+  ON project_decisions (organization_id, project_id, source, (detail->>'memoryKey'))
+  WHERE superseded_by IS NULL AND detail ? 'memoryKey';
 
 ALTER TABLE project_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE project_decisions FORCE ROW LEVEL SECURITY;
