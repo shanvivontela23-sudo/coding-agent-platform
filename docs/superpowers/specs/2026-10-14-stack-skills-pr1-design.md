@@ -51,16 +51,16 @@ Each `skill.json` contains:
 
 - `id`, `version`, and `displayName`;
 - `detect.manifests` and `detect.markers`;
-- `sandboxTemplate`;
+- `sandboxTemplateKey` (for example, `typescript-node`), never an environment-specific E2B template id;
 - `defaults.install`, `defaults.build`, `defaults.test`, optional `defaults.lint`, and runner-specific `defaults.testSingle` templates;
-- an ordered `verification` list, where each check names a command role and its environment-failure output patterns;
+- an ordered `verification` list for install, test, and build, where each check names a command role and its environment-failure output patterns;
 - optional positive timeout limits.
 
 The TypeScript/Node `testSingle` map has separate templates for `vitest`, `jest`, `mocha`, and `node:test`. Every template contains exactly one `{path}` placeholder. Unknown runners have no focused template.
 
 Validation rejects unknown keys, duplicate ids or id/version pairs, empty command text, invalid versions, invalid or repeated check names, malformed patterns, unsafe or missing `{path}` placeholders, non-positive limits, and guides over the hard 1,500-token cap. Token measurement uses the same conservative UTF-8-byte estimate already used by gateway reservation rather than adding a tokenizer dependency.
 
-`loadBuiltInStackSkills()` loads and validates every built-in JSON/guide pair. API and real-worker composition both invoke it during startup. A malformed built-in prevents either process from starting. A separate unit test loads the complete built-in directory so the same failure is caught in CI.
+`loadBuiltInStackSkills()` loads and validates every built-in JSON/guide pair. API and real-worker composition both invoke it during startup. A malformed built-in prevents either process from starting. A separate unit test loads the complete built-in directory so the same failure is caught in CI. Template keys are mapped to deployment-owned environment variables by the worker; `typescript-node` maps to `E2B_TEMPLATE_TYPESCRIPT_NODE`.
 
 ## Detection and command precedence
 
@@ -80,7 +80,7 @@ For TypeScript/Node:
 - a runner-specific single-test template requires positive detection of that exact runner;
 - lint is used only when a matching script or tool is detected.
 
-The resolver never invents `pnpm test`, `npm test`, or another command merely because a repository is TypeScript/Node. If a skill-sourced command later fails because its script, executable, or toolchain is unavailable, verification treats that as environment/setup failure, not a code regression.
+The resolver never invents `pnpm test`, `npm test`, or another command merely because a repository is TypeScript/Node. An install/setup failure is environmental. A skill-sourced test or build command is classified as environmental only when its baseline run proves the same script, executable, or toolchain problem; a patched-only failure remains a code regression.
 
 ## Project report compatibility
 
@@ -99,7 +99,9 @@ A report with no matching skill remains `stackSkill: "generic"`. The project UI 
 
 ## Planning prompt
 
-Resolve the report's skill before clarification and plan generation. Add a stable trusted stack-skill prefix to the system message in this order:
+Resolve the report's skill before clarification and plan generation. Clarification receives only the trusted stack display name so its questions remain strictly about requested behavior. It does not receive the guide, commands, runner details, or verification advice.
+
+Add the full stable trusted stack-skill prefix to the planning system message in this order:
 
 1. fixed planner safety/role instructions;
 2. built-in stack guide and its id/version;
@@ -108,7 +110,7 @@ Resolve the report's skill before clarification and plan generation. Add a stabl
 
 The built-in guide is code-owned trusted static text. It is never placed inside `<UNTRUSTED_REPOSITORY_CONTEXT>`. Ticket, repository context, and all repository-derived values remain in their existing untrusted blocks. No task-specific value may precede or be interpolated into the cached skill prefix.
 
-Tests assert the guide is present in clarification and plan system messages at the same stable location, the untrusted wrappers remain intact, and the total added skill prefix stays within its declared token cap.
+Tests assert the clarification system message contains the display name but none of the guide text, commands, runner details, or verification advice. Planning tests assert the guide is present at the stable location, the untrusted wrappers remain intact, and the total added skill prefix stays within its declared token cap.
 
 Persist the skill id and version actually used for the accepted planning flow. Planning retries update the accepted planning metadata; the eventual execution snapshot copies that planning id/version so measurement distinguishes planning from implementation.
 
@@ -126,7 +128,7 @@ The execution profile is resolved once, before any coding model call. It is pers
 
 The profile contains immutable values for that execution: skill id/version, planning skill id/version, commands, command sources, detected runner, single-test template, ordered verification checks, timeouts, the bounded guide text snapshot, and sandbox template id. Persisting the guide snapshot prevents a reclaimed execution from silently receiving different instructions after a deployment. Implementation, baseline verification, and patched verification all receive the same profile.
 
-If the preferred skill template is absent, resolution chooses `E2B_TEMPLATE_ID` immediately. If E2B rejects the preferred id with its typed template-not-found response before creating a sandbox, the worker performs one compare-and-swap replacement of the pinned template with `E2B_TEMPLATE_ID`, then retries once. The fallback is persisted before dependency setup or any model call, and the resulting value is the only template used by implementation and both verification sandboxes. Other sandbox failures are not disguised as missing-template fallback. A missing skill, missing skill version, absent template setting, or legacy report never blocks a run; it uses generic behavior and `E2B_TEMPLATE_ID`.
+The worker maps `sandboxTemplateKey` through deployment configuration. For PR 1, `typescript-node` reads `E2B_TEMPLATE_TYPESCRIPT_NODE`; when that variable is unset, it resolves directly to `E2B_TEMPLATE_ID`. The resolved id is persisted before dependency setup or any model call and is the only template used by implementation and both verification sandboxes. There is no template-not-found retry or profile mutation. An invalid configured id fails the execution with a clear setup/configuration error. A missing skill, missing skill version, absent keyed setting, or legacy report never blocks a run merely because skill configuration is absent; it resolves to generic behavior and `E2B_TEMPLATE_ID`.
 
 Measurement data records the versions actually used at planning and implementation, the pinned template, and the source of each command. It does not claim a skill version was used when resolution degraded to generic behavior.
 
@@ -139,7 +141,7 @@ The coding task contains, in a bounded and deterministic section:
 - the existing approved requirement and plan;
 - the existing reproduce-first instruction.
 
-The guide is trusted code-owned content. Requirement and plan retain their current product trust treatment and sanitization boundaries.
+The guide is trusted code-owned content. Requirement and plan retain their current product trust treatment and sanitization boundaries. A detected lint command is an implementation hint only; it is not promoted to a verification gate in PR 1.
 
 For a bug fix, use the runner-specific `testSingle` template when the pinned profile contains one. Otherwise preserve today's fallback of appending the test path to the full test command.
 
@@ -147,9 +149,11 @@ Every path extracted from an untrusted model patch is validated before command c
 
 ## Verification and failure classification
 
-Verification uses the pinned execution profile and pinned template for both clean sandboxes. It performs dependency setup and then the skill's ordered applicable checks. A check is skipped only when its command is `null`; order is otherwise exact and shared by baseline and patched runs.
+Verification uses the pinned execution profile and pinned template for both clean sandboxes. It performs dependency setup, then test, then build. A check is skipped only when its command is `null`; order is otherwise exact and shared by baseline and patched runs. Lint is not a PR 1 verification check.
 
-Environment-failure patterns are matched against bounded combined command output. Missing scripts, missing executables/toolchains, dependency-network failures, and other configured setup failures yield the existing fail-closed `verification_incomplete` path with clear user-facing wording such as `Dhara couldn't set up the project for verification.` They never become `verification_failed`, `fix_not_reproduced`, or proof of a code regression.
+Dependency-install/setup failures are environment failures. For test and build checks, environment-failure patterns are baseline-anchored: a pattern can produce `verification_incomplete` only when the baseline run hits the same classified environment condition. If the baseline passes and only the patched run prints `Cannot find module`, `command not found`, or another environment-looking pattern, the result is a code failure. A broken patch can never hide behind environment classification.
+
+Confirmed baseline environment failures yield the existing fail-closed `verification_incomplete` path with clear user-facing wording such as `Dhara couldn't set up the project for verification.` They never become `fix_not_reproduced` or proof of a code regression.
 
 Code/test failures continue through the current baseline-versus-patched comparison and reproduce-first rules. A skill does not relax the requirement for a genuine assertion-style fail-before/pass-after proof.
 
@@ -164,7 +168,7 @@ Environment/setup failures use non-blaming copy that distinguishes inability to 
 ## Error handling and security
 
 - Invalid built-ins fail API and worker startup with the skill file/id and schema path, never secret values or guide contents.
-- Missing runtime skill/template availability degrades to generic/fallback behavior and is recorded accurately.
+- Missing keyed template configuration degrades to `E2B_TEMPLATE_ID` and is recorded accurately; an explicitly configured but invalid E2B id fails clearly without a paid model call.
 - Repository evidence and patch paths remain untrusted data; neither can alter system instructions or shell structure.
 - Skill environment patterns classify failures but cannot turn an unverified run into success.
 - Prompt growth is bounded and tested at every stage.
@@ -178,13 +182,13 @@ All tests use fakes and local fixtures.
 - Registry tests load all built-ins from a non-root working directory and prove API/worker startup validation.
 - Detection tests cover positive TypeScript/Node evidence, generic fallback, and runner-specific detection.
 - Resolution tests prove repo-over-skill precedence, evidence-gated defaults, null commands without evidence, and old-report compatibility.
-- Prompt tests cover clarification, planning, and implementation guide placement, trust wrappers, stable prefix ordering, and token caps.
+- Prompt tests prove clarification receives only the stack display name, while planning and implementation receive the guide with correct trust wrappers, stable prefix ordering, and token caps.
 - Execution tests prove one persisted profile is reused after configuration changes and across coding/baseline/patched sandboxes.
-- Template tests prove preferred selection, narrowly typed missing-template fallback, and one final pinned template for all three sandboxes.
+- Template tests prove keyed environment resolution, unset-key fallback to `E2B_TEMPLATE_ID`, clear failure for an invalid configured id, and one pinned template for all three sandboxes.
 - Reproduction tests cover Vitest/Jest/Mocha/node:test variants, unknown-runner fallback, safe quoting, and hostile paths.
-- Verification tests cover ordered checks plus environment-versus-code failure classification.
+- Verification tests cover install → test → build ordering, absence of a lint gate, baseline-anchored environment classification, baseline-pass plus patched `Cannot find module` as code failure, and the same missing-toolchain pattern on both sides as `verification_incomplete`.
 - UI tests cover the badge, accessible source tooltip, generic message, and legacy reports with absent optional fields.
-- Migration/measurement tests cover nullable backward-compatible columns, immutable old migrations, planning and implementation versions, command sources, and tenant-scoped execution reads.
+- Migration/measurement tests cover nullable backward-compatible columns, immutable old migrations, planning and implementation versions, command sources, and tenant-scoped execution reads. Existing grants are table-level: `coding_agent_app` already has the required access to `tasks` and `task_executions`, the API assumes that role through `withTenant()`, and the worker must continue to have no direct table privileges while assuming `coding_agent_app` only after a claim. Tests pin both the positive scoped access and the worker's direct-access denial.
 
 Before the PR opens, run `pnpm lint`, `pnpm typecheck`, and `pnpm test:parallel`. Do not run `pnpm test:postgres` against the local demo database. The PR description records the migration number, bounded prompt growth per stage, commands run, tests not run, and the owner-only E2B template build command. No template is built or published in this PR.
 
