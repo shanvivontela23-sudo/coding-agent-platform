@@ -40,30 +40,37 @@ function pool() {
 
 function verification(status: "passed" | "failed" | "pre_existing"): VerificationResult {
   return {
-    checks: [{ name: "test", command: "pnpm test -- --reporter=user@example.com", baselineExitCode: status === "passed" ? 0 : 1, patchedExitCode: status === "passed" ? 0 : 1, status, baselineFailingTests: [], patchedFailingTests: [] }],
+    // "failed" is a patched-only failure (baseline passed); "pre_existing" fails on both.
+    checks: [{ name: "test", command: "pnpm test -- --reporter=user@example.com", baselineExitCode: status === "pre_existing" ? 1 : 0, patchedExitCode: status === "passed" ? 0 : 1, status, baselineFailingTests: [], patchedFailingTests: [] }],
     hasNewFailures: status === "failed", complete: true, incompleteReason: null,
     reproduce: { command: null, baselineExitCode: null, patchedExitCode: null, baselineOutput: "", patchedOutput: "", baselineClassification: "not_run", patchedClassification: "not_run", reproduced: false, reason: null },
   };
 }
 
 describe("verification-driven project decisions", () => {
-  it("masks and records facts idempotently, then supersedes a changed outcome", async () => {
+  it("masks and records a working command idempotently", async () => {
     const database = pool(); const store = new PostgresExecutionStore(database.value);
     await store.saveVerification(execution, { verification: verification("passed"), changeDocument: "note", costUsd: 0.1 });
     await store.saveVerification(execution, { verification: verification("passed"), changeDocument: "note", costUsd: 0.1 });
     expect(database.rows).toHaveLength(1);
     expect(database.rows[0]).toMatchObject({ kind: "command_worked", superseded_by: null });
     expect(JSON.stringify(database.rows[0])).not.toContain("user@example.com");
+  });
 
+  it("does not blame the command for a failure the patch introduced", async () => {
+    const database = pool(); const store = new PostgresExecutionStore(database.value);
     await store.saveVerification(execution, { verification: verification("failed"), changeDocument: "note", costUsd: 0.1 });
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]).toMatchObject({ kind: "command_worked", superseded_by: null });
+  });
+
+  it("supersedes a stale 'works' entry when the command no longer passes on the unchanged project", async () => {
+    const database = pool(); const store = new PostgresExecutionStore(database.value);
+    await store.saveVerification(execution, { verification: verification("passed"), changeDocument: "note", costUsd: 0.1 });
+    await store.saveVerification(execution, { verification: verification("pre_existing"), changeDocument: "note", costUsd: 0.1 });
     expect(database.rows).toHaveLength(2);
     expect(database.rows[0]?.superseded_by).toBe(database.rows[1]?.id);
     expect(database.rows[1]).toMatchObject({ kind: "command_failed", superseded_by: null });
-  });
-
-  it("does not turn a pre-existing repository failure into learned project guidance", async () => {
-    const database = pool(); const store = new PostgresExecutionStore(database.value);
-    await store.saveVerification(execution, { verification: verification("pre_existing"), changeDocument: "note", costUsd: 0.1 });
-    expect(database.rows).toHaveLength(0);
+    expect(database.rows[1]?.summary).toContain("does not pass on the unchanged project");
   });
 });

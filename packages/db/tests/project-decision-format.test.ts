@@ -50,4 +50,3 @@ describe("project history formatting", () => {
     expect(formatProjectHistory([decision(1, { supersededBy: "00000000-0000-4000-8000-000000000001" })])).toBe("");
   });
 });
-

@@ -39,7 +39,8 @@ describe("task plan rejection", () => {
     };
     const database = createTaskDatabase({ connect: async () => client, query: client.query } as unknown as TenantPool);
     await database.rejectTask(session, taskId, "Email [MASKED_EMAIL]");
-    expect(queries.some(({ text }) => text.includes("INSERT INTO project_decisions"))).toBe(true);
+    const insert = queries.find(({ text }) => text.includes("INSERT INTO project_decisions"));
+    expect(insert?.values?.[4]).toBe("The requester rejected a proposed plan: Email [MASKED_EMAIL]");
     expect(queries.some(({ text }) => text.includes("'task_plan_rejected'"))).toBe(true);
 
     allow = false; queries.length = 0;

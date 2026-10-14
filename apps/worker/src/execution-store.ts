@@ -150,14 +150,17 @@ export class PostgresExecutionStore implements ExecutionStore {
            ON CONFLICT (organization_id,execution_id,phase,check_key) DO UPDATE SET status=EXCLUDED.status,command=EXCLUDED.command,details=EXCLUDED.details,finished_at=now()`,
           [execution.organizationId, execution.taskId, execution.executionId, check.name, check.status, check.command, JSON.stringify({ baselineExitCode: check.baselineExitCode, patchedExitCode: check.patchedExitCode, baselineFailingTests: check.baselineFailingTests, patchedFailingTests: check.patchedFailingTests })],
         );
-        if (check.status !== "passed" && check.status !== "failed") continue;
+        // What the project learns is whether the command itself works on the
+        // unchanged source (the baseline). A failure the patch introduced is about
+        // that fix, not the command, so it must not be remembered as "command failed".
+        if (check.status === "skipped") continue;
         const safeCommand = maskPersonalData(sanitizeChangeNoteText(check.command));
-        const worked = check.status === "passed";
+        const worked = check.baselineExitCode === 0;
         await recordProjectDecision(database, execution.organizationId, {
           projectId: execution.projectId,
           taskId: execution.taskId,
           kind: worked ? "command_worked" : "command_failed",
-          summary: normalizeDecisionSummary(`${safeCommand} ${worked ? "succeeded" : "failed"} in clean verification.`, maskPersonalData),
+          summary: normalizeDecisionSummary(`${safeCommand} ${worked ? "runs successfully on the unchanged project" : "does not pass on the unchanged project"} (clean verification).`, maskPersonalData),
           detail: { command: safeCommand, check: check.name, baselineExitCode: check.baselineExitCode, patchedExitCode: check.patchedExitCode, taskId: execution.taskId },
           source: "verification",
           memoryKey: `command:${check.name}:${createHash("sha256").update(safeCommand).digest("hex")}`,

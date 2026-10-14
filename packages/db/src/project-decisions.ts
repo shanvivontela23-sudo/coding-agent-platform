@@ -79,4 +79,3 @@ export function formatProjectHistory(
   if (lines.length === 0) return "";
   return `${openingTag}\n${lines.join("\n")}\n${closingTag}`;
 }
-

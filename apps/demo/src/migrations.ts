@@ -52,6 +52,7 @@ async function psql(databaseUrl: string, sql: string): Promise<string> {
 export const migrationMarkers: readonly { readonly name: string; readonly table: string; readonly column: string }[] = [
   { name: "0012_task_planning_attempt.sql", table: "tasks", column: "planning_attempt" },
   { name: "0013_stack_skill_execution_profile.sql", table: "task_executions", column: "execution_profile" },
+  { name: "0014_project_decisions.sql", table: "project_decisions", column: "superseded_by" },
 ];
 
 export function migrationsToApply(plan: readonly MigrationEntry[], hasCore: boolean, presentMarkers: ReadonlySet<string>): readonly MigrationEntry[] {

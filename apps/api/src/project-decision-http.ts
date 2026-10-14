@@ -57,4 +57,3 @@ export function attachProjectDecisionRoutes(server: Server, options: {
   });
   return server;
 }
-

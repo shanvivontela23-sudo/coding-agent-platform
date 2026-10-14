@@ -77,4 +77,3 @@ describe("project decision database", () => {
     expect(calls.some((text) => text.includes("INSERT INTO project_decisions"))).toBe(false);
   });
 });
-

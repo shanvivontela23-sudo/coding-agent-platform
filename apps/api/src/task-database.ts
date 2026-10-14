@@ -5,6 +5,7 @@ import type { CostRecord } from "../../../evals/src/gateway/types.js";
 import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.js";
 import type { ProjectReport } from "./repository-analysis.js";
 import { recordProjectDecision } from "./project-decision-database.js";
+import { normalizeDecisionSummary } from "../../../packages/db/src/project-decisions.js";
 
 export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved" | "rejected";
 // The built-in stack skill that shaped the accepted plan; null for generic planning.
@@ -262,7 +263,7 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
         const projectId = rejected.rows[0]?.project_id;
         if (!projectId) throw new AppError("TASK_REJECTION_NOT_ALLOWED", "Only the person who requested this task can reject its ready plan.", 409);
         await recordProjectDecision(database, session.organizationId, {
-          projectId, taskId, kind: "reviewer_rejected", summary: "The requester rejected a proposed plan.",
+          projectId, taskId, kind: "reviewer_rejected", summary: normalizeDecisionSummary(`The requester rejected a proposed plan: ${reason}`, (value) => value),
           detail: { reason, taskId }, source: "plan_review", memoryKey: `plan-rejection:${taskId}`,
         });
         await database.query(`INSERT INTO audit_events (id,organization_id,actor_user_id,task_id,event_type,payload) VALUES (gen_random_uuid(),$1,$2,$3,'task_plan_rejected',jsonb_build_object('reason',$4::text))`, [session.organizationId, session.userId, taskId, reason]);
