@@ -58,7 +58,7 @@ describe("demo launcher plan", () => {
 
   it("gives each child only the credentials it needs", () => {
     const plan = createDemoLaunchPlan(config(), "https://demo-tunnel.ngrok.app");
-    expect(plan.web.env).toEqual({ NEXT_PUBLIC_API_ORIGIN: "http://localhost:3101", PORT: "3000" });
+    expect(plan.web.env).toEqual({ NEXT_PUBLIC_API_ORIGIN: "http://localhost:3101", API_INTERNAL_ORIGIN: "http://127.0.0.1:3101", PORT: "3000" });
     expect(plan.api.env.DEMO_DATABASE_ADMIN_URL).toBeUndefined();
     expect(plan.api.env.DEMO_WORKER_DATABASE_URL).toBeUndefined();
     expect(plan.api.env.E2B_API_KEY).toBeUndefined();
