@@ -75,6 +75,9 @@ beforeAll(async () => {
       VALUES ('${repositoryId}','${organizationId}','${projectId}','github','4242','acme/demo',4242,'acme/demo','main');
     INSERT INTO github_installations (organization_id,installation_id,connected_by_user_id,status)
       VALUES ('${organizationId}',777,'${ownerId}','connected');
+    INSERT INTO organization_skills (id,organization_id,title,body,applies_to_stacks,created_by) VALUES
+      ('80000000-0000-4000-8000-000000000131','${organizationId}','Update the changelog','Every PR adds one CHANGELOG.md line.',NULL,'${ownerId}'),
+      ('80000000-0000-4000-8000-000000000132','${organizationId}','Python only','Use pytest fixtures.',ARRAY['python'],'${ownerId}');
     INSERT INTO project_reports (organization_id,project_id,report,analysed_commit)
       VALUES ('${organizationId}','${projectId}','${report.replaceAll("'", "''")}'::jsonb,'${commit}');
     INSERT INTO tasks (id,organization_id,project_id,repository_id,requested_by_user_id,status,requirement,task_model_budget_usd,job_type)
@@ -151,8 +154,10 @@ class IntegrationHarness implements HarnessRunner {
   readonly name = "codex" as const;
   readonly version = "fake";
   calls = 0;
-  async run(): Promise<HarnessRunOutcome> {
+  ticketText = "";
+  async run(_session: SandboxSession, request: { readonly ticketText: string }): Promise<HarnessRunOutcome> {
     this.calls += 1;
+    this.ticketText = request.ticketText;
     return { status: "completed", limit: null, turnsUsed: 2, wallClockSeconds: 1, patch: { patch, status: " M src/retry.ts\n?? src/retry.test.ts" } };
   }
 }
@@ -297,6 +302,11 @@ describe.skipIf(!baseDatabaseUrl)("task execution HTTP controls", () => {
         [firstPayload.execution.id],
       );
       expect(pinned.rows[0]).toEqual({ implementation_skill_id: "typescript-node", implementation_skill_version: "1.0.0", sandbox_template_id: fakeRealConfig().e2bTemplateId, profile_skill: "typescript-node" });
+      expect(product.harness.ticketText).toContain("<ORGANIZATION_RULES>\n- Update the changelog: Every PR adds one CHANGELOG.md line.\n</ORGANIZATION_RULES>");
+      expect(product.harness.ticketText).not.toContain("Python only");
+      const profileRules = await adminPool!.query<{ titles: string }>(`SELECT string_agg(rule->>'title', ',') AS titles FROM task_executions, jsonb_array_elements(execution_profile->'organizationRules') AS rule WHERE id=$1`, [firstPayload.execution.id]);
+      expect(profileRules.rows[0]!.titles).toBe("Update the changelog");
+      expect(result.execution.changeDocument).toContain("## Guidance applied\n- Stack skill: TypeScript / Node v1.0.0\n- Organization rules: \"Update the changelog\"");
 
       const second = await fetch(`${endpoint}/start`, { method: "POST", headers: ownerHeaders });
       expect(second.status).toBe(201);

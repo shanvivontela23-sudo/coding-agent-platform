@@ -7,6 +7,8 @@ export type ChangeDocumentInput = {
   readonly reproduceProof: string;
   readonly costUsd: number | null;
   readonly reviewFocus: string;
+  // What shaped this change: the stack skill and organization rule titles.
+  readonly guidanceApplied?: { readonly stackSkill: string | null; readonly organizationRules: readonly string[] };
 };
 
 export function sanitizeChangeNoteText(value: string): string {
@@ -27,6 +29,12 @@ export function boundedDependencyInstallFailureDetail(value: string, maxCharacte
   if (!Number.isSafeInteger(maxCharacters) || maxCharacters <= 0) throw new Error("failure detail limit must be a positive integer");
   const sanitized = sanitizeChangeNoteText(value).trim();
   return sanitized.length <= maxCharacters ? sanitized : sanitized.slice(-maxCharacters);
+}
+
+function guidanceLines(guidance: NonNullable<ChangeDocumentInput["guidanceApplied"]>): string[] {
+  const lines = [`- Stack skill: ${guidance.stackSkill ? sanitizeChangeNoteText(guidance.stackSkill) : "none (Dhara worked the project out itself)"}`];
+  lines.push(guidance.organizationRules.length > 0 ? `- Organization rules: ${guidance.organizationRules.map((title) => `"${sanitizeChangeNoteText(title)}"`).join(", ")}` : "- Organization rules: none");
+  return lines;
 }
 
 export function buildChangeDocument(input: ChangeDocumentInput): string {
@@ -59,5 +67,6 @@ export function buildChangeDocument(input: ChangeDocumentInput): string {
     "",
     "## Developer review focus",
     sanitizeChangeNoteText(input.reviewFocus),
+    ...(input.guidanceApplied ? ["", "## Guidance applied", ...guidanceLines(input.guidanceApplied)] : []),
   ].join("\n");
 }

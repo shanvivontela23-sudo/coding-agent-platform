@@ -6,6 +6,8 @@ import type { PlannedSourcePin, TaskDatabase, TaskDetail, TaskListItem } from ".
 import { maskPersonalData, planningRunKey, TaskPlanner, type TaskModelGateway } from "./task-intake.js";
 import type { TicketCipher } from "./ticket-crypto.js";
 import { formatProjectHistory } from "../../../packages/db/src/project-decisions.js";
+import { applicableOrganizationRules, formatOrganizationRules } from "../../../packages/db/src/organization-skills.js";
+import type { OrganizationSkillDatabase } from "./organization-skill-database.js";
 import type { ProjectDecisionDatabase } from "./project-decision-database.js";
 
 export type TaskView = Omit<TaskDetail, "originalTicketEncrypted"> & { readonly originalTicket?: string };
@@ -67,10 +69,17 @@ export function createTaskPlanningService(options: {
   readonly cipher: TicketCipher;
   readonly modelBudgetUsd: number;
   readonly projectDecisions?: Pick<ProjectDecisionDatabase, "listCurrent">;
+  readonly organizationSkills?: Pick<OrganizationSkillDatabase, "list">;
 }): TaskPlanningService {
   if (!Number.isFinite(options.modelBudgetUsd) || options.modelBudgetUsd <= 0) throw new Error("task model budget must be greater than zero");
   const planner = new TaskPlanner({ gateway: options.gateway, spendCapUsd: options.modelBudgetUsd });
   const skills = loadBuiltInStackSkillsSync();
+  // Organization rules shape the plan (they are coding standards), so only the
+  // plan prompt gets them; clarifying questions stay about behavior.
+  const loadOrganizationRules = async (session: SessionIdentity, stackSkillId: string | null): Promise<string> => {
+    if (!options.organizationSkills) return "";
+    return formatOrganizationRules(applicableOrganizationRules(await options.organizationSkills.list(session), stackSkillId));
+  };
   const loadProjectHistory = async (session: SessionIdentity, projectId: string): Promise<string> => {
     if (!options.projectDecisions) return "";
     const decisions = await options.projectDecisions.listCurrent(session, projectId, 15);
@@ -96,7 +105,8 @@ export function createTaskPlanningService(options: {
     const answers = task.questions.filter((question) => question.answerStatus === "answered" && question.answer).map((question) => ({ question: question.question, answer: question.answer! }));
     const runKey = planningRunKey(taskId, task.planningAttempt);
     try {
-      const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers, trustedStackGuide: stack.trustedGuidePrefix, projectHistory });
+      const organizationRules = await loadOrganizationRules(session, stack.planningSkillId);
+      const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers, trustedStackGuide: stack.trustedGuidePrefix, projectHistory, organizationRules });
       await persistCosts(session, taskId, runKey);
       await options.database.savePlan(session, taskId, plan, sourcePin, stack.planningSkillId && stack.planningSkillVersion ? { id: stack.planningSkillId, version: stack.planningSkillVersion } : null);
     } catch (error) {
@@ -158,6 +168,7 @@ export function createTaskService(options: {
   readonly cipher: TicketCipher;
   readonly modelBudgetUsd: number;
   readonly projectDecisions?: Pick<ProjectDecisionDatabase, "listCurrent">;
+  readonly organizationSkills?: Pick<OrganizationSkillDatabase, "list">;
 }): TaskService {
   return {
     ...createTaskReadService({ database: options.database, cipher: options.cipher }),
