@@ -45,17 +45,42 @@ async function psql(databaseUrl: string, sql: string): Promise<string> {
   return result.stdout.trim();
 }
 
+// Each migration from 0012 on adds a column that proves it was applied. A
+// database that stops at one of these markers gets only the later migrations,
+// in order; anything else that already has the core schema is refused rather
+// than guessed at. Every new migration must add its marker here.
+export const migrationMarkers: readonly { readonly name: string; readonly table: string; readonly column: string }[] = [
+  { name: "0012_task_planning_attempt.sql", table: "tasks", column: "planning_attempt" },
+  { name: "0013_stack_skill_execution_profile.sql", table: "task_executions", column: "execution_profile" },
+];
+
+export function migrationsToApply(plan: readonly MigrationEntry[], hasCore: boolean, presentMarkers: ReadonlySet<string>): readonly MigrationEntry[] {
+  const latest = plan.at(-1)?.name;
+  if (latest && !migrationMarkers.some((marker) => marker.name === latest)) throw new Error(`Migration ${latest} has no applied-schema marker in apps/demo/src/migrations.ts`);
+  if (!hasCore) return plan;
+  const firstMissing = migrationMarkers.findIndex((marker) => !presentMarkers.has(marker.name));
+  if (firstMissing === -1) return [];
+  const partial = new Error("Database is partially migrated. Refusing to guess an applied prefix; apply the immutable numbered migrations in order before demo startup.");
+  if (firstMissing === 0) throw partial;
+  if (migrationMarkers.slice(firstMissing).some((marker) => presentMarkers.has(marker.name))) throw partial;
+  const from = migrationMarkers[firstMissing]!.name;
+  return plan.filter((entry) => entry.name >= from);
+}
+
 export async function ensureDemoMigrations(adminDatabaseUrl: string, directory = "packages/db/migrations"): Promise<{ readonly applied: readonly string[]; readonly plan: readonly MigrationEntry[] }> {
   const plan = await loadMigrationPlan(directory);
   const hasCore = (await psql(adminDatabaseUrl, "SELECT to_regclass('public.organizations') IS NOT NULL;")) === "t";
-  const hasLatest = hasCore && (await psql(adminDatabaseUrl, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='tasks' AND column_name='planning_attempt');")) === "t";
-  if (hasCore && !hasLatest) throw new Error("Database is partially migrated. Refusing to guess an applied prefix; apply the immutable numbered migrations in order before demo startup.");
-  const applied: string[] = [];
-  if (!hasCore) {
-    for (const migration of plan) {
-      await runCommand("psql", [adminDatabaseUrl, "-v", "ON_ERROR_STOP=1", "-f", join(directory, migration.name)]);
-      applied.push(migration.name);
+  const presentMarkers = new Set<string>();
+  if (hasCore) {
+    for (const marker of migrationMarkers) {
+      const present = await psql(adminDatabaseUrl, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='${marker.table}' AND column_name='${marker.column}');`);
+      if (present === "t") presentMarkers.add(marker.name);
     }
+  }
+  const applied: string[] = [];
+  for (const migration of migrationsToApply(plan, hasCore, presentMarkers)) {
+    await runCommand("psql", [adminDatabaseUrl, "-v", "ON_ERROR_STOP=1", "-f", join(directory, migration.name)]);
+    applied.push(migration.name);
   }
   const roles = await psql(adminDatabaseUrl, "SELECT rolname FROM pg_roles WHERE rolname IN ('coding_agent_api','coding_agent_worker') ORDER BY rolname;");
   if (roles.split(/\r?\n/).filter(Boolean).join(",") !== "coding_agent_api,coding_agent_worker") throw new Error("Database roles coding_agent_api and coding_agent_worker are not ready");

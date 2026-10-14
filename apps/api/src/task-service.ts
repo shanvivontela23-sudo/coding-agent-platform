@@ -83,7 +83,7 @@ export function createTaskPlanningService(options: {
     try {
       const plan = await planner.plan({ taskId: runKey, maskedTicket: task.maskedTicket, repositoryContext: context.text, answers, trustedStackGuide: stack.trustedGuidePrefix });
       await persistCosts(session, taskId, runKey);
-      await options.database.savePlan(session, taskId, plan, sourcePin);
+      await options.database.savePlan(session, taskId, plan, sourcePin, stack.planningSkillId && stack.planningSkillVersion ? { id: stack.planningSkillId, version: stack.planningSkillVersion } : null);
     } catch (error) {
       await persistCosts(session, taskId, runKey);
       throw error;

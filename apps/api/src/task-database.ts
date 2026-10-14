@@ -6,6 +6,8 @@ import type { QuestionFilterStats, TaskPlan, TaskQuestion } from "./task-intake.
 import type { ProjectReport } from "./repository-analysis.js";
 
 export type TaskStatus = "draft" | "waiting_for_answers" | "plan_ready" | "approved";
+// The built-in stack skill that shaped the accepted plan; null for generic planning.
+export type PlanningSkill = { readonly id: string; readonly version: string };
 export type PlannedSourcePin =
   | { readonly source: "github"; readonly commitSha: string }
   | { readonly source: "upload"; readonly versionId: string };
@@ -65,7 +67,7 @@ export interface TaskDatabase {
   saveClarification(session: SessionIdentity, taskId: string, jobType: string, questions: readonly TaskQuestion[], stats?: QuestionFilterStats): Promise<void>;
   answerQuestion(session: SessionIdentity, taskId: string, questionId: string, answer: string, developerNeeded: boolean): Promise<void>;
   unresolvedQuestionCount(session: SessionIdentity, taskId: string): Promise<number>;
-  savePlan(session: SessionIdentity, taskId: string, plan: TaskPlan, sourcePin: PlannedSourcePin): Promise<void>;
+  savePlan(session: SessionIdentity, taskId: string, plan: TaskPlan, sourcePin: PlannedSourcePin, planningSkill?: PlanningSkill | null): Promise<void>;
   approveTask(session: SessionIdentity, taskId: string, input: { whatIUnderstand: string; proposedApproach: string }): Promise<void>;
   recordModelCall(session: SessionIdentity, taskId: string, cost: CostRecord): Promise<void>;
 }
@@ -205,15 +207,15 @@ export function createTaskDatabase(pool: TenantPool): TaskDatabase {
       });
     },
 
-    async savePlan(session, taskId, plan, sourcePin) {
+    async savePlan(session, taskId, plan, sourcePin, planningSkill) {
       assertUuid(taskId, "taskId");
       const [plannedCommit, plannedVersion] = sourcePinColumns(sourcePin);
       const midpointCost = (plan.estimate.costUsdMin + plan.estimate.costUsdMax) / 2;
       const midpointMinutes = Math.round((plan.estimate.timeMinutesMin + plan.estimate.timeMinutesMax) / 2);
       await withTenant(pool, session, async (database) => {
         await database.query(
-          `UPDATE tasks SET what_i_understand=$3,proposed_approach=$4,job_size=$5,estimated_cost_usd=$6,estimated_time_minutes=$7,estimated_cost_usd_min=$8,estimated_cost_usd_max=$9,estimated_time_minutes_min=$10,estimated_time_minutes_max=$11,planned_source_commit_sha=$12,planned_source_version_id=$13,status='plan_ready',updated_at=now() WHERE organization_id=$1 AND id=$2`,
-          [session.organizationId, taskId, plan.whatIUnderstand, plan.proposedApproach, plan.size, midpointCost, midpointMinutes, plan.estimate.costUsdMin, plan.estimate.costUsdMax, plan.estimate.timeMinutesMin, plan.estimate.timeMinutesMax, plannedCommit, plannedVersion],
+          `UPDATE tasks SET what_i_understand=$3,proposed_approach=$4,job_size=$5,estimated_cost_usd=$6,estimated_time_minutes=$7,estimated_cost_usd_min=$8,estimated_cost_usd_max=$9,estimated_time_minutes_min=$10,estimated_time_minutes_max=$11,planned_source_commit_sha=$12,planned_source_version_id=$13,planning_skill_id=$14,planning_skill_version=$15,status='plan_ready',updated_at=now() WHERE organization_id=$1 AND id=$2`,
+          [session.organizationId, taskId, plan.whatIUnderstand, plan.proposedApproach, plan.size, midpointCost, midpointMinutes, plan.estimate.costUsdMin, plan.estimate.costUsdMax, plan.estimate.timeMinutesMin, plan.estimate.timeMinutesMax, plannedCommit, plannedVersion, planningSkill?.id ?? null, planningSkill?.version ?? null],
         );
       });
     },

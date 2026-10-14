@@ -85,12 +85,13 @@ describe("task plan source pin", () => {
     } as unknown as ProjectCodeReader;
 
     let savedPin: unknown;
+    let savedSkill: unknown;
     const database = {
       async createTask() { return { taskId }; },
       async saveClarification() {},
       async unresolvedQuestionCount() { return 0; },
       async getTask() { return task(); },
-      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, pin?: unknown) { savedPin = pin; },
+      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, pin?: unknown, skill?: unknown) { savedPin = pin; savedSkill = skill; },
       async recordModelCall() {},
     } as unknown as TaskDatabase;
 
@@ -106,8 +107,30 @@ describe("task plan source pin", () => {
 
     expect(reads).toBe(2);
     expect(savedPin).toEqual({ source: "github", commitSha: planningCommit });
+    expect(savedSkill).toEqual({ id: "typescript-node", version: "1.0.0" });
     expect(gateway.systemMessages.get("clarify")).toContain("TypeScript / Node");
     expect(gateway.systemMessages.get("clarify")).not.toContain("Work with the repository's existing Node.js package manager");
     expect(gateway.systemMessages.get("plan")).toContain("Work with the repository's existing Node.js package manager");
+  });
+  it("records no planning skill and adds no guide for a generic project", async () => {
+    const codeReader = {
+      async readContext() {
+        return { source: "github" as const, revision: "c".repeat(40), text: "source", report: { languages: [], frameworks: [], packageManager: null, installCommand: null, buildCommand: null, testCommand: null, stackSkill: "generic", manifests: [] } };
+      },
+    } as unknown as ProjectCodeReader;
+    let savedSkill: unknown = "unset";
+    const database = {
+      async createTask() { return { taskId }; },
+      async saveClarification() {},
+      async unresolvedQuestionCount() { return 0; },
+      async getTask() { return task(); },
+      async savePlan(_session: SessionIdentity, _taskId: string, _plan: unknown, _pin?: unknown, skill?: unknown) { savedSkill = skill; },
+      async recordModelCall() {},
+    } as unknown as TaskDatabase;
+    const gateway = new RecordedGateway();
+    await createTaskPlanningService({ database, codeReader, gateway, cipher, modelBudgetUsd: 0.5 }).create(session, projectId, "Fix retry behavior");
+    expect(savedSkill).toBeNull();
+    expect(gateway.systemMessages.get("plan")).not.toContain("TRUSTED_STACK_SKILL");
+    expect(gateway.systemMessages.get("clarify")).not.toContain("Stack:");
   });
 });
