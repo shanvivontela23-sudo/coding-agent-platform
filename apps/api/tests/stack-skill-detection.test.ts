@@ -16,12 +16,12 @@ describe("stack skill detection from repository evidence", () => {
     expect(report.commandSources).toMatchObject({ install: "repo", test: "repo" });
   });
 
-  it("uses the uv runner command when uv is the package manager and pytest is a dependency", () => {
+  it("runs pytest through uv when uv manages the virtualenv", () => {
     const report = analyseRepositoryEntries([
       entry("pyproject.toml", "[project]\nname = 'demo'\n[dependency-groups]\ndev = [\"pytest>=8\"]\n"),
       entry("uv.lock", "version = 1\n"), entry("src/demo/__init__.py"),
     ]);
-    expect(report).toMatchObject({ stackSkill: "python", testRunner: "pytest", installCommand: "uv sync --frozen", testCommand: "python -m pytest" });
+    expect(report).toMatchObject({ stackSkill: "python", testRunner: "pytest", installCommand: "uv sync --frozen", testCommand: "uv run pytest" });
   });
 
   it("does not invent a Python test command without pytest evidence", () => {
@@ -39,7 +39,7 @@ describe("stack skill detection from repository evidence", () => {
     ]);
     expect(report).toMatchObject({ stackSkill: "java-spring", stackDisplayName: "Java / Spring", sandboxTemplateKey: "java", testRunner: "maven-surefire" });
     expect(report.frameworks).toContain("Spring Boot");
-    expect(report.installCommand).toBe("sh ./mvnw -B -q -DskipTests dependency:go-offline");
+    expect(report.installCommand).toBe("sh ./mvnw -B -q dependency:go-offline test -Dmaven.test.failure.ignore=true");
     expect(report.testCommand).toBe("sh ./mvnw -B test");
     expect(report.buildCommand).toBe("sh ./mvnw -B -DskipTests package");
     expect(report.testSingleCommand).toBe("{test} -Dtest={class} -Dsurefire.failIfNoSpecifiedTests=false");

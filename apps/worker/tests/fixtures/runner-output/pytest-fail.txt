@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.16, pytest-8.3.3, pluggy-1.6.0
+rootdir: /workspace/repo
+collected 1 item
+
+tests/test_second_refund.py F                                            [100%]
+
+=================================== FAILURES ===================================
+______________ test_second_refund_is_capped_at_remaining_balance _______________
+
+    def test_second_refund_is_capped_at_remaining_balance():
+>       assert refund_amount(Decimal("40.00"), Decimal("30.00"), Decimal("30.00")) == Decimal("10.00")
+E       AssertionError: assert Decimal('30.00') == Decimal('10.00')
+E        +  where Decimal('30.00') = refund_amount(Decimal('40.00'), Decimal('30.00'), Decimal('30.00'))
+E        +    where Decimal('40.00') = Decimal('40.00')
+E        +    and   Decimal('30.00') = Decimal('30.00')
+E        +    and   Decimal('30.00') = Decimal('30.00')
+E        +  and   Decimal('10.00') = Decimal('10.00')
+
+tests/test_second_refund.py:7: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_second_refund.py::test_second_refund_is_capped_at_remaining_balance
+============================== 1 failed in 0.02s ===============================

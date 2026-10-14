@@ -184,16 +184,22 @@ function detectInstallCommand(names: ReadonlySet<string>, manager: string | null
   if (manager === "npm") return names.has("package-lock.json") ? "npm ci" : "npm install";
   if (manager === "uv") return "uv sync --frozen";
   if (manager === "poetry") return "poetry install --no-interaction";
-  if (manager === "pipenv") return "pipenv sync";
+  if (manager === "pipenv") return "pipenv sync --dev";
   if (names.has("requirements.txt")) {
     // Test tools usually live in a dev/test requirements file; without them pytest is missing.
     const extra = ["requirements-dev.txt", "requirements-test.txt"].filter((name) => names.has(name)).map((name) => ` -r ${name}`).join("");
     return `python -m pip install -r requirements.txt${extra}`;
   }
   if (names.has("pyproject.toml")) return "python -m pip install .";
-  // Wrappers run through sh: ZIP uploads drop the executable bit.
-  if (names.has("pom.xml")) return names.has("mvnw") ? "sh ./mvnw -B -q -DskipTests dependency:go-offline" : "mvn -B -q -DskipTests dependency:go-offline";
-  if (names.has("build.gradle") || names.has("build.gradle.kts")) return names.has("gradlew") ? "sh ./gradlew --no-daemon testClasses" : "gradle --no-daemon testClasses";
+  // Wrappers run through sh: ZIP uploads drop the executable bit. Maven's
+  // dependency:go-offline misses the Surefire test provider, which is fetched
+  // only when tests run, so install runs the tests once (failures ignored) to
+  // cache everything the offline test step needs. Checked on a real toolchain.
+  if (names.has("pom.xml")) return names.has("mvnw") ? "sh ./mvnw -B -q dependency:go-offline test -Dmaven.test.failure.ignore=true" : "mvn -B -q dependency:go-offline test -Dmaven.test.failure.ignore=true";
+  // Gradle downloads test-runtime JARs only when tests run, so install compiles
+  // (failing on real setup problems) and then runs the tests once, ignoring
+  // their result, so the offline test step finds everything cached.
+  if (names.has("build.gradle") || names.has("build.gradle.kts")) { const gradle = names.has("gradlew") ? "sh ./gradlew --no-daemon" : "gradle --no-daemon"; return `${gradle} testClasses && (${gradle} test > /dev/null 2>&1 || true)`; }
   if (dotnetTarget) return `dotnet restore ${dotnetTarget}`;
   if (names.has("go.mod")) return "go mod download";
   if (names.has("Cargo.toml")) return "cargo fetch";
@@ -282,7 +288,9 @@ function detectCommands(manifests: readonly SeenManifest[], manager: string | nu
   if (python.length > 0) {
     const pyproject = python.find((manifest) => manifest.path === "pyproject.toml");
     const usesPytest = python.some((manifest) => /\bpytest\b/i.test(manifest.contents));
-    return { buildCommand: pyproject && pyproject.contents.toLowerCase().includes("[build-system]") ? "python -m build" : null, testCommand: usesPytest ? "python -m pytest" : null };
+    // uv, Poetry and Pipenv install into their own virtualenv, so pytest must run through them.
+    const runner = manager === "uv" ? "uv run " : manager === "poetry" ? "poetry run " : manager === "pipenv" ? "pipenv run " : "";
+    return { buildCommand: pyproject && pyproject.contents.toLowerCase().includes("[build-system]") ? "python -m build" : null, testCommand: usesPytest ? (runner ? `${runner}pytest` : "python -m pytest") : null };
   }
   return { buildCommand: null, testCommand: null };
 }
