@@ -272,4 +272,3 @@ Every task that touches these boundaries must include the named regression test:
 - [ ] Confirm the PR diff includes the optional commented `E2B_TEMPLATE_TYPESCRIPT_NODE` example, the demo migration/fallback runbook note, and the only-`E2B_TEMPLATE_ID` launcher-preflight regression test.
 - [ ] Include the owner-only future template build command as documentation, clearly marked **not run**, without credentials or an environment-specific template id.
 - [ ] Attach the PR to this task, report the URL and validation evidence, then stop. Do not start PR 2 until the user reviews and merges PR 1.
-
