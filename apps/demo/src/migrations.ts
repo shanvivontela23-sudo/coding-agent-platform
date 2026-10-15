@@ -54,6 +54,7 @@ export const migrationMarkers: readonly { readonly name: string; readonly table:
   { name: "0013_stack_skill_execution_profile.sql", table: "task_executions", column: "execution_profile" },
   { name: "0014_project_decisions.sql", table: "project_decisions", column: "superseded_by" },
   { name: "0015_organization_skills.sql", table: "organization_skills", column: "applies_to_stacks" },
+  { name: "0016_pull_request_outcomes.sql", table: "task_execution_publications", column: "pull_request_state" },
 ];
 
 export function migrationsToApply(plan: readonly MigrationEntry[], hasCore: boolean, presentMarkers: ReadonlySet<string>): readonly MigrationEntry[] {
