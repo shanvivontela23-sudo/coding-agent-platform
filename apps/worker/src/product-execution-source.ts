@@ -37,7 +37,7 @@ function projectDecision(row: DecisionRow): ProjectDecision {
 }
 
 function base64urlJson(value: unknown): string { return Buffer.from(JSON.stringify(value)).toString("base64url"); }
-function githubJwt(appId: string, privateKey: string, nowSeconds = Math.floor(Date.now() / 1_000)): string {
+export function githubJwt(appId: string, privateKey: string, nowSeconds = Math.floor(Date.now() / 1_000)): string {
   const header = base64urlJson({ alg: "RS256", typ: "JWT" });
   const payload = base64urlJson({ iat: nowSeconds - 30, exp: nowSeconds + 9 * 60, iss: appId });
   const unsigned = `${header}.${payload}`;

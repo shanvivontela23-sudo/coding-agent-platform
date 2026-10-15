@@ -41,6 +41,7 @@ import { attachProjectDecisionRoutes } from "./project-decision-http.js";
 import { createProjectDecisionService } from "./project-decision-service.js";
 import { createOrganizationSkillDatabase } from "./organization-skill-database.js";
 import { attachOrganizationSkillRoutes } from "./organization-skill-http.js";
+import { attachGitHubWebhookRoutes, type WebhookPool } from "./github-webhook.js";
 import { createOrganizationSkillService } from "./organization-skill-service.js";
 
 function required(name: string): string {
@@ -177,7 +178,9 @@ const productServer = createApiServer({
 const product07Server = attachProduct07Routes(productServer, { apiOrigin, webOrigin, sessionSecret, service: product07Service, maxUploadRequestBytes: uploadLimits.maxCompressedBytes + 1024 * 1024 });
 const projectDecisionServer = attachProjectDecisionRoutes(product07Server, { apiOrigin, webOrigin, sessionSecret, service: projectDecisionService });
 const organizationSkillServer = attachOrganizationSkillRoutes(projectDecisionServer, { apiOrigin, webOrigin, sessionSecret, service: organizationSkillService });
-const taskServer = attachTaskRoutes(organizationSkillServer, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
+// Off unless GITHUB_WEBHOOK_SECRET is set (the worker sync covers PR outcomes without it).
+const githubWebhookServer = attachGitHubWebhookRoutes(organizationSkillServer, { apiOrigin, secret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || null, pool: pool as unknown as WebhookPool });
+const taskServer = attachTaskRoutes(githubWebhookServer, { apiOrigin, webOrigin, sessionSecret, readService: taskReadService, planningService: taskPlanningService });
 const server = attachTaskExecutionRoutes(taskServer, { apiOrigin, sessionSecret, service: taskExecutionService, publicationService: taskPublicationService, zipResultService: taskZipResultService, demoBudgetCaps });
 
 server.listen(port, "127.0.0.1", () => { process.stdout.write(`coding-agent api listening on http://127.0.0.1:${port}\n`); });

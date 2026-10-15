@@ -6,6 +6,7 @@ import { createRealProductExecutionRunner } from "./real-worker.js";
 import { loadRealWorkerConfig } from "./worker-config.js";
 import { validateBuiltInStackSkillsAtStartup } from "../../../packages/skills/src/registry.js";
 import { createZipResultBuilder } from "./zip-result-builder.js";
+import { GitHubPullRequestStateReader, runPullRequestOutcomeSync } from "./pull-request-outcome-sync.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -57,7 +58,23 @@ async function main(): Promise<void> {
         maxNestedArchiveDepth: positiveInteger("PROJECT_UPLOAD_MAX_NESTED_ARCHIVE_DEPTH", 1),
       },
     });
-    await runTaskExecutionWorker({ pool, databaseUsername: "coding_agent_worker", workerId, signal: controller.signal, runner, zipResultBuildQueue, zipResultBuild });
+    // Learns whether published pull requests were merged or closed, so project
+    // memory reflects the real review outcome. Runs beside the job loop.
+    const outcomeSync = runPullRequestOutcomeSync({
+      pool,
+      reader: new GitHubPullRequestStateReader({ appId: realConfig!.githubAppId, privateKey: realConfig!.githubAppPrivateKey }),
+      signal: controller.signal,
+      intervalMs: positiveInteger("PULL_REQUEST_SYNC_INTERVAL_SECONDS", 60) * 1_000,
+      minAgeSeconds: positiveInteger("PULL_REQUEST_SYNC_MIN_AGE_SECONDS", 60),
+      log: (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
+    });
+    try {
+      await runTaskExecutionWorker({ pool, databaseUsername: "coding_agent_worker", workerId, signal: controller.signal, runner, zipResultBuildQueue, zipResultBuild });
+    } finally {
+      // Stop the sync with the job loop, whichever way the loop ended.
+      controller.abort();
+      await outcomeSync;
+    }
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);

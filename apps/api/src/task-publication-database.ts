@@ -13,6 +13,8 @@ export type TaskPublicationRecord = {
   readonly baseMovedCommits: number | null;
   readonly pullRequestNumber: number | null;
   readonly pullRequestUrl: string | null;
+  // What happened on GitHub: null until the first check, then open, merged or closed.
+  readonly pullRequestState?: "open" | "merged" | "closed" | null;
   readonly unproven: boolean;
   readonly failureCode: string | null;
   readonly failureMessage: string | null;
@@ -40,12 +42,13 @@ type PublicationRow = {
   base_moved_commits: number | null;
   pull_request_number: number | null;
   pull_request_url: string | null;
+  pull_request_state?: "open" | "merged" | "closed" | null;
   unproven: boolean;
   failure_code: string | null;
   failure_message: string | null;
 };
 function mapPublication(row: PublicationRow): TaskPublicationRecord {
-  return { executionId: row.execution_id, status: row.status, branchName: row.branch_name, baseMovedCommits: row.base_moved_commits, pullRequestNumber: row.pull_request_number, pullRequestUrl: row.pull_request_url, unproven: row.unproven, failureCode: row.failure_code, failureMessage: row.failure_message };
+  return { executionId: row.execution_id, status: row.status, branchName: row.branch_name, baseMovedCommits: row.base_moved_commits, pullRequestNumber: row.pull_request_number, pullRequestUrl: row.pull_request_url, pullRequestState: row.pull_request_state ?? null, unproven: row.unproven, failureCode: row.failure_code, failureMessage: row.failure_message };
 }
 function verifiedFilesFromMetadata(metadata: Record<string, unknown> | null): readonly VerifiedFile[] {
   const raw = metadata?.verifiedFiles;
@@ -69,7 +72,7 @@ function verifiedFilesFromMetadata(metadata: Record<string, unknown> | null): re
 export function createTaskPublicationDatabase(pool: TenantPool): TaskPublicationDatabase {
   const getRow = async (session: SessionIdentity, taskId: string): Promise<TaskPublicationRecord | null> => await withTenant(pool, session, async (database) => {
     const result = await database.query<PublicationRow>(
-      `SELECT p.execution_id,p.status,p.branch_name,p.base_moved_commits,p.pull_request_number,p.pull_request_url,p.unproven,p.failure_code,p.failure_message
+      `SELECT p.execution_id,p.status,p.branch_name,p.base_moved_commits,p.pull_request_number,p.pull_request_url,p.pull_request_state,p.unproven,p.failure_code,p.failure_message
          FROM task_execution_publications p
          JOIN task_executions e ON e.organization_id=p.organization_id AND e.id=p.execution_id
         WHERE p.organization_id=$1 AND e.task_id=$2
@@ -129,13 +132,13 @@ export function createTaskPublicationDatabase(pool: TenantPool): TaskPublication
           `INSERT INTO task_execution_publications (organization_id,task_id,execution_id,requested_by_user_id,status,branch_name,approved_sha,unproven)
            VALUES ($1,$2,$3,$4,'publishing',$5,$6,$7)
            ON CONFLICT (organization_id,execution_id) DO NOTHING
-           RETURNING execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,unproven,failure_code,failure_message`,
+           RETURNING execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,pull_request_state,unproven,failure_code,failure_message`,
           [session.organizationId, taskId, input.executionId, session.userId, input.branchName, approvedSha, input.unproven],
         );
         if (inserted.rows[0]) return { state: "acquired", record: mapPublication(inserted.rows[0]) };
 
         const locked = await database.query<PublicationRow>(
-          `SELECT execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,unproven,failure_code,failure_message
+          `SELECT execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,pull_request_state,unproven,failure_code,failure_message
              FROM task_execution_publications
             WHERE organization_id=$1 AND task_id=$2 AND execution_id=$3
             FOR UPDATE`,
@@ -150,7 +153,7 @@ export function createTaskPublicationDatabase(pool: TenantPool): TaskPublication
           `UPDATE task_execution_publications
               SET status='publishing',requested_by_user_id=$4,branch_name=$5,unproven=$6,failure_code=NULL,failure_message=NULL,updated_at=now()
             WHERE organization_id=$1 AND task_id=$2 AND execution_id=$3 AND status IN ('failed','source_changed')
-            RETURNING execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,unproven,failure_code,failure_message`,
+            RETURNING execution_id,status,branch_name,base_moved_commits,pull_request_number,pull_request_url,pull_request_state,unproven,failure_code,failure_message`,
           [session.organizationId, taskId, input.executionId, session.userId, input.branchName, input.unproven],
         );
         const claimed = updated.rows[0];
